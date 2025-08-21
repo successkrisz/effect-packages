@@ -1,5 +1,7 @@
 # effect-packages
 
+[![CI](https://github.com/successkrisz/effect-packages/actions/workflows/ci.yml/badge.svg)](https://github.com/successkrisz/effect-packages/actions/workflows/ci.yml)
+
 Useful Effect libraries
 
 ## Packages
