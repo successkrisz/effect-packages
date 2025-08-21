@@ -16,17 +16,16 @@ catalogs:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@biomejs/biome':
         specifier: ^2.2.0
         version: 2.2.0
-      vitest:
-        specifier: ^3.2.4
-        version: 3.2.4
-    devDependencies:
       '@effect/vitest':
         specifier: ^0.25.1
         version: 0.25.1(effect@3.17.8)(vitest@3.2.4)
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4
 
   packages/effect-oauth-client:
     devDependencies:

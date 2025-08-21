@@ -16,16 +16,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-          run_install: false
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Enable Corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack use pnpm@10.15.0
+          pnpm -v
 
       - name: Get pnpm store directory
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> $GITHUB_ENV
