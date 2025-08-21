@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+
+catalog:
+  '@effect/platform': ^0.90.6
+  effect: ^3.17.8
+
+onlyBuiltDependencies:
+  - msgpackr-extract

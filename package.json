@@ -1,0 +1,20 @@
+{
+  "name": "@ballatech/effect-packages",
+  "version": "1.0.0",
+  "description": "Useful Effect libraries",
+  "scripts": {
+    "format": "biome format --write",
+    "lint": "biome check",
+    "test": "vitest --run",
+    "test:watch": "vitest --watch"
+  },
+  "keywords": [],
+  "author": "Krisztian Balla",
+  "license": "MIT",
+  "packageManager": "pnpm@10.14.0",
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "vitest": "^3.2.4",
+    "@effect/vitest": "^0.25.1"
+  }
+}

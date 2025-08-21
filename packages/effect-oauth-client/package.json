@@ -1,0 +1,21 @@
+{
+	"name": "@ballatech/effect-oauth-client",
+	"version": "0.1.0",
+	"private": false,
+	"license": "MIT",
+	"sideEffects": false,
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"import": "./src/index.ts"
+		}
+	},
+	"devDependencies": {
+		"@effect/platform": "catalog:",
+		"effect": "catalog:"
+	},
+	"peerDependencies": {
+		"@effect/platform": "catalog:",
+		"effect": "catalog:"
+	}
+}
