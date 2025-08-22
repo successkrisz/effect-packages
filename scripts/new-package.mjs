@@ -58,6 +58,15 @@ const pkgJson = {
 		'@effect/platform': 'catalog:',
 		effect: 'catalog:',
 	},
+	repository: {
+		type: 'git',
+		url: 'git+https://github.com/successkrisz/effect-packages.git',
+		directory: `packages/${rawName}`,
+	},
+	bugs: {
+		url: 'https://github.com/successkrisz/effect-packages/issues',
+	},
+	homepage: 'https://github.com/successkrisz/effect-packages#readme',
 }
 
 const tsupConfig = `import { defineConfig } from 'tsup'
