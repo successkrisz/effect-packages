@@ -1,0 +1,30 @@
+name: Pack Verify
+
+on:
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable Corepack and pnpm
+        run: |
+          corepack enable
+          corepack use pnpm@10.15.0
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Build packages
+        run: pnpm build
+      - name: Pack all packages
+        run: pnpm pack:check
+      - name: List packed contents
+        run: |
+          ls -la .pack
+          for f in .pack/*.tgz; do echo "--- $f"; tar -tzf "$f" | sed 's/^/    /'; done
+
+

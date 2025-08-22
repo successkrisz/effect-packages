@@ -1,0 +1,8 @@
+{
+	"name": "@ballatech/tsconfig",
+	"private": true,
+	"version": "1.0.0",
+	"files": [
+		"tsconfig.base.json"
+	]
+}

@@ -158,3 +158,9 @@ describe("OAuthClient", () => {
 
 - Provide an `HttpClient` layer, e.g. `FetchHttpClient.layer`
 - `effect` and `@effect/platform` must be installed (peer dependencies)
+
+## Build
+
+```bash
+pnpm -w build
+```

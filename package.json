@@ -2,13 +2,20 @@
 	"name": "@ballatech/effect-packages",
 	"version": "1.0.0",
 	"description": "Useful Effect libraries",
+	"private": true,
 	"scripts": {
 		"format": "biome check --write",
 		"lint": "biome check",
 		"test": "vitest --run",
 		"test:watch": "vitest --watch",
 		"prepare": "husky",
-		"lint-staged": "lint-staged"
+		"lint-staged": "lint-staged",
+		"build": "pnpm -r --filter ./packages/** --filter '!@ballatech/tsconfig' run build",
+		"pack:check": "rm -rf .pack && mkdir -p .pack && pnpm -r --filter ./packages/** --filter '!@ballatech/tsconfig' exec pnpm pack --pack-destination ../../.pack && ls -la .pack",
+		"changeset": "changeset",
+		"release:version": "changeset version",
+		"release:publish": "changeset publish",
+		"new": "node ./scripts/new-package.mjs"
 	},
 	"keywords": [],
 	"author": "Krisztian Balla",
@@ -17,6 +24,9 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.0",
 		"@effect/vitest": "^0.25.1",
+		"@changesets/cli": "^2.27.9",
+		"tsup": "^8.3.0",
+		"typescript": "^5.5.4",
 		"husky": "^9.1.6",
 		"lint-staged": "^15.2.9",
 		"vitest": "^3.2.4"
