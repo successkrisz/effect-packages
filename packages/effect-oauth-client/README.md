@@ -1,6 +1,6 @@
 # effect-oauth-client
 
-[![npm version](https://img.shields.io/npm/v/%40ballatech%2Feffect-oauth-client)](https://www.npmjs.com/package/@ballatech/effect-oauth-client)
+[![npm version](https://img.shields.io/npm/v/%40ballatech%2Feffect-oauth-client)](https://www.npmjs.com/package/@ballatech/effect-oauth-client) [![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?style=flat&logo=biome)](https://biomejs.dev)
 
 Effect-first OAuth 2.0 Client Credentials helper for `@effect/platform`'s `HttpClient`.
 

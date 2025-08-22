@@ -1,0 +1,80 @@
+{
+	"name": "effect-lambda",
+	"version": "0.1.0",
+	"private": false,
+	"license": "MIT",
+	"author": {
+		"name": "Krisztian Balla",
+		"url": "https://github.com/successkrisz",
+		"organization": false
+	},
+	"sideEffects": false,
+	"type": "module",
+	"main": "./dist/index.js",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./RestApi": {
+			"types": "./dist/RestApi.d.ts",
+			"import": "./dist/RestApi.js"
+		},
+		"./Sns": {
+			"types": "./dist/Sns.d.ts",
+			"import": "./dist/Sns.js"
+		},
+		"./Sqs": {
+			"types": "./dist/Sqs.d.ts",
+			"import": "./dist/Sqs.js"
+		},
+		"./CustomAuthorizer": {
+			"types": "./dist/CustomAuthorizer.d.ts",
+			"import": "./dist/CustomAuthorizer.js"
+		},
+		"./DynamoDb": {
+			"types": "./dist/DynamoDb.d.ts",
+			"import": "./dist/DynamoDb.js"
+		}
+	},
+	"files": [
+		"dist/**",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"prebuild": "rm -rf dist",
+		"build": "tsup",
+		"prepack": "pnpm run build"
+	},
+	"devDependencies": {
+		"@effect/platform": "catalog:",
+		"@types/node": "catalog:",
+		"effect": "catalog:",
+		"helmet": "^8.1.0"
+	},
+	"peerDependencies": {
+		"@effect/platform": "catalog:",
+		"@types/node": "catalog:",
+		"effect": "catalog:"
+	},
+	"peerDependenciesMeta": {
+		"@types/node": {
+			"optional": true
+		}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/successkrisz/effect-packages.git",
+		"directory": "packages/effect-lambda"
+	},
+	"bugs": {
+		"url": "https://github.com/successkrisz/effect-packages/issues"
+	},
+	"homepage": "https://github.com/successkrisz/effect-packages#readme",
+	"dependencies": {
+		"@types/aws-lambda": "catalog:"
+	}
+}

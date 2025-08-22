@@ -1,12 +1,24 @@
 # effect-packages
 
-[![CI](https://github.com/successkrisz/effect-packages/actions/workflows/ci.yml/badge.svg)](https://github.com/successkrisz/effect-packages/actions/workflows/ci.yml)
+[![CI](https://github.com/successkrisz/effect-packages/actions/workflows/ci.yml/badge.svg)](https://github.com/successkrisz/effect-packages/actions/workflows/ci.yml) [![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?style=flat&logo=biome)](https://biomejs.dev)
 
 Useful Effect libraries
 
 ## Packages
 
+- `effect-lambda`: Effect-friendly AWS Lambda wrappers and utilities.
 - `effect-oauth-client`: OAuth 2.0 Client Credentials `HttpClient` wrapper for `@effect/platform`.
+
+### effect-lambda quickstart
+
+```ts
+import { toLambdaHandler } from "effect-lambda/RestApi"
+import { Effect, Layer } from "effect"
+
+export const handler = toLambdaHandler(
+  Effect.succeed({ statusCode: 200, body: "ok" })
+)({ layer: Layer.empty })
+```
 
 ### effect-oauth-client quickstart
 
