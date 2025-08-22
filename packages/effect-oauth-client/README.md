@@ -1,5 +1,7 @@
 # effect-oauth-client
 
+[![npm version](https://img.shields.io/npm/v/%40ballatech%2Feffect-oauth-client)](https://www.npmjs.com/package/@ballatech/effect-oauth-client)
+
 Effect-first OAuth 2.0 Client Credentials helper for `@effect/platform`'s `HttpClient`.
 
 - Fetches access tokens using the client credentials grant

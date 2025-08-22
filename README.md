@@ -26,3 +26,12 @@ const program = Effect.gen(function* () {
 
 Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
 ```
+
+## Development
+
+- `pnpm new <package-name>` to create a new package
+- After making changes, run `pnpm pack:check` to verify the package is built correctly
+- Create a new branch
+- Create a changeset with `pnpm changeset` choose package(s) and bump type, write summary
+- `git add .changeset && git commit -m "chore: changeset"` && `git push`
+- Happy days!
