@@ -24,7 +24,7 @@ pnpm add effect @effect/platform
 ## API
 
 ```ts
-import { OAuthClient } from "effect-oauth-client"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
 ```
 
 - `OAuthClient.make(credentials)` → `Effect<HttpClient>`
@@ -40,6 +40,7 @@ type Credentials = {
   scope?: string
   audience?: string
   ttl?: Duration.Duration // default: 3600 seconds
+  expiryBuffer?: Duration.Duration // default: 300 seconds (refresh ~5m early)
 }
 ```
 
@@ -61,7 +62,7 @@ Notes:
 ### Basic request
 
 ```ts
-import { OAuthClient } from "effect-oauth-client"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
 import { Effect, Redacted, Schema } from "effect"
 import { FetchHttpClient, HttpClientResponse } from "@effect/platform"
 
@@ -94,7 +95,7 @@ Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
 
 ```ts
 import { Context, Effect, Layer, Redacted } from "effect"
-import { OAuthClient } from "effect-oauth-client"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient, HttpClientResponse } from "@effect/platform"
 
 const makeService = Effect.gen(function* () {
@@ -124,7 +125,7 @@ export const MyServiceLayer = Layer.effect(MyService, makeService).pipe(
 import { beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import { Duration, Effect, Layer, ManagedRuntime, Redacted } from "effect"
 import { FetchHttpClient } from "@effect/platform"
-import { OAuthClient } from "effect-oauth-client"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
 
 describe("OAuthClient", () => {
   let rt: ManagedRuntime.ManagedRuntime<never, never>

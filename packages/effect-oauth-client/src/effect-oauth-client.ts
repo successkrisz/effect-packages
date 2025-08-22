@@ -26,6 +26,7 @@ export namespace OAuthClient {
 		scope?: string
 		audience?: string
 		ttl?: Duration.Duration
+		expiryBuffer?: Duration.Duration
 	}
 	export const make = ({
 		clientId,
@@ -34,6 +35,7 @@ export namespace OAuthClient {
 		scope,
 		audience,
 		ttl = Duration.seconds(3600),
+		expiryBuffer = Duration.seconds(300),
 	}: Credentials) =>
 		Effect.gen(function* () {
 			const client = yield* HttpClient.HttpClient
@@ -92,7 +94,7 @@ export namespace OAuthClient {
 				Effect.gen(function* () {
 					const now = yield* DateTime.now
 					const expiresAt = DateTime.add(now, {
-						seconds: credentials.expiresIn - 10,
+						seconds: credentials.expiresIn - Duration.toSeconds(expiryBuffer),
 					})
 					return {
 						...credentials,
@@ -123,7 +125,6 @@ export namespace OAuthClient {
 				),
 				HttpClient.tap((response) => {
 					if (response.status === 401) {
-						// On 401, just let the error propagate - retry logic will handle re-authentication
 						return new AuthorizationError({
 							message: 'Unauthorized',
 							code: 'unauthorized',
@@ -132,7 +133,6 @@ export namespace OAuthClient {
 
 					return Effect.void
 				}),
-				HttpClient.retry({ times: 1 }),
 				HttpClient.filterStatusOk,
 			)
 		})

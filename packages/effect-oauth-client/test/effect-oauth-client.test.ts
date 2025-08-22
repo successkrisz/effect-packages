@@ -8,6 +8,7 @@ import {
 	Context,
 	Duration,
 	Effect,
+	Exit,
 	Layer,
 	ManagedRuntime,
 	Redacted,
@@ -161,5 +162,46 @@ describe('OAuthClient', () => {
 			fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length,
 		).toBe(4)
 		// console.log(fetch.mock.calls.map((c) => c[0].href))
+	})
+
+	it('Should not retry http errors', async () => {
+		// Simulate a non-401 HTTP error (e.g., 403 Forbidden)
+		fetch.mockImplementation(async (url) => {
+			if (url.href.includes('token')) {
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response('Not found', { status: 401 })
+		})
+
+		const prog = Effect.gen(function* () {
+			const service = yield* SomeService1
+			return yield* service.getSecretFoo()
+		})
+
+		const error = await rt.runPromiseExit(
+			prog.pipe(Effect.provide(TestContext.TestContext)),
+		)
+
+		// Should only call token endpoint once and secret endpoint once
+		expect(
+			fetch.mock.calls.filter((c) => c[0].href.includes('token')).length,
+		).toBe(1)
+		expect(
+			fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length,
+		).toBe(1)
+
+		expect(error._tag).toBe('Failure')
+		expect(
+			Exit.isFailure(error) &&
+				error.cause._tag === 'Fail' &&
+				error.cause.error._tag,
+		).toBe('@ballatech/effect-oauth-client/AuthorizationError')
 	})
 })
