@@ -11,6 +11,10 @@ Effect-first OAuth 2.0 Client Credentials helper for `@effect/platform`'s `HttpC
 
 ## Installation
 
+```bash
+pnpm add @ballatech/effect-oauth-client
+```
+
 This package expects `effect` and `@effect/platform` to be available as peers.
 
 ```bash
