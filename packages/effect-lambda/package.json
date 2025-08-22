@@ -46,6 +46,7 @@
 	],
 	"scripts": {
 		"prebuild": "rm -rf dist",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"build": "tsup",
 		"prepack": "pnpm run build"
 	},
