@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 0.2.0
+
+### Minor Changes
+
+- [`91017e3`](https://github.com/successkrisz/effect-packages/commit/91017e342af8941058af51d7f9428d53760ca5be) Thanks [@successkrisz](https://github.com/successkrisz)! - feat: add expiry buffer to refresh token early, remove retry
+
 ## 0.1.1
 
 ### Patch Changes
