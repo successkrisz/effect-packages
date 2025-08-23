@@ -4,54 +4,41 @@ import { HandlerContext } from './common'
 import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime'
 
 /**
- * Factory for creating toLambdaHandler functions with layer support.
+ * Create a curried adapter to turn an `Effect` program into a Lambda handler for a given event tag.
  *
- * @param eventTag - The event tag to use for the handler.
- * @returns A function that takes a handler effect and returns another function that accepts layer and options.
+ * @typeParam T - Context tag representing the event type injected into the program
+ * @typeParam A - Success output of the program and handler
+ * @param eventTag Tag used to provide the incoming event to the effect environment
+ * @returns A function that, given a program, returns another function that accepts an optional `layer` and `options`.
  *
  * @remarks
- * The returned function is curried: first call takes the handler effect, second call takes the layer and options.
- * The function has two overloads:
- * - When the handler has no additional dependencies (beyond event and handler context), the layer parameter is optional
- * - When the handler depends on additional services, the layer parameter is required
- * If no layer is provided, it defaults to Layer.empty.
+ * - If the program depends only on the event and `HandlerContext`, the returned function's `params` are optional and
+ *   default to an empty layer.
+ * - If the program requires additional services, a `layer` providing those services is required.
+ * - The adapter logs defects and wires the effect into a managed runtime derived from the provided layer.
  *
  * @example
- * ```typescript
- * import { makeToHandler } from '@effect-lambda/lambda'
+ * ```ts
+ * import { makeToHandler } from 'effect-lambda'
  * import { Layer, Effect, Context } from 'effect'
  *
- * class Event extends Context.Tag('@foobar/some-event')<Event, number>() {}
+ * class Event extends Context.Tag('@app/event')<Event, number>() {}
  *
- * // Simple handler without dependencies - layer parameter is optional
- * const simpleHandler = makeToHandler<typeof Event, number>(Event)(
- *   Effect.map(Event, event => ({ result: event * 2 }))
- * )() // No parameters needed
+ * // No extra dependencies
+ * export const handler = makeToHandler<typeof Event, number>(Event)(
+ *   Effect.map(Event, (n) => n * 2)
+ * )()
  *
- * // Or with empty layer explicitly
- * const simpleHandlerExplicit = makeToHandler<typeof Event, number>(Event)(
- *   Effect.map(Event, event => ({ result: event * 2 }))
- * )({ layer: Layer.empty })
- *
- * // Handler with dependencies - layer parameter is required
- * type User = { id: number; name: string }
- * class DatabaseService extends Context.Tag('@foobar/database')<
- *   DatabaseService,
- *   { query: (sql: string) => Effect.Effect<User[]> }
- * >() {}
- *
- * const handlerWithDeps = makeToHandler<typeof Event, { foo: User[] }>(Event)(
+ * // With dependencies
+ * class Db extends Context.Tag('@app/db')<Db, { query: (sql: string) => Effect.Effect<unknown> }>() {}
+ * export const handlerWithDeps = makeToHandler<typeof Event, number>(Event)(
  *   Effect.gen(function* () {
- *     const event = yield* Event
- *     const db = yield* DatabaseService
- *     const result = yield* db.query(`SELECT * FROM users WHERE id = ${event}`)
- *     return { foo: result }
+ *     const n = yield* Event
+ *     const db = yield* Db
+ *     yield* db.query('select 1')
+ *     return n
  *   })
- * )({
- *   layer: Layer.succeed(DatabaseService, {
- *     query: (sql) => Effect.succeed([{ id: 1, name: 'John' }])
- *   })
- * })
+ * )({ layer: Layer.succeed(Db, { query: () => Effect.void }) })
  * ```
  */
 

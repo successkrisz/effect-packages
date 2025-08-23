@@ -45,6 +45,9 @@ export type Middleware = (
  *    RestApi.toLambdaHandler,
  * )();
  */
+/**
+ * Apply an Express-style middleware to a response-like object to mutate headers.
+ */
 export const applyMiddleware =
 	(middleware: Middleware) =>
 	<T extends ObjectWithOptionalHeaders>(response: T): T => {

@@ -6,10 +6,14 @@ import {
 } from '@effect/platform'
 import { DateTime, Duration, Effect, pipe, Redacted, Schema } from 'effect'
 
+/**
+ * OAuth client utilities for obtaining and attaching client credentials tokens.
+ */
 export namespace OAuthClient {
 	export declare const AuthorizationErrorTypeId: unique symbol
 	export type AuthorizationErrorTypeId = typeof AuthorizationErrorTypeId
 
+	/** Error type for OAuth authorization failures. */
 	export class AuthorizationError extends Schema.TaggedError<AuthorizationError>(
 		'@ballatech/effect-oauth-client/AuthorizationError',
 	)('@ballatech/effect-oauth-client/AuthorizationError', {
@@ -19,6 +23,7 @@ export namespace OAuthClient {
 		readonly [AuthorizationErrorTypeId] = AuthorizationErrorTypeId
 	}
 
+	/** Configuration required to obtain tokens via client credentials flow. */
 	export type Credentials = {
 		clientId: string
 		clientSecret: Redacted.Redacted<string>
@@ -28,6 +33,12 @@ export namespace OAuthClient {
 		ttl?: Duration.Duration
 		expiryBuffer?: Duration.Duration
 	}
+	/**
+	 * Build an HttpClient that automatically injects a bearer token.
+	 *
+	 * Tokens are fetched using the OAuth client credentials grant and cached according to
+	 * the ttl, with early refresh controlled by expiryBuffer.
+	 */
 	export const make = ({
 		clientId,
 		clientSecret,

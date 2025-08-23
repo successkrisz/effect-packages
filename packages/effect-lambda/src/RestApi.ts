@@ -19,6 +19,9 @@ import { makeToHandler } from './makeToHandler'
  * parsed as JSON if the content-type is application/json and
  * base64-decoded if isBase64Encoded is true.
  */
+/**
+ * Context tag for the API Gateway proxy event with normalized headers and JSON/body helpers.
+ */
 export class APIGatewayProxyEvent extends Context.Tag(
 	'@effect-lambda/APIGatewayProxyEvent',
 )<APIGatewayProxyEvent, AwsAPIGatewayProxyEvent>() {}
@@ -27,6 +30,11 @@ export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.pipe(
 	Effect.map(headerNormalizer),
 )
 
+/**
+ * Lazily computed map of normalized (lowercased) headers.
+ *
+ * Useful when you only need headers without the full normalized event.
+ */
 export const NormalizedHeaders = APIGatewayProxyEvent.pipe(
 	Effect.map((event) => normalizeHeaders(event.headers)),
 )
@@ -45,7 +53,7 @@ export const schemaBodyJson = <A, I, R extends never>(
 	)
 
 /**
- * Utility to parse the query parameters of an API Gateway event into a type.
+ * Utility to parse the path parameters of an API Gateway event into a type.
  */
 export const schemaPathParams = <A, I, R extends never>(
 	schema: Schema.Schema<A, I, R>,

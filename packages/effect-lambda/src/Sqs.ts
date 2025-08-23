@@ -4,11 +4,7 @@ import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
 
 /**
- * Represents an SQS event in the context of AWS Lambda.
- * Extends the base SQSEvent from AWS Lambda types.
- *
- * @class
- * @extends {Context.Tag}
+ * Context tag for an incoming SQS event.
  */
 export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<
 	SQSEvent,
@@ -16,11 +12,7 @@ export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<
 >() {}
 
 /**
- * Represents a single SQS record in the context of AWS Lambda.
- * Extends the base SQSRecord from AWS Lambda types.
- *
- * @class
- * @extends {Context.Tag}
+ * Context tag for a single SQS record.
  */
 export class SQSRecord extends Context.Tag('@effect-lambda/SQSRecord')<
 	SQSRecord,
@@ -28,35 +20,24 @@ export class SQSRecord extends Context.Tag('@effect-lambda/SQSRecord')<
 >() {}
 
 /**
- * Extracts the message bodies from an SQS event.
+ * Extract the message bodies from all records in the SQS event.
  */
 export const SQSMessageBodies = SQSEvent.pipe(
 	Effect.map((event) => event.Records.map((record) => record.body)),
 )
 
 /**
- * Transform an effect into an SNSHandler.
- *
- * @param effect Effect.Effect<void, never, SQSEvent | HandlerContext>
- * @returns SNSHandler
+ * Convert an effectful SQS program into an SQS batch Lambda handler.
  *
  * @example
- * ```typescript
+ * ```ts
  * import { SQSEvent, toLambdaHandler } from '@effect-lambda/Sqs'
  * import { Effect, Console } from 'effect'
  *
- * // Define an effect that processes each message in the SQS event
- * const processSQSMessages = SQSEvent.pipe(
- *   Effect.map((event) => event.Records),
- *   Effect.tap((records) =>
- *     Effect.forEach(records, (record) =>
- *       Console.log(`Processing message: ${record.body}`)
- *     )
- *   )
+ * const program = SQSEvent.pipe(
+ *   Effect.tap((e) => Console.log(`records: ${e.Records.length}`))
  * )
- *
- * // Convert the effect into a Lambda handler
- * export const handler = processSQSMessages.pipe(toLambdaHandler)
+ * export const handler = program.pipe(toLambdaHandler)()
  * ```
  */
 export const toLambdaHandler = makeToHandler<
@@ -66,13 +47,12 @@ export const toLambdaHandler = makeToHandler<
 >(SQSEvent)
 
 /**
- * recordProcessorAdapter - adapts a single record processor effect to a batch processor effect
+ * Adapt a single-record effect into a batch SQS program that returns a `BatchResponse`.
  *
- * you can control the concurrency of the batch processing by setting the concurrency outside
- * of this function, with the default being `unbounded`.
+ * Control concurrency via `Effect.withConcurrency` around the returned effect (defaults to `unbounded`).
  *
- * @param effect Effect.Effect<void, E, SQSRecord> - an effect handling a single SQS record
- * @returns A handler effect compatible with SQSEventHandler
+ * @param effect Effect that processes a single `SQSRecord`.
+ * @returns Effect producing a `BatchResponse` compatible with SQS batch handlers.
  *
  * @example
  * ```typescript

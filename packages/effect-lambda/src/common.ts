@@ -1,6 +1,9 @@
 import { Context } from 'effect'
 import type { LambdaContext } from './aws'
 
+/**
+ * Context tag for the AWS Lambda runtime `Context` object.
+ */
 export class HandlerContext extends Context.Tag(
 	'@effect-lambda/HandlerContext',
 )<HandlerContext, LambdaContext>() {}
