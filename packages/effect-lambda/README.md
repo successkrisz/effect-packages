@@ -84,13 +84,13 @@ export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
 
 ## Installation
 
-This library has peer dependencies on `@effect/schema` and `effect`. You can install them via npm or pnpm or any other package manager you prefer.
+This library has a peer dependency on `effect`. You can install it via npm or pnpm or any other package manager you prefer.
 
 ```bash
 # pnpm
-pnpm add effect-lambda effect @effect/schema
+pnpm add effect-lambda effect
 # npm
-npm install effect-lambda effect @effect/schema
+npm install effect-lambda effect
 ```
 
 ## Usage
