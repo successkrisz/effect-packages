@@ -1,5 +1,13 @@
 ## 0.2.0
 
+## 0.2.1
+
+### Patch Changes
+
+- [`77df4cc`](https://github.com/successkrisz/effect-packages/commit/77df4ccaa268c558757e7a8fe0646277def80aa8) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: re-export aws-lambda types used
+
+- [`72b632c`](https://github.com/successkrisz/effect-packages/commit/72b632ce5b9463a72a287887cf68ce5916b1ffd9) Thanks [@successkrisz](https://github.com/successkrisz)! - docs: update jsdocs
+
 ### Minor Changes
 
 - [`f129638`](https://github.com/successkrisz/effect-packages/commit/f12963823ae21a853aed64ea73c21f0365cb1519) Thanks [@successkrisz](https://github.com/successkrisz)! - feat: support shared layer across invocations via managed runtime
