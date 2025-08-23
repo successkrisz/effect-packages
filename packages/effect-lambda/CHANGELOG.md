@@ -1,5 +1,11 @@
 ## 0.2.0
 
+## 0.2.2
+
+### Patch Changes
+
+- [`7420d16`](https://github.com/successkrisz/effect-packages/commit/7420d160e4c8f3ca8a568f467d8c64f60df1b421) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: re-export aws-lambda types from every exported entrypoint
+
 ## 0.2.1
 
 ### Patch Changes
