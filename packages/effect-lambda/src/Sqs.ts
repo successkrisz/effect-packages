@@ -1,5 +1,5 @@
-import type { SQSEvent as _SQSEvent, SQSRecord as _SQSRecord } from 'aws-lambda'
 import { Context, Effect, Either } from 'effect'
+import type { AwsSQSEvent, AwsSQSRecord } from './aws'
 import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
 
@@ -12,7 +12,7 @@ import { makeToHandler } from './makeToHandler'
  */
 export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<
 	SQSEvent,
-	_SQSEvent
+	AwsSQSEvent
 >() {}
 
 /**
@@ -24,7 +24,7 @@ export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<
  */
 export class SQSRecord extends Context.Tag('@effect-lambda/SQSRecord')<
 	SQSRecord,
-	_SQSRecord
+	AwsSQSRecord
 >() {}
 
 /**

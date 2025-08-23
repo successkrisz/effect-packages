@@ -1,5 +1,5 @@
-import type { Handler } from 'aws-lambda'
 import { type ConfigError, type Context, Effect, Layer } from 'effect'
+import type { Handler } from './aws'
 import { HandlerContext } from './common'
 import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime'
 

@@ -1,14 +1,14 @@
+import { Context, Data, Effect, Layer, pipe } from 'effect'
 import type {
-	APIGatewayAuthorizerEvent as _APIGatewayAuthorizerEvent,
 	APIGatewayAuthorizerHandler,
 	APIGatewayAuthorizerResult,
-} from 'aws-lambda'
-import { Context, Data, Effect, Layer, pipe } from 'effect'
+	AwsAPIGatewayAuthorizerEvent,
+} from './aws'
 import { HandlerContext } from './common'
 
 export class APIGatewayAuthorizerEvent extends Context.Tag(
 	'@effect-lambda/APIGatewayAuthorizerEvent',
-)<APIGatewayAuthorizerEvent, _APIGatewayAuthorizerEvent>() {}
+)<APIGatewayAuthorizerEvent, AwsAPIGatewayAuthorizerEvent>() {}
 
 export class UnauthorizedError extends Data.TaggedError(
 	'@effect-lambda/UnauthorizedError',

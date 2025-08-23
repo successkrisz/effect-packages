@@ -1,9 +1,9 @@
-import type {
-	APIGatewayProxyEvent as _APIGatewayProxyEvent,
-	APIGatewayProxyResult,
-	Handler,
-} from 'aws-lambda'
 import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
+import type {
+	APIGatewayProxyResult,
+	AwsAPIGatewayProxyEvent,
+	Handler,
+} from './aws'
 import type { HandlerContext } from './common'
 import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer'
 import { jsonBodyParser } from './internal/jsonBodyParser'
@@ -21,7 +21,7 @@ import { makeToHandler } from './makeToHandler'
  */
 export class APIGatewayProxyEvent extends Context.Tag(
 	'@effect-lambda/APIGatewayProxyEvent',
-)<APIGatewayProxyEvent, _APIGatewayProxyEvent>() {}
+)<APIGatewayProxyEvent, AwsAPIGatewayProxyEvent>() {}
 
 export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.pipe(
 	Effect.map(headerNormalizer),
@@ -165,7 +165,7 @@ export function toLambdaHandler<R, E = never>(
 ): (params: {
 	layer: Layer.Layer<Exclude<R, APIGatewayProxyEvent | HandlerContext>, E>
 	options?: { readonly memoMap?: Layer.MemoMap }
-}) => Handler<_APIGatewayProxyEvent, APIGatewayProxyResult> {
+}) => Handler<AwsAPIGatewayProxyEvent, APIGatewayProxyResult> {
 	const result1 = makeToHandler<
 		typeof APIGatewayProxyEvent,
 		APIGatewayProxyResult

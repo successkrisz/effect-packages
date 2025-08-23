@@ -1,10 +1,10 @@
-import type { SNSEvent as _SNSEvent } from 'aws-lambda'
 import { Context } from 'effect'
+import type { AwsSNSEvent } from './aws'
 import { makeToHandler } from './makeToHandler'
 
 export class SNSEvent extends Context.Tag('@effect-lambda/SNSEvent')<
 	SNSEvent,
-	_SNSEvent
+	AwsSNSEvent
 >() {}
 
 /**

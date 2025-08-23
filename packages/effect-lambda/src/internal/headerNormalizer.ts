@@ -1,4 +1,4 @@
-import type { APIGatewayProxyEvent } from 'aws-lambda'
+import type { AwsAPIGatewayProxyEvent } from '../aws'
 
 export const normalizeHeaders = (headers: {
 	[key: string]: string | undefined
@@ -11,7 +11,7 @@ export const normalizeHeaders = (headers: {
 		{} as { [key: string]: string | undefined },
 	)
 
-export const headerNormalizer = <T extends APIGatewayProxyEvent>(
+export const headerNormalizer = <T extends AwsAPIGatewayProxyEvent>(
 	event: T,
 ): T & {
 	rawHeaders: T['headers']

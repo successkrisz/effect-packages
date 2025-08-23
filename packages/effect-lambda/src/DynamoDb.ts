@@ -1,19 +1,16 @@
-import type {
-	DynamoDBRecord as _DynamoDBRecord,
-	DynamoDBStreamEvent as _DynamoDBStreamEvent,
-} from 'aws-lambda'
 import { Context, Effect } from 'effect'
+import type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent } from './aws'
 import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
 
 // Define a context tag for DynamoDBStreamEvent
 export class DynamoDBStreamEvent extends Context.Tag(
 	'@effect-lambda/DynamoDBStreamEvent',
-)<DynamoDBStreamEvent, _DynamoDBStreamEvent>() {}
+)<DynamoDBStreamEvent, AwsDynamoDBStreamEvent>() {}
 
 export class DynamoDBRecord extends Context.Tag(
 	'@effect-lambda/DynamoDBRecord',
-)<DynamoDBStreamEvent, _DynamoDBRecord>() {}
+)<DynamoDBStreamEvent, AwsDynamoDBRecord>() {}
 
 // Utility to extract the new images from the DynamoDB stream event
 export const DynamoDBNewImages = DynamoDBStreamEvent.pipe(

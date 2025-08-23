@@ -1,5 +1,5 @@
-import type { APIGatewayProxyEvent } from 'aws-lambda'
 import { Effect, type ParseResult, Schema as s } from 'effect'
+import type { AwsAPIGatewayProxyEvent } from '../aws'
 
 const isJsonContentType = (contentType: string | undefined): boolean => {
 	if (!contentType) return false
@@ -11,7 +11,7 @@ const isJsonContentType = (contentType: string | undefined): boolean => {
 	)
 }
 
-export const jsonBodyParser = <T extends APIGatewayProxyEvent>(
+export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent>(
 	event: T,
 ): Effect.Effect<T & { rawBody?: T['body'] }, ParseResult.ParseError> => {
 	if (event.body !== null && isJsonContentType(event.headers['content-type'])) {
