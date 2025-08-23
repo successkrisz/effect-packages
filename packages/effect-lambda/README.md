@@ -79,6 +79,7 @@ export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
     - [SNS Trigger Handler](#sns-trigger-handler)
     - [DynamoDB Stream Event Handler](#dynamodb-stream-event-handler)
     - [Custom Authorizer Handler](#custom-authorizer-handler)
+    - [makeToHandler](#maketohandler)
   - [Useful other libraries to use with effect-lambda](#useful-other-libraries-to-use-with-effect-lambda)
   - [TODO list](#todo-list)
 
@@ -228,6 +229,8 @@ export const handler = DynamoDb.toLambdaHandler(
 )({ layer: Layer.empty });
 ```
 
+This handler allows you to process DynamoDB stream events in a functional way using the `effect-lambda` library. You can access each record in the stream and apply your business logic accordingly.
+
 ### Custom Authorizer Handler
 
 ```typescript
@@ -258,7 +261,29 @@ export const handler = CustomAuthorizer.toLambdaHandler(
 )
 ```
 
-This handler allows you to process DynamoDB stream events in a functional way using the `effect-lambda` library. You can access each record in the stream and apply your business logic accordingly.
+### makeToHandler
+
+Helper utility to create a handler from an effect, for other event types.
+
+```typescript
+
+import { makeToHandler } from "effect-lambda";
+import { Effect } from "effect";
+import { CloudWatchAlarmEvent } from "aws-lambda";
+
+export class Event extends Context.Tag<Event, CloudWatchAlarmEvent>() {}
+
+export const toHandler = makeToHandler<typeof Event, void>(Event)
+
+const program = Event.pipe(
+  Effect.map((event) => {
+    // Do something with the event
+  }),
+  Effect.asVoid,
+);
+
+export const handler = toHandler(program)({ layer: Layer.empty });
+```
 
 ## Useful other libraries to use with effect-lambda
 
