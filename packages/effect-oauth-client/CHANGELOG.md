@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 0.2.1
+
+### Patch Changes
+
+- [`72b632c`](https://github.com/successkrisz/effect-packages/commit/72b632ce5b9463a72a287887cf68ce5916b1ffd9) Thanks [@successkrisz](https://github.com/successkrisz)! - docs: update jsdocs
+
 ## 0.2.0
 
 ### Minor Changes
