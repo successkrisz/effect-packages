@@ -10,6 +10,11 @@ import { jsonBodyParser } from './internal/jsonBodyParser'
 import { makeToHandler } from './makeToHandler'
 
 /**
+ * Export types from aws-lambda
+ */
+export type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler }
+
+/**
  * The API Gateway event with additional fields for raw headers and
  * raw body.
  *

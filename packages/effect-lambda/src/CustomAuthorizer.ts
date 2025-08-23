@@ -7,6 +7,15 @@ import type {
 import { HandlerContext } from './common'
 
 /**
+ * Export types from aws-lambda
+ */
+export type {
+	APIGatewayAuthorizerHandler,
+	APIGatewayAuthorizerResult,
+	AwsAPIGatewayAuthorizerEvent,
+}
+
+/**
  * Context tag for API Gateway Request Authorizer events.
  *
  * Provides access to the raw `APIGatewayAuthorizerEvent` within effects.

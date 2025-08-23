@@ -4,6 +4,11 @@ import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
 
 /**
+ * Export types from aws-lambda
+ */
+export type { AwsSQSEvent, AwsSQSRecord }
+
+/**
  * Context tag for an incoming SQS event.
  */
 export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<

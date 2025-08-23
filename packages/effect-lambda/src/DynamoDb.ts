@@ -4,6 +4,11 @@ import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
 
 /**
+ * Export types from aws-lambda
+ */
+export type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent }
+
+/**
  * Context tag for the DynamoDB stream event.
  */
 export class DynamoDBStreamEvent extends Context.Tag(
