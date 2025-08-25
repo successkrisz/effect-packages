@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.3.0
+
+### Minor Changes
+
+- [`0f9c083`](https://github.com/successkrisz/effect-packages/commit/0f9c083904ed3ea56236a591218ed59028007b86) Thanks [@successkrisz](https://github.com/successkrisz)! - feat: add http api handler
+
 ## 0.2.2
 
 ### Patch Changes
