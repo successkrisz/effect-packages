@@ -1,4 +1,4 @@
-import type { AwsAPIGatewayProxyEvent } from '../aws'
+import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws'
 
 /**
  * Normalize header keys to lowercase without mutating the input.
@@ -17,12 +17,23 @@ export const normalizeHeaders = (headers: {
 /**
  * Return a new event with lowercased `headers` and original `rawHeaders` preserved.
  */
-export const headerNormalizer = <T extends AwsAPIGatewayProxyEvent>(
-	event: T,
-): T & {
-	rawHeaders: T['headers']
-} => ({
-	...event,
-	headers: normalizeHeaders(event.headers),
-	rawHeaders: event.headers,
-})
+export function headerNormalizer(
+	event: AwsAPIGatewayProxyEvent,
+): AwsAPIGatewayProxyEvent & {
+	rawHeaders: AwsAPIGatewayProxyEvent['headers']
+}
+export function headerNormalizer(
+	event: AwsAPIGatewayProxyEventV2,
+): AwsAPIGatewayProxyEventV2 & {
+	rawHeaders: AwsAPIGatewayProxyEventV2['headers']
+}
+export function headerNormalizer(
+	event: AwsAPIGatewayProxyEvent | AwsAPIGatewayProxyEventV2,
+) {
+	const normalized = normalizeHeaders(event.headers)
+	return {
+		...event,
+		headers: normalized,
+		rawHeaders: event.headers,
+	} satisfies typeof event & { rawHeaders: (typeof event)['headers'] }
+}

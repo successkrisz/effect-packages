@@ -6,6 +6,7 @@ export default defineConfig({
 		'src/CustomAuthorizer.ts',
 		'src/DynamoDb.ts',
 		'src/RestApi.ts',
+		'src/HttpApi.ts',
 		'src/Sns.ts',
 		'src/Sqs.ts',
 	],

@@ -1,5 +1,5 @@
 import { Effect, type ParseResult, Schema as s } from 'effect'
-import type { AwsAPIGatewayProxyEvent } from '../aws'
+import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws'
 
 /** Determine if a content type should be treated as JSON. */
 const isJsonContentType = (contentType: string | undefined): boolean => {
@@ -19,10 +19,17 @@ const isJsonContentType = (contentType: string | undefined): boolean => {
  * - Accepts any media type ending with `+json` or common JSON content types
  * - Returns the parsed JSON and preserves the original body at `rawBody`
  */
-export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent>(
+
+export const jsonBodyParser = <
+	T extends AwsAPIGatewayProxyEvent | AwsAPIGatewayProxyEventV2,
+>(
 	event: T,
 ): Effect.Effect<T & { rawBody?: T['body'] }, ParseResult.ParseError> => {
-	if (event.body !== null && isJsonContentType(event.headers['content-type'])) {
+	if (
+		// v1 has null when absent, v2 is undefined when absent
+		event.body != null &&
+		isJsonContentType(event.headers['content-type'])
+	) {
 		const { body } = event
 		return Effect.if({
 			onTrue: () => Effect.succeed(Buffer.from(body, 'base64').toString()),

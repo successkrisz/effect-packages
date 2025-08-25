@@ -21,13 +21,13 @@ The main approach of this library to use simple Effects as lambda handlers, allo
 Take a look at the following example:
 
 ```typescript
-import { RestApi } from "effect-lambda";
-import { Effect, Console, Layer } from "effect";
-import { Schema } from "@effect/schema";
+import { RestApi } from "effect-lambda"
+import { Effect, Console, Layer } from "effect"
+import * as Schema from 'effect/Schema'
 
 const PayloadSchema = Schema.Struct({
   message: Schema.String,
-});
+})
 
 export const _handler = schemaBodyJson(PayloadSchema).pipe(
   Effect.map((payload) => ({
@@ -40,9 +40,9 @@ export const _handler = schemaBodyJson(PayloadSchema).pipe(
       body: "Bad Request",
     }),
   ),
-);
+)
 
-export const handler = _handler.pipe(RestApi.toLambdaHandler)({ layer: Layer.empty });
+export const handler = _handler.pipe(RestApi.toLambdaHandler)({ layer: Layer.empty })
 
 // Or you can add a post processing middleware to the handler just by mapping over the effect
 export const handlerWithMiddleware = _handler.pipe(
@@ -51,14 +51,14 @@ export const handlerWithMiddleware = _handler.pipe(
     headers: { "Content-Type": "application/json" },
   })),
   RestApi.toLambdaHandler,
-)({ layer: Layer.empty });
+)({ layer: Layer.empty })
 
 // Or you can add a pre-processing middleware
 export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
   Effect.tap((event) => Console.log(`Received event: ${event}`)),
   Effect.flatMap(() => _handler),
   RestApi.toLambdaHandler,
-)({ layer: Layer.empty });
+)({ layer: Layer.empty })
 ```
 
 **Cons:**
@@ -75,6 +75,7 @@ export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
   - [Installation](#installation)
   - [Usage](#usage)
     - [API Gateway Proxy Handler](#api-gateway-proxy-handler)
+    - [HTTP API (payload v2) Handler](#http-api-payload-v2-handler)
     - [SQS Trigger Handler](#sqs-trigger-handler)
     - [SNS Trigger Handler](#sns-trigger-handler)
     - [DynamoDB Stream Event Handler](#dynamodb-stream-event-handler)
@@ -107,24 +108,24 @@ Currently the library provides handlers for the following AWS Lambda triggers:
 
 ```typescript
 // handler.ts
-import { RestApi } from "effect-lambda";
-import { Effect, Layer } from "effect";
-import { Schema } from "@effect/schema";
+import { RestApi } from "effect-lambda"
+import { Effect, Layer } from "effect"
+import * as Schema from 'effect/Schema'
 
 export const handler = RestApi.toLambdaHandler(
   Effect.succeed({
     statusCode: 200,
     body: JSON.stringify({ message: "Hello, World!" }),
   }),
-)({ layer: Layer.empty });
+)({ layer: Layer.empty })
 
 // Or access the payload and path parameters from the event
 const PayloadSchema = Schema.Struct({
   message: Schema.String,
-});
+})
 const PathParamsSchema = Schema.Struct({
   name: Schema.String,
-});
+})
 export const handler = RestApi.toLambdaHandler(
   RestApi.schemaPathParams(PathParamsSchema).pipe(
     Effect.map(({ name }) => name),
@@ -143,37 +144,79 @@ export const handler = RestApi.toLambdaHandler(
       }),
     ),
   ),
-)({ layer: Layer.empty });
+)({ layer: Layer.empty })
+```
+
+### HTTP API (payload v2) Handler
+
+```typescript
+// handler.ts
+import { HttpApi } from "effect-lambda"
+import { Effect, Layer } from "effect"
+import * as Schema from 'effect/Schema'
+
+// Basic handler
+export const handler = HttpApi.toLambdaHandler(
+  Effect.succeed({
+    statusCode: 200,
+    body: JSON.stringify({ message: "Hello, World!" }),
+  }),
+)({ layer: Layer.empty })
+
+// Access payload and params using schemas
+const PayloadSchema = Schema.Struct({
+  message: Schema.String,
+})
+const PathParamsSchema = Schema.Struct({ id: Schema.String })
+
+export const handlerWithSchemas = HttpApi.toLambdaHandler(
+  HttpApi.schemaPathParams(PathParamsSchema).pipe(
+    Effect.map(({ id }) => id),
+    Effect.bindTo("id"),
+    Effect.bind("message", () =>
+      HttpApi.schemaBodyJson(PayloadSchema).pipe(Effect.map((x) => x.message)),
+    ),
+    Effect.map(({ id, message }) => ({
+      statusCode: 200,
+      body: `Hello ${id}, ${message}`,
+      // v2 supports setting cookies on the response
+      cookies: ["session=abc Secure HttpOnly"],
+    })),
+    Effect.catchTag("ParseError", () =>
+      Effect.succeed({ statusCode: 400, body: "Invalid JSON" }),
+    ),
+  ),
+)({ layer: Layer.empty })
 ```
 
 You can use [helmet](https://www.npmjs.com/package/helmet) to secure your application using the provided applyMiddleware utility.
 
 ```typescript
-import { applyMiddleware, RestApi } from "effect-lambda";
-import helmet from "helmet";
-import { Effect, Layer, pipe } from "effect";
+import { applyMiddleware, RestApi } from "effect-lambda"
+import helmet from "helmet"
+import { Effect, Layer, pipe } from "effect"
 
 const toHandler = (effect: Parameters<typeof RestApi.toLambdaHandler>[0]) =>
-  pipe(effect, Effect.map(applyMiddleware(helmet())), RestApi.toLambdaHandler);
+  pipe(effect, Effect.map(applyMiddleware(helmet())), RestApi.toLambdaHandler)
 
 export const handler = Effect.succeed({
   statusCode: 200,
   body: JSON.stringify({ message: "Hello, World!" }),
-}).pipe(toHandler)({ layer: Layer.empty });
+}).pipe(toHandler)({ layer: Layer.empty })
 ```
 
 ### SQS Trigger Handler
 
 ```typescript
-import { SQSEvent, toLambdaHandler } from "effect-lambda/Sqs";
-import { Effect } from "effect";
+import { SQSEvent, toLambdaHandler } from "effect-lambda/Sqs"
+import { Effect, Layer } from "effect"
 export const handler = toLambdaHandler(
   SQSEvent.pipe(
     Effect.map((event) => {
       // Do something with the event
     }),
   ),
-);
+)({ layer: Layer.empty })
 ```
 
 You can also use a record processor to process each record in a batch individually.
@@ -183,40 +226,40 @@ import {
   SQSRecord,
   toLambdaHandler,
   recordProcessorAdapter,
-} from "effect-lambda/Sqs";
-import { Effect } from "effect";
+} from "effect-lambda/Sqs"
+import { Effect, Layer } from "effect"
 
 const processRecord = SQSRecord.pipe(
   Effect.map((record) => {
     // Do something with the record
   }),
-);
+)
 
 export const handler = toLambdaHandler(
   processRecord.pipe(recordProcessorAdapter),
-);
+)({ layer: Layer.empty })
 ```
 
 ### SNS Trigger Handler
 
 ```typescript
-import { Sns } from "effect-lambda";
-import { Effect, Layer } from "effect";
+import { Sns } from "effect-lambda"
+import { Effect, Layer } from "effect"
 export const handler = Sns.toLambdaHandler(
   Sns.SNSEvent.pipe(
     Effect.map((event) => {
       // Do something with the event
     }),
   ),
-)({ layer: Layer.empty });
+)({ layer: Layer.empty })
 ```
 
 ### DynamoDB Stream Event Handler
 
 ```typescript
 // handler.ts
-import { DynamoDb } from "effect-lambda";
-import { Effect, Layer } from "effect";
+import { DynamoDb } from "effect-lambda"
+import { Effect, Layer } from "effect"
 
 export const handler = DynamoDb.toLambdaHandler(
   DynamoDb.DynamoDBStreamEvent.pipe(
@@ -226,7 +269,7 @@ export const handler = DynamoDb.toLambdaHandler(
       ),
     ),
   ),
-)({ layer: Layer.empty });
+)({ layer: Layer.empty })
 ```
 
 This handler allows you to process DynamoDB stream events in a functional way using the `effect-lambda` library. You can access each record in the stream and apply your business logic accordingly.
@@ -234,8 +277,8 @@ This handler allows you to process DynamoDB stream events in a functional way us
 ### Custom Authorizer Handler
 
 ```typescript
-import { CustomAuthorizer } from "effect-lambda";
-import { Effect } from "effect";
+import { CustomAuthorizer } from "effect-lambda"
+import { Effect } from "effect"
 
 export const handler = CustomAuthorizer.toLambdaHandler(
   Effect.gen(function* () {
@@ -267,9 +310,9 @@ Helper utility to create a handler from an effect, for other event types.
 
 ```typescript
 
-import { makeToHandler } from "effect-lambda";
-import { Effect } from "effect";
-import { CloudWatchAlarmEvent } from "aws-lambda";
+import { makeToHandler } from "effect-lambda"
+import { Effect } from "effect"
+import { CloudWatchAlarmEvent } from "aws-lambda"
 
 export class Event extends Context.Tag<Event, CloudWatchAlarmEvent>() {}
 
@@ -280,9 +323,9 @@ const program = Event.pipe(
     // Do something with the event
   }),
   Effect.asVoid,
-);
+)
 
-export const handler = toHandler(program)({ layer: Layer.empty });
+export const handler = toHandler(program)({ layer: Layer.empty })
 ```
 
 ## Useful other libraries to use with effect-lambda
@@ -306,7 +349,7 @@ Effect friendly wrapper for AWS Lambdas
 - [x] Set up GitHub actions
 - [x] Generic makeToHandler function to allow creating ergonomic handlers for different handler types
 - [x] Add Lambda runtime to allow graceful shutdown and clearing up of resources
-- [ ] APIGatewayProxyHandlerV2 - HTTP api with payload version 2
+- [x] APIGatewayProxyHandlerV2 - HTTP api with payload version 2
 - [ ] S3 Put Event Handler
 - [ ] S3 Delete Event Handler
 - [ ] SES Trigger

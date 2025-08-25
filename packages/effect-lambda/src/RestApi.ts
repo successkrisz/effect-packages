@@ -32,7 +32,7 @@ export class APIGatewayProxyEvent extends Context.Tag(
 )<APIGatewayProxyEvent, AwsAPIGatewayProxyEvent>() {}
 
 export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.pipe(
-	Effect.map(headerNormalizer),
+	Effect.map((event) => headerNormalizer(event)),
 )
 
 /**
