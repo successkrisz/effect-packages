@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.3.1
+
+### Patch Changes
+
+- [`f678a30`](https://github.com/successkrisz/effect-packages/commit/f678a30aeb7b197498fd528b9482e51e3562dd28) Thanks [@successkrisz](https://github.com/successkrisz)! - fix: export common types
+
 ## 0.3.0
 
 ### Minor Changes
