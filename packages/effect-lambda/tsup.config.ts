@@ -10,7 +10,7 @@ export default defineConfig({
 		'src/Sns.ts',
 		'src/Sqs.ts',
 	],
-	format: ['esm'],
+	format: ['esm', 'cjs'],
 	dts: true,
 	sourcemap: true,
 	clean: true,

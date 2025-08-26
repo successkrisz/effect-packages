@@ -8,6 +8,7 @@
 		"lint": "biome check",
 		"test": "vitest --run",
 		"test:watch": "vitest --watch",
+		"test:compat": "vitest --run -c vitest.config.compat.ts",
 		"prepare": "husky",
 		"lint-staged": "lint-staged",
 		"typecheck": "pnpm -r --filter './packages/**' run typecheck",

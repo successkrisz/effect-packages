@@ -18,9 +18,9 @@ import {
 } from 'effect'
 import type { ConfigError } from 'effect/ConfigError'
 import type { ParseError } from 'effect/ParseResult'
-import { OAuthClient } from '../src/effect-oauth-client'
+import * as OAuthClient from '../src/effect-oauth-client'
 
-// ===== Fleet API Schemas =====
+// ===== API Schemas =====
 
 const FooSchema = Schema.Struct({
 	foo: Schema.String,
@@ -203,5 +203,19 @@ describe('OAuthClient', () => {
 				error.cause._tag === 'Fail' &&
 				error.cause.error._tag,
 		).toBe('@ballatech/effect-oauth-client/AuthorizationError')
+	})
+
+	it('isAuthorizationError should correctly identify AuthorizationError instances', () => {
+		const error = new OAuthClient.AuthorizationError({
+			message: 'Some error',
+			code: 'client_error',
+		})
+
+		const notError = { message: 'Other', code: 'client_error' }
+		const anotherError = new Error('Not an auth error')
+
+		expect(OAuthClient.isAuthorizationError(error)).toBe(true)
+		expect(OAuthClient.isAuthorizationError(notError)).toBe(false)
+		expect(OAuthClient.isAuthorizationError(anotherError)).toBe(false)
 	})
 })

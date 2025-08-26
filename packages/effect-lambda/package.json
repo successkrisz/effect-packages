@@ -10,33 +10,44 @@
 	},
 	"sideEffects": false,
 	"type": "module",
-	"main": "./dist/index.js",
+	"main": "./dist/index.cjs",
 	"module": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
 		},
 		"./RestApi": {
 			"types": "./dist/RestApi.d.ts",
-			"import": "./dist/RestApi.js"
+			"import": "./dist/RestApi.js",
+			"require": "./dist/RestApi.cjs"
+		},
+		"./HttpApi": {
+			"types": "./dist/HttpApi.d.ts",
+			"import": "./dist/HttpApi.js",
+			"require": "./dist/HttpApi.cjs"
 		},
 		"./Sns": {
 			"types": "./dist/Sns.d.ts",
-			"import": "./dist/Sns.js"
+			"import": "./dist/Sns.js",
+			"require": "./dist/Sns.cjs"
 		},
 		"./Sqs": {
 			"types": "./dist/Sqs.d.ts",
-			"import": "./dist/Sqs.js"
+			"import": "./dist/Sqs.js",
+			"require": "./dist/Sqs.cjs"
 		},
 		"./CustomAuthorizer": {
 			"types": "./dist/CustomAuthorizer.d.ts",
-			"import": "./dist/CustomAuthorizer.js"
+			"import": "./dist/CustomAuthorizer.js",
+			"require": "./dist/CustomAuthorizer.cjs"
 		},
 		"./DynamoDb": {
 			"types": "./dist/DynamoDb.d.ts",
-			"import": "./dist/DynamoDb.js"
+			"import": "./dist/DynamoDb.js",
+			"require": "./dist/DynamoDb.cjs"
 		}
 	},
 	"files": [
