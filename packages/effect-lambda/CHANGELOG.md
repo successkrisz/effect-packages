@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.4.0
+
+### Minor Changes
+
+- [`3b0fb7f`](https://github.com/successkrisz/effect-packages/commit/3b0fb7f04d2375f4dee4bb09cc3bd8642e2261ec) Thanks [@successkrisz](https://github.com/successkrisz)! - fix: export HandlerContext
+
 ## 0.3.1
 
 ### Patch Changes
