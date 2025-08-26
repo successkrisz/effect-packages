@@ -24,7 +24,7 @@
 	"license": "MIT",
 	"packageManager": "pnpm@10.15.0",
 	"devDependencies": {
-		"@biomejs/biome": "^2.2.0",
+		"@biomejs/biome": "^2.2.2",
 		"@changesets/changelog-github": "^0.5.1",
 		"@changesets/cli": "^2.29.6",
 		"@effect/vitest": "^0.25.1",

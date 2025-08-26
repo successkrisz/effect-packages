@@ -59,10 +59,14 @@
 	"peerDependencies": {
 		"@effect/platform": "catalog:",
 		"@types/node": "catalog:",
-		"effect": "catalog:"
+		"effect": "catalog:",
+		"@types/aws-lambda": "catalog:"
 	},
 	"peerDependenciesMeta": {
 		"@types/node": {
+			"optional": true
+		},
+		"@types/aws-lambda": {
 			"optional": true
 		}
 	},
