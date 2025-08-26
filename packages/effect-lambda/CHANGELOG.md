@@ -1,5 +1,13 @@
 # effect-lambda
 
+## 0.4.0
+
+### Minor Changes
+
+- [`3b0fb7f`](https://github.com/successkrisz/effect-packages/commit/3b0fb7f04d2375f4dee4bb09cc3bd8642e2261ec) Thanks [@successkrisz](https://github.com/successkrisz)! - fix: export HandlerContext
+
+- [`4aaf96e`](https://github.com/successkrisz/effect-packages/commit/4aaf96ea20a6d3e9d443cf980975f24b43d0fc36) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: add cjs exports and remove ts namespace
+
 ## 0.3.1
 
 ### Patch Changes
