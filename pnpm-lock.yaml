@@ -16,8 +16,8 @@ catalogs:
       specifier: ^22.17.2
       version: 22.17.2
     effect:
-      specifier: ^3.17.8
-      version: 3.17.8
+      specifier: ^3.17.9
+      version: 3.17.9
 
 importers:
 
@@ -34,7 +34,7 @@ importers:
         version: 2.29.6(@types/node@22.17.2)
       '@effect/vitest':
         specifier: ^0.25.1
-        version: 0.25.1(effect@3.17.8)(vitest@3.2.4(@types/node@22.17.2)(yaml@2.8.1))
+        version: 0.25.1(effect@3.17.9)(vitest@3.2.4(@types/node@22.17.2)(yaml@2.8.1))
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -59,13 +59,13 @@ importers:
     devDependencies:
       '@effect/platform':
         specifier: 'catalog:'
-        version: 0.90.6(effect@3.17.8)
+        version: 0.90.6(effect@3.17.9)
       '@types/node':
         specifier: 'catalog:'
         version: 22.17.2
       effect:
         specifier: 'catalog:'
-        version: 3.17.8
+        version: 3.17.9
       helmet:
         specifier: ^8.1.0
         version: 8.1.0
@@ -74,10 +74,10 @@ importers:
     devDependencies:
       '@effect/platform':
         specifier: 'catalog:'
-        version: 0.90.6(effect@3.17.8)
+        version: 0.90.6(effect@3.17.9)
       effect:
         specifier: 'catalog:'
-        version: 3.17.8
+        version: 3.17.9
 
   packages/tsconfig: {}
 
@@ -758,8 +758,8 @@ packages:
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
 
-  effect@3.17.8:
-    resolution: {integrity: sha512-3X2DahqmaTwDdvdYuX/MFhYA4srjO21NodMWhCXPMRK/3IQlByJyNFpZrXCWfnMrlr6DsLI+EgI3rqqAQtWrIA==}
+  effect@3.17.9:
+    resolution: {integrity: sha512-Nkkn9n1zhy30Dq0MpQatDCH7nfYnOIiebkOHNxmmvoVnEDKCto+2ZwDDWFGzcN/ojwfqjRXWGC9Lo91K5kwZCg==}
 
   emoji-regex@10.4.0:
     resolution: {integrity: sha512-EC+0oUMY1Rqm4O6LLrgjtYDvcVYTy7chDnM4Q7030tP4Kwj3u/pR6gP9ygnp2CJMK5Gq+9Q2oqmrFJAz01DXjw==}
@@ -1699,16 +1699,16 @@ snapshots:
       human-id: 4.1.1
       prettier: 2.8.8
 
-  '@effect/platform@0.90.6(effect@3.17.8)':
+  '@effect/platform@0.90.6(effect@3.17.9)':
     dependencies:
-      effect: 3.17.8
+      effect: 3.17.9
       find-my-way-ts: 0.1.6
       msgpackr: 1.11.5
       multipasta: 0.2.7
 
-  '@effect/vitest@0.25.1(effect@3.17.8)(vitest@3.2.4(@types/node@22.17.2)(yaml@2.8.1))':
+  '@effect/vitest@0.25.1(effect@3.17.9)(vitest@3.2.4(@types/node@22.17.2)(yaml@2.8.1))':
     dependencies:
-      effect: 3.17.8
+      effect: 3.17.9
       vitest: 3.2.4(@types/node@22.17.2)(yaml@2.8.1)
 
   '@esbuild/aix-ppc64@0.25.9':
@@ -2109,7 +2109,7 @@ snapshots:
 
   eastasianwidth@0.2.0: {}
 
-  effect@3.17.8:
+  effect@3.17.9:
     dependencies:
       '@standard-schema/spec': 1.0.0
       fast-check: 3.23.2

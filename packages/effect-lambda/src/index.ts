@@ -1,6 +1,7 @@
 export * from './applyMiddleware'
 export type * from './aws'
 export * as CustomAuthorizer from './CustomAuthorizer'
+export * from './common'
 export * as DynamoDb from './DynamoDb'
 export * as HttpApi from './HttpApi'
 export { makeToHandler } from './makeToHandler'
