@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.4.1
+
+### Patch Changes
+
+- [`23b9d65`](https://github.com/successkrisz/effect-packages/commit/23b9d65294ab0e0d8ded1f829c5ea1e3c8edb151) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: add cjs exports and remove ts namespace
+
 ## 0.4.0
 
 ### Minor Changes
