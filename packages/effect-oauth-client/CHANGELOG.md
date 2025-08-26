@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 0.3.0
+
+### Minor Changes
+
+- [`4aaf96e`](https://github.com/successkrisz/effect-packages/commit/4aaf96ea20a6d3e9d443cf980975f24b43d0fc36) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: add cjs exports and remove ts namespace
+
 ## 0.2.1
 
 ### Patch Changes
