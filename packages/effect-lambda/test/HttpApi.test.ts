@@ -97,9 +97,7 @@ describe('HttpApi', () => {
 			(eff) => toLambdaHandler(eff),
 		)({ layer: Layer.empty })
 
-		const base64Body = Buffer.from(JSON.stringify({ msg: 'hello' })).toString(
-			'base64',
-		)
+		const base64Body = Buffer.from(JSON.stringify({ msg: 'hello' })).toString('base64')
 		const event = createEvent(base64Body, true, {
 			'content-type': 'application/json',
 		})

@@ -33,9 +33,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 		const files = fs.readdirSync(packDir)
 
 		const lambdaTar = files.find((f) => /^effect-lambda-.*\.tgz$/.test(f))
-		const oauthTar = files.find((f) =>
-			/^ballatech-effect-oauth-client-.*\.tgz$/.test(f),
-		)
+		const oauthTar = files.find((f) => /^ballatech-effect-oauth-client-.*\.tgz$/.test(f))
 
 		expect(lambdaTar, 'effect-lambda tarball not found').toBeTruthy()
 		expect(oauthTar, 'effect-oauth-client tarball not found').toBeTruthy()
@@ -44,9 +42,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 		const oauthTarPath = path.join(packDir, oauthTar as string)
 
 		// Prepare a base temp folder
-		const baseTmp = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'effect-packages-compat-'),
-		)
+		const baseTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'effect-packages-compat-'))
 
 		// 2) CJS project
 		{

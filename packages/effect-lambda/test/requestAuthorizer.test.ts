@@ -1,9 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import type {
-	APIGatewayAuthorizerEvent,
-	APIGatewayAuthorizerResult,
-	Context,
-} from 'aws-lambda'
+import type { APIGatewayAuthorizerEvent, APIGatewayAuthorizerResult, Context } from 'aws-lambda'
 import { Effect } from 'effect'
 import {
 	toLambdaHandler as CustomAuthorizerHandler,
@@ -23,8 +19,7 @@ describe('toHandler', () => {
 					{
 						Action: 'execute-api:Invoke', // Action allowed
 						Effect: 'Allow', // Allow or Deny
-						Resource:
-							'arn:aws:execute-api:region:account-id:api-id/stage/METHOD/resource-path', // Resource ARN
+						Resource: 'arn:aws:execute-api:region:account-id:api-id/stage/METHOD/resource-path', // Resource ARN
 					},
 				],
 			},
@@ -42,27 +37,19 @@ describe('toHandler', () => {
 		const handler = effect.pipe(CustomAuthorizerHandler)
 
 		return expect(
-			await handler(
-				event as unknown as APIGatewayAuthorizerEvent,
-				mockContext,
-				() => {},
-			),
+			await handler(event as unknown as APIGatewayAuthorizerEvent, mockContext, () => {}),
 		).toEqual(response)
 	})
 
 	it('should throw UnauthorizedError for unauthorized access', async () => {
-		const effect = Effect.fail(
-			new UnauthorizedError(),
-		) as unknown as Parameters<typeof CustomAuthorizerHandler>[0]
+		const effect = Effect.fail(new UnauthorizedError()) as unknown as Parameters<
+			typeof CustomAuthorizerHandler
+		>[0]
 
 		const handler = effect.pipe(CustomAuthorizerHandler)
 
 		return expect(
-			handler(
-				event as unknown as APIGatewayAuthorizerEvent,
-				mockContext,
-				() => {},
-			),
+			handler(event as unknown as APIGatewayAuthorizerEvent, mockContext, () => {}),
 		).rejects.toThrow()
 	})
 })

@@ -1,8 +1,4 @@
-import {
-	FetchHttpClient,
-	type HttpClient,
-	HttpClientResponse,
-} from '@effect/platform'
+import { FetchHttpClient, type HttpClient, HttpClientResponse } from '@effect/platform'
 import { beforeEach, describe, expect, it, vi } from '@effect/vitest'
 import {
 	Context,
@@ -34,10 +30,7 @@ const makeService1 = (creds: OAuthClient.Credentials) =>
 		const getSecretFoo = () =>
 			client
 				.get('https://api.example.com/secret-foo')
-				.pipe(
-					Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)),
-					Effect.scoped,
-				)
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
 
 		return {
 			getSecretFoo,
@@ -71,10 +64,7 @@ describe('OAuthClient', () => {
 		const FetchTest = Layer.succeed(FetchHttpClient.Fetch, fetch)
 		const TestLayer = FetchHttpClient.layer.pipe(Layer.provide(FetchTest))
 		rt = ManagedRuntime.make(
-			SomeService1Layer.pipe(
-				Layer.provideMerge(TestLayer),
-				Layer.provide(TestContext.TestContext),
-			),
+			SomeService1Layer.pipe(Layer.provideMerge(TestLayer), Layer.provide(TestContext.TestContext)),
 		)
 	})
 
@@ -109,12 +99,8 @@ describe('OAuthClient', () => {
 		expect(res2.foo).toBe('secretFoo')
 
 		expect(fetch.mock.calls.length).toBe(3)
-		expect(
-			fetch.mock.calls.filter((c) => c[0].href.includes('token')).length,
-		).toBe(1)
-		expect(
-			fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length,
-		).toBe(2)
+		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(1)
+		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(2)
 		// console.log(
 		//   "HTTP calls:",
 		//   fetch.mock.calls.map((c) => c[0].href)
@@ -149,18 +135,12 @@ describe('OAuthClient', () => {
 			return res
 		})
 
-		const res1 = await rt.runPromise(
-			prog.pipe(Effect.provide(TestContext.TestContext)),
-		)
+		const res1 = await rt.runPromise(prog.pipe(Effect.provide(TestContext.TestContext)))
 		expect(res1.foo).toBe('secretFoo')
 
 		expect(fetch.mock.calls.length).toBe(6)
-		expect(
-			fetch.mock.calls.filter((c) => c[0].href.includes('token')).length,
-		).toBe(2)
-		expect(
-			fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length,
-		).toBe(4)
+		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(2)
+		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(4)
 		// console.log(fetch.mock.calls.map((c) => c[0].href))
 	})
 
@@ -185,24 +165,16 @@ describe('OAuthClient', () => {
 			return yield* service.getSecretFoo()
 		})
 
-		const error = await rt.runPromiseExit(
-			prog.pipe(Effect.provide(TestContext.TestContext)),
-		)
+		const error = await rt.runPromiseExit(prog.pipe(Effect.provide(TestContext.TestContext)))
 
 		// Should only call token endpoint once and secret endpoint once
-		expect(
-			fetch.mock.calls.filter((c) => c[0].href.includes('token')).length,
-		).toBe(1)
-		expect(
-			fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length,
-		).toBe(1)
+		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(1)
+		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(1)
 
 		expect(error._tag).toBe('Failure')
-		expect(
-			Exit.isFailure(error) &&
-				error.cause._tag === 'Fail' &&
-				error.cause.error._tag,
-		).toBe('@ballatech/effect-oauth-client/AuthorizationError')
+		expect(Exit.isFailure(error) && error.cause._tag === 'Fail' && error.cause.error._tag).toBe(
+			'@ballatech/effect-oauth-client/AuthorizationError',
+		)
 	})
 
 	it('isAuthorizationError should correctly identify AuthorizationError instances', () => {

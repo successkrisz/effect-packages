@@ -24,9 +24,10 @@ export type {
  * - Headers are normalized to lowercase when using `NormalizedAPIGatewayProxyEventV2`
  * - Body is parsed to JSON when `content-type` is JSON using `schemaBodyJson`
  */
-export class APIGatewayProxyEventV2 extends Context.Tag(
-	'@effect-lambda/APIGatewayProxyEventV2',
-)<APIGatewayProxyEventV2, AwsAPIGatewayProxyEventV2>() {}
+export class APIGatewayProxyEventV2 extends Context.Tag('@effect-lambda/APIGatewayProxyEventV2')<
+	APIGatewayProxyEventV2,
+	AwsAPIGatewayProxyEventV2
+>() {}
 
 /** Lazily-normalized (lowercased) headers and preserved rawHeaders on the event. */
 export const NormalizedAPIGatewayProxyEventV2 = APIGatewayProxyEventV2.pipe(
@@ -60,9 +61,7 @@ export const schemaPathParams = <A, I, R extends never>(
 ) =>
 	APIGatewayProxyEventV2.pipe(
 		Effect.map((e) => e.pathParameters || {}),
-		Effect.flatMap((params) =>
-			Schema.decodeUnknownEither(schema, options)(params),
-		),
+		Effect.flatMap((params) => Schema.decodeUnknownEither(schema, options)(params)),
 	)
 
 /**
@@ -98,10 +97,9 @@ export function toLambdaHandler<R, E = never>(
 	layer: Layer.Layer<Exclude<R, APIGatewayProxyEventV2 | HandlerContext>, E>
 	options?: { readonly memoMap?: Layer.MemoMap }
 }) => APIGatewayProxyHandlerV2 {
-	const result1 = makeToHandler<
-		typeof APIGatewayProxyEventV2,
-		AwsAPIGatewayProxyResultV2
-	>(APIGatewayProxyEventV2)
+	const result1 = makeToHandler<typeof APIGatewayProxyEventV2, AwsAPIGatewayProxyResultV2>(
+		APIGatewayProxyEventV2,
+	)
 
 	const result2 = result1<R | APIGatewayProxyEventV2 | HandlerContext, E>(
 		handler.pipe(

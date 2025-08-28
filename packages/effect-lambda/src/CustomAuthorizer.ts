@@ -27,9 +27,7 @@ export class APIGatewayAuthorizerEvent extends Context.Tag(
 /**
  * Error signaling an authorization failure in a custom authorizer.
  */
-export class UnauthorizedError extends Data.TaggedError(
-	'@effect-lambda/UnauthorizedError',
-) {}
+export class UnauthorizedError extends Data.TaggedError('@effect-lambda/UnauthorizedError') {}
 
 /**
  * Convert an effectful authorization program into an `APIGatewayAuthorizerHandler`.

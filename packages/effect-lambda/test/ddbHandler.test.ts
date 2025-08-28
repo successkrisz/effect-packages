@@ -1,9 +1,6 @@
 /** biome-ignore-all lint/suspicious/useIterableCallbackReturn: it's a test */
 import { describe, expect, it } from '@effect/vitest'
-import type {
-	DynamoDBStreamEvent as _DynamoDBStreamEvent,
-	Context,
-} from 'aws-lambda'
+import type { DynamoDBStreamEvent as _DynamoDBStreamEvent, Context } from 'aws-lambda'
 import { Effect, Layer } from 'effect'
 import { HandlerContext } from '../src/common'
 import {
@@ -36,11 +33,7 @@ describe('ddbHandler', () => {
 					expect(_event).toEqual(event)
 				}),
 			),
-		)({ layer: Layer.empty })(
-			event as _DynamoDBStreamEvent,
-			{} as Context,
-			() => {},
-		)
+		)({ layer: Layer.empty })(event as _DynamoDBStreamEvent, {} as Context, () => {})
 
 		await expect(actual).resolves.toBe(undefined)
 	})
@@ -64,16 +57,10 @@ describe('ddbHandler', () => {
 		const actual = DynamoDBStreamEventHandler(
 			DynamoDBNewImages.pipe(
 				Effect.map((newImages) => {
-					expect(newImages).toEqual(
-						event.Records.map((r) => r.dynamodb?.NewImage),
-					)
+					expect(newImages).toEqual(event.Records.map((r) => r.dynamodb?.NewImage))
 				}),
 			),
-		)({ layer: Layer.empty })(
-			event as _DynamoDBStreamEvent,
-			{} as Context,
-			() => {},
-		)
+		)({ layer: Layer.empty })(event as _DynamoDBStreamEvent, {} as Context, () => {})
 
 		await expect(actual).resolves.toBe(undefined)
 	})

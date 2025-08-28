@@ -6,6 +6,12 @@ settings:
 
 catalogs:
   default:
+    '@ballatech/tsconfig':
+      specifier: ^1.1.2
+      version: 1.1.2
+    '@effect/language-service':
+      specifier: ^0.36.0
+      version: 0.36.0
     '@effect/platform':
       specifier: ^0.90.6
       version: 0.90.6
@@ -23,6 +29,9 @@ importers:
 
   .:
     devDependencies:
+      '@ballatech/biome-config':
+        specifier: ^1.0.0
+        version: 1.0.0(@biomejs/biome@2.2.2)
       '@biomejs/biome':
         specifier: ^2.2.2
         version: 2.2.2
@@ -57,6 +66,12 @@ importers:
         specifier: 'catalog:'
         version: 8.10.152
     devDependencies:
+      '@ballatech/tsconfig':
+        specifier: 'catalog:'
+        version: 1.1.2(@effect/language-service@0.36.0)(@types/node@22.18.0)
+      '@effect/language-service':
+        specifier: 'catalog:'
+        version: 0.36.0
       '@effect/platform':
         specifier: 'catalog:'
         version: 0.90.6(effect@3.17.9)
@@ -72,20 +87,38 @@ importers:
 
   packages/effect-oauth-client:
     devDependencies:
+      '@ballatech/tsconfig':
+        specifier: 'catalog:'
+        version: 1.1.2(@effect/language-service@0.36.0)(@types/node@22.18.0)
+      '@effect/language-service':
+        specifier: 'catalog:'
+        version: 0.36.0
       '@effect/platform':
         specifier: 'catalog:'
         version: 0.90.6(effect@3.17.9)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.18.0
       effect:
         specifier: 'catalog:'
         version: 3.17.9
-
-  packages/tsconfig: {}
 
 packages:
 
   '@babel/runtime@7.28.3':
     resolution: {integrity: sha512-9uIQ10o0WGdpP6GDhXcdOJPJuDgFtIDtN/9+ArJQ2NAfAmiuhTQdzkaTGR33v43GYS2UrSA0eX2pPPHoFVvpxA==}
     engines: {node: '>=6.9.0'}
+
+  '@ballatech/biome-config@1.0.0':
+    resolution: {integrity: sha512-MRIrNSOcedvCZaiz0B/j6wyhuSqrnOIM5sTcBCLlhynBViv4PbEI5CTroQ4YtOIrHIVOBs9t0hzYNuinZNilew==}
+    peerDependencies:
+      '@biomejs/biome': ^2.2.2
+
+  '@ballatech/tsconfig@1.1.2':
+    resolution: {integrity: sha512-dLh7TliLStnFYMIUnOWmkhApyE1Ha8CXEe1/mMn1p0Or7K0UMlL9gb+EDdTtA8cqpIBIfO2GKeanFZLtB8FPoA==}
+    peerDependencies:
+      '@effect/language-service': ^0.36.0
+      '@types/node': ^22.18.0
 
   '@biomejs/biome@2.2.2':
     resolution: {integrity: sha512-j1omAiQWCkhuLgwpMKisNKnsM6W8Xtt1l0WZmqY/dFj8QPNkIoTvk4tSsi40FaAAkBE1PU0AFG2RWFBWenAn+w==}
@@ -200,6 +233,10 @@ packages:
 
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
+
+  '@effect/language-service@0.36.0':
+    resolution: {integrity: sha512-KoE5e+7vhcd29fBTDBvttWHv1z1KPg9Ji2DyhD0hETBaoM9IsFymboD6WqpDoGH1QZRr6CmTD3DfaZUs8K6Mrg==}
+    hasBin: true
 
   '@effect/platform@0.90.6':
     resolution: {integrity: sha512-aT7aLJR1+rYrSLdw5af2UZzwnWoAy8WmkTxTUD3pFY6vjFmh+8137RhbwKiWjIJBTm2DVyPXl1dx1kGg28xt6Q==}
@@ -1505,6 +1542,15 @@ snapshots:
 
   '@babel/runtime@7.28.3': {}
 
+  '@ballatech/biome-config@1.0.0(@biomejs/biome@2.2.2)':
+    dependencies:
+      '@biomejs/biome': 2.2.2
+
+  '@ballatech/tsconfig@1.1.2(@effect/language-service@0.36.0)(@types/node@22.18.0)':
+    dependencies:
+      '@effect/language-service': 0.36.0
+      '@types/node': 22.18.0
+
   '@biomejs/biome@2.2.2':
     optionalDependencies:
       '@biomejs/cli-darwin-arm64': 2.2.2
@@ -1698,6 +1744,8 @@ snapshots:
       fs-extra: 7.0.1
       human-id: 4.1.1
       prettier: 2.8.8
+
+  '@effect/language-service@0.36.0': {}
 
   '@effect/platform@0.90.6(effect@3.17.9)':
     dependencies:

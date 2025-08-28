@@ -62,10 +62,7 @@ export function makeToHandler<T extends Context.Tag<any, any>, A>(eventTag: T) {
 		handler: Effect.Effect<NoInfer<A>, typeof ConfigError, R> &
 			([A] extends [never] ? never : unknown),
 	): (params: {
-		layer: Layer.Layer<
-			Exclude<R, Context.Tag.Identifier<T> | HandlerContext>,
-			E
-		>
+		layer: Layer.Layer<Exclude<R, Context.Tag.Identifier<T> | HandlerContext>, E>
 		options?: { readonly memoMap?: Layer.MemoMap }
 	}) => Handler<Context.Tag.Service<T>, A>
 
@@ -74,10 +71,7 @@ export function makeToHandler<T extends Context.Tag<any, any>, A>(eventTag: T) {
 		handler: Effect.Effect<NoInfer<A>, typeof ConfigError, R> &
 			([A] extends [never] ? never : unknown),
 	): (params?: {
-		layer: Layer.Layer<
-			Exclude<R, Context.Tag.Identifier<T> | HandlerContext>,
-			E
-		>
+		layer: Layer.Layer<Exclude<R, Context.Tag.Identifier<T> | HandlerContext>, E>
 		options?: { readonly memoMap?: Layer.MemoMap }
 	}) => Handler<Context.Tag.Service<T>, A> {
 		return (params) => {

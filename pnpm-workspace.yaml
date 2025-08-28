@@ -2,6 +2,8 @@ packages:
   - packages/*
 
 catalog:
+  '@ballatech/tsconfig': '^1.1.2'
+  '@effect/language-service': '^0.36.0'
   '@effect/platform': ^0.90.6
   '@types/aws-lambda': ^8.10.152
   '@types/node': ^22.18.0

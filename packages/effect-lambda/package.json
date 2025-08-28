@@ -62,6 +62,8 @@
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {
+		"@ballatech/tsconfig": "catalog:",
+		"@effect/language-service": "catalog:",
 		"@effect/platform": "catalog:",
 		"@types/node": "catalog:",
 		"effect": "catalog:",
@@ -69,9 +71,9 @@
 	},
 	"peerDependencies": {
 		"@effect/platform": "catalog:",
+		"@types/aws-lambda": "catalog:",
 		"@types/node": "catalog:",
-		"effect": "catalog:",
-		"@types/aws-lambda": "catalog:"
+		"effect": "catalog:"
 	},
 	"peerDependenciesMeta": {
 		"@types/node": {

@@ -96,9 +96,9 @@ const readme = `# ${fullName}
 Package scaffolded via scripts/new-package.mjs
 `
 
-writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(pkgJson, null, '\t') + '\n')
+writeFileSync(join(pkgDir, 'package.json'), `${JSON.stringify(pkgJson, null, '\t')}\n`)
 writeFileSync(join(pkgDir, 'tsup.config.ts'), tsupConfig)
-writeFileSync(join(pkgDir, 'tsconfig.json'), JSON.stringify(tsconfig, null, '\t') + '\n')
+writeFileSync(join(pkgDir, 'tsconfig.json'), `${JSON.stringify(tsconfig, null, '\t')}\n`)
 writeFileSync(join(pkgDir, 'src', 'index.ts'), indexTs)
 writeFileSync(join(pkgDir, 'README.md'), readme)
 
@@ -106,5 +106,3 @@ console.log(`Created package at ${pkgDir}`)
 console.log('Next steps:')
 console.log(`  - pnpm -C ${pkgDir} build`)
 console.log('  - pnpm changeset (to queue a release)')
-
-

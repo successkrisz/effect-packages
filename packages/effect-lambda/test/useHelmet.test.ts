@@ -9,8 +9,6 @@ describe('applyMiddleware', () => {
 		})
 		const result = applyMiddleware(middleware)({ headers: {} })
 
-		expect(result.headers).toEqual(
-			expect.objectContaining({ 'X-XSS-Protection': '0' }),
-		)
+		expect(result.headers).toEqual(expect.objectContaining({ 'X-XSS-Protection': '0' }))
 	})
 })

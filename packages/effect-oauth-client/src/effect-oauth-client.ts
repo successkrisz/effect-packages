@@ -1,18 +1,5 @@
-import {
-	HttpBody,
-	HttpClient,
-	HttpClientRequest,
-	HttpClientResponse,
-} from '@effect/platform'
-import {
-	DateTime,
-	Duration,
-	Effect,
-	Predicate,
-	pipe,
-	Redacted,
-	Schema,
-} from 'effect'
+import { HttpBody, HttpClient, HttpClientRequest, HttpClientResponse } from '@effect/platform'
+import { DateTime, Duration, Effect, Predicate, pipe, Redacted, Schema } from 'effect'
 
 /**
  * OAuth client utilities for obtaining and attaching client credentials tokens.
@@ -73,10 +60,7 @@ export const make = ({
 				]),
 			),
 			HttpClientRequest.basicAuth(clientId, Redacted.value(clientSecret)),
-			HttpClientRequest.setHeader(
-				'Content-Type',
-				'application/x-www-form-urlencoded',
-			),
+			HttpClientRequest.setHeader('Content-Type', 'application/x-www-form-urlencoded'),
 			client.execute,
 			Effect.flatMap(
 				HttpClientResponse.schemaBodyJson(
@@ -126,10 +110,7 @@ export const make = ({
 			}),
 		)
 
-		const [creds, invalidateToken] = yield* Effect.cachedInvalidateWithTTL(
-			getToken,
-			ttl,
-		)
+		const [creds, invalidateToken] = yield* Effect.cachedInvalidateWithTTL(getToken, ttl)
 
 		return client.pipe(
 			HttpClient.mapRequestInput(HttpClientRequest.acceptJson),
@@ -139,9 +120,7 @@ export const make = ({
 					const now = yield* DateTime.now
 					if (DateTime.greaterThan(now, expiresAt)) {
 						yield* invalidateToken
-						return HttpClientRequest.bearerToken((yield* creds).accessToken)(
-							request,
-						)
+						return HttpClientRequest.bearerToken((yield* creds).accessToken)(request)
 					}
 					return HttpClientRequest.bearerToken(accessToken)(request)
 				}),

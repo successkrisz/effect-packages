@@ -85,9 +85,9 @@ describe('RestApi', () => {
 		})
 
 		it('should return effect result without body', async () => {
-			const handler = toLambdaHandler(
-				Effect.succeed({ statusCode: 200, body: 'Woohoo' }),
-			)({ layer: Layer.empty })
+			const handler = toLambdaHandler(Effect.succeed({ statusCode: 200, body: 'Woohoo' }))({
+				layer: Layer.empty,
+			})
 
 			const event = createEvent(null, false, {})
 			const result = await handler(event, mockContext, () => {})
@@ -97,9 +97,9 @@ describe('RestApi', () => {
 		})
 
 		it('should return effect result with body as empty string', async () => {
-			const handler = toLambdaHandler(
-				Effect.succeed({ statusCode: 200, body: 'Woohoo' }),
-			)({ layer: Layer.empty })
+			const handler = toLambdaHandler(Effect.succeed({ statusCode: 200, body: 'Woohoo' }))({
+				layer: Layer.empty,
+			})
 
 			const event = createEvent('', false, {})
 			const result = await handler(event, mockContext, () => {})
@@ -109,9 +109,9 @@ describe('RestApi', () => {
 		})
 
 		it('should return 200 with body when event body is provided', async () => {
-			const handler = toLambdaHandler(
-				Effect.succeed({ statusCode: 200, body: 'Woohoo' }),
-			)({ layer: Layer.empty })
+			const handler = toLambdaHandler(Effect.succeed({ statusCode: 200, body: 'Woohoo' }))({
+				layer: Layer.empty,
+			})
 
 			const event = createEvent('string body', false, {})
 			const result = await handler(event, mockContext, () => {})
@@ -121,13 +121,13 @@ describe('RestApi', () => {
 		})
 
 		it('should return 200 with decoded body when event body is base64 encoded', async () => {
-			const handler = toLambdaHandler(
-				Effect.succeed({ statusCode: 200, body: 'Woohoo' }),
-			)({ layer: Layer.empty })
+			const handler = toLambdaHandler(Effect.succeed({ statusCode: 200, body: 'Woohoo' }))({
+				layer: Layer.empty,
+			})
 
-			const base64Body = Buffer.from(
-				JSON.stringify({ message: 'encoded json body' }),
-			).toString('base64')
+			const base64Body = Buffer.from(JSON.stringify({ message: 'encoded json body' })).toString(
+				'base64',
+			)
 			const event = createEvent(base64Body, true, {
 				'content-type': 'application/json',
 			})
@@ -138,17 +138,15 @@ describe('RestApi', () => {
 		})
 
 		it('should return 500 when an error occurs', async () => {
-			const handler = toLambdaHandler(
-				Effect.die(new Error('Something went wrong')),
-			)({ layer: Layer.empty })
+			const handler = toLambdaHandler(Effect.die(new Error('Something went wrong')))({
+				layer: Layer.empty,
+			})
 
 			const event = createEvent(null, false, {})
 			const result = await handler(event, mockContext, () => {})
 
 			expect(result?.statusCode).toBe(500)
-			expect(result?.body).toBe(
-				JSON.stringify({ message: 'Internal Server Error' }),
-			)
+			expect(result?.body).toBe(JSON.stringify({ message: 'Internal Server Error' }))
 		})
 	})
 
@@ -335,10 +333,8 @@ describe('RestApi', () => {
 			statusCode: 200,
 			body: 'Woohoo',
 		})
-		const handler = pipe(
-			handlerEffect,
-			Effect.map(applyMiddleware(middleware)),
-			(eff) => toLambdaHandler(eff),
+		const handler = pipe(handlerEffect, Effect.map(applyMiddleware(middleware)), (eff) =>
+			toLambdaHandler(eff),
 		)({ layer: Layer.empty })
 
 		const event = createEvent(null, false, {})
@@ -365,16 +361,10 @@ describe('RestApi', () => {
 		const handlerEffect = Effect.succeed({
 			statusCode: 200,
 			body: 'Woohoo',
-		}).pipe(
-			Effect.tap(() =>
-				Effect.flatMap(FooLogger, (logger) => logger.log('Woohoo')),
-			),
-		)
+		}).pipe(Effect.tap(() => Effect.flatMap(FooLogger, (logger) => logger.log('Woohoo'))))
 
 		const toHandler = <R, E = never>(effect: HandlerEffect<R>) =>
-			effect.pipe(Effect.map(applyMiddleware(middleware)), (eff) =>
-				toLambdaHandler<R, E>(eff),
-			)
+			effect.pipe(Effect.map(applyMiddleware(middleware)), (eff) => toLambdaHandler<R, E>(eff))
 
 		const handler = toHandler(handlerEffect)({
 			layer: Layer.succeed(FooLogger, { log: () => Effect.void }),

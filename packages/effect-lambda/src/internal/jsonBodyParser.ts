@@ -20,9 +20,7 @@ const isJsonContentType = (contentType: string | undefined): boolean => {
  * - Returns the parsed JSON and preserves the original body at `rawBody`
  */
 
-export const jsonBodyParser = <
-	T extends AwsAPIGatewayProxyEvent | AwsAPIGatewayProxyEventV2,
->(
+export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent | AwsAPIGatewayProxyEventV2>(
 	event: T,
 ): Effect.Effect<T & { rawBody?: T['body'] }, ParseResult.ParseError> => {
 	if (

@@ -1,13 +1,10 @@
 {
 	"$schema": "https://unpkg.com/@changesets/config@2.3.1/schema.json",
-	"changelog": [
-		"@changesets/changelog-github",
-		{ "repo": "successkrisz/effect-packages" }
-	],
+	"changelog": ["@changesets/changelog-github", { "repo": "successkrisz/effect-packages" }],
 	"commit": false,
 	"access": "public",
 	"baseBranch": "master",
-	"ignore": ["@ballatech/tsconfig"],
+	"ignore": [],
 	"linked": [],
 	"updateInternalDependencies": "patch",
 	"snapshot": {

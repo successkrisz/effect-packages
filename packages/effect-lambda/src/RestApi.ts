@@ -1,9 +1,5 @@
 import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
-import type {
-	APIGatewayProxyResult,
-	AwsAPIGatewayProxyEvent,
-	Handler,
-} from './aws'
+import type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler } from './aws'
 import type { HandlerContext } from './common'
 import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer'
 import { jsonBodyParser } from './internal/jsonBodyParser'
@@ -27,9 +23,10 @@ export type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler }
 /**
  * Context tag for the API Gateway proxy event with normalized headers and JSON/body helpers.
  */
-export class APIGatewayProxyEvent extends Context.Tag(
-	'@effect-lambda/APIGatewayProxyEvent',
-)<APIGatewayProxyEvent, AwsAPIGatewayProxyEvent>() {}
+export class APIGatewayProxyEvent extends Context.Tag('@effect-lambda/APIGatewayProxyEvent')<
+	APIGatewayProxyEvent,
+	AwsAPIGatewayProxyEvent
+>() {}
 
 export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.pipe(
 	Effect.map((event) => headerNormalizer(event)),
@@ -66,9 +63,7 @@ export const schemaPathParams = <A, I, R extends never>(
 ) =>
 	APIGatewayProxyEvent.pipe(
 		Effect.map(({ pathParameters }) => pathParameters || {}),
-		Effect.flatMap((pathParameters) =>
-			Schema.decodeUnknownEither(schema, options)(pathParameters),
-		),
+		Effect.flatMap((pathParameters) => Schema.decodeUnknownEither(schema, options)(pathParameters)),
 	)
 
 /**
@@ -90,9 +85,7 @@ export const schemaQueryParams = <A, I, R extends never>(
  *
  * @deprecated Use `schemaPathParams` instead.
  */
-export const PathParameters = APIGatewayProxyEvent.pipe(
-	Effect.map((x) => x.pathParameters || {}),
-)
+export const PathParameters = APIGatewayProxyEvent.pipe(Effect.map((x) => x.pathParameters || {}))
 
 /**
  * Utility type can be useful when you are composing with
@@ -179,10 +172,9 @@ export function toLambdaHandler<R, E = never>(
 	layer: Layer.Layer<Exclude<R, APIGatewayProxyEvent | HandlerContext>, E>
 	options?: { readonly memoMap?: Layer.MemoMap }
 }) => Handler<AwsAPIGatewayProxyEvent, APIGatewayProxyResult> {
-	const result1 = makeToHandler<
-		typeof APIGatewayProxyEvent,
-		APIGatewayProxyResult
-	>(APIGatewayProxyEvent)
+	const result1 = makeToHandler<typeof APIGatewayProxyEvent, APIGatewayProxyResult>(
+		APIGatewayProxyEvent,
+	)
 
 	const result2 = result1<R | APIGatewayProxyEvent | HandlerContext, E>(
 		handler.pipe(

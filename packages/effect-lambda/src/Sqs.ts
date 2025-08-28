@@ -11,18 +11,12 @@ export type { AwsSQSEvent, AwsSQSRecord }
 /**
  * Context tag for an incoming SQS event.
  */
-export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<
-	SQSEvent,
-	AwsSQSEvent
->() {}
+export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<SQSEvent, AwsSQSEvent>() {}
 
 /**
  * Context tag for a single SQS record.
  */
-export class SQSRecord extends Context.Tag('@effect-lambda/SQSRecord')<
-	SQSRecord,
-	AwsSQSRecord
->() {}
+export class SQSRecord extends Context.Tag('@effect-lambda/SQSRecord')<SQSRecord, AwsSQSRecord>() {}
 
 /**
  * Extract the message bodies from all records in the SQS event.
@@ -82,9 +76,7 @@ export const recordProcessorAdapter = <R = SQSRecord, E = never>(
 	Effect.gen(function* () {
 		const { Records } = yield* SQSEvent
 
-		const effects = Records.map((record) =>
-			effect.pipe(Effect.provideService(SQSRecord, record)),
-		)
+		const effects = Records.map((record) => effect.pipe(Effect.provideService(SQSRecord, record)))
 		const results = yield* Effect.all(effects, {
 			concurrency: 'inherit',
 			mode: 'either',

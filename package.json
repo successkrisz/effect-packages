@@ -25,6 +25,7 @@
 	"license": "MIT",
 	"packageManager": "pnpm@10.15.0",
 	"devDependencies": {
+		"@ballatech/biome-config": "^1.0.0",
 		"@biomejs/biome": "^2.2.2",
 		"@changesets/changelog-github": "^0.5.1",
 		"@changesets/cli": "^2.29.6",

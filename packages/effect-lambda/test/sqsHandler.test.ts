@@ -93,18 +93,13 @@ describe('sqsHandler', () => {
 	it('should return batchItemFailures for failed records', async () => {
 		const processRecord = SQSRecord.pipe(
 			Effect.flatMap((record) =>
-				record.body === 'fail'
-					? Effect.fail('Processing failed')
-					: Effect.succeed(undefined),
+				record.body === 'fail' ? Effect.fail('Processing failed') : Effect.succeed(undefined),
 			),
 		)
 
 		const modifiedEvent = {
 			...event,
-			Records: [
-				...event.Records,
-				{ ...event.Records[0], body: 'fail', messageId: 'fail-id' },
-			],
+			Records: [...event.Records, { ...event.Records[0], body: 'fail', messageId: 'fail-id' }],
 		}
 
 		const result = await processRecord.pipe(
