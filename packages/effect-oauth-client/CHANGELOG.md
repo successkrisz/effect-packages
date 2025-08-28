@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 0.3.1
+
+### Patch Changes
+
+- [`044f2c3`](https://github.com/successkrisz/effect-packages/commit/044f2c3b306bed73fde68838a7afabac814c2f09) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: use reusable tsconfig and biome settings
+
 ## 0.3.0
 
 ### Minor Changes
