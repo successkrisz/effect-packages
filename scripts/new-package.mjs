@@ -36,13 +36,14 @@ const pkgJson = {
 	license: 'MIT',
 	sideEffects: false,
 	type: 'module',
-	main: './dist/index.js',
+	main: './dist/index.cjs',
 	module: './dist/index.js',
 	types: './dist/index.d.ts',
 	exports: {
 		'.': {
 			types: './dist/index.d.ts',
 			import: './dist/index.js',
+			require: './dist/index.cjs',
 		},
 	},
 	files: ['dist/**', 'README.md', 'LICENSE'],
