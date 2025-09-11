@@ -9,6 +9,7 @@ export default defineConfig({
 		'src/HttpApi.ts',
 		'src/Sns.ts',
 		'src/Sqs.ts',
+		'src/HttpResponse.ts',
 	],
 	format: ['esm', 'cjs'],
 	dts: true,

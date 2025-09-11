@@ -146,7 +146,8 @@ describe('RestApi', () => {
 			const result = await handler(event, mockContext, () => {})
 
 			expect(result?.statusCode).toBe(500)
-			expect(result?.body).toBe(JSON.stringify({ message: 'Internal Server Error' }))
+			expect(result?.headers?.['content-type']).toBe('application/problem+json')
+			expect(result?.body).toBe(JSON.stringify({ status: 500, title: 'Internal Server Error' }))
 		})
 	})
 
