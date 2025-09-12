@@ -111,19 +111,19 @@ export type CreatedOptions = Omit<SuccessOptions, 'statusCode'> &
 		location?: string
 	}>
 
-type OkResponse = (
+export type OkResponse = (
 	_: Omit<Parameters<typeof jsonResponse>[0], 'statusCode'> & {
 		statusCode: Exclude<SuccessStatusCode, 204>
 	},
 ) => Effect.Effect<HttpResponse>
 
-type CreatedResponse = (
+export type CreatedResponse = (
 	_: Omit<Parameters<typeof jsonResponse>[0], 'statusCode'> & {
 		location?: string
 	},
 ) => Effect.Effect<HttpResponse>
 
-type NoContentResponse = (headers?: CommonHeaders) => HttpResponse
+export type NoContentResponse = (headers?: CommonHeaders) => HttpResponse
 
 /**
  * 2xx response defaulting to 200 OK
