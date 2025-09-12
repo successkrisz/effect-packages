@@ -21,3 +21,13 @@ export type ToEffect<
 export type LowercaseKeys<T> = {
 	[K in keyof T as Lowercase<string & K>]: T[K]
 }
+
+/** Lowercase object keys. */
+export const lowercaseKeys = <T = unknown>(record: Record<string, T>) =>
+	Object.fromEntries(Object.entries(record).map(([k, v]) => [k.toLowerCase(), v]))
+
+/** Utility type to forbid keys in an object. */
+export type ForbidKeys<K extends PropertyKey> = { [P in K]?: never }
+/** Utility type to forbid keys in an object with values. */
+// biome-ignore lint/suspicious/noExplicitAny: utility type
+export type ForbidKeysWithValues<K extends PropertyKey, V> = ForbidKeys<K> & Record<keyof any, V>

@@ -2,7 +2,7 @@ import { Effect, type ParseResult, Schema as s } from 'effect'
 import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws'
 
 /** Determine if a content type should be treated as JSON. */
-const isJsonContentType = (contentType: string | undefined): boolean => {
+export const isJsonContentType = (contentType: string | undefined): boolean => {
 	if (!contentType) return false
 	const normalized = contentType.toLowerCase()
 	return (

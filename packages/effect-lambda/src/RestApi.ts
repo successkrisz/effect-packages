@@ -2,6 +2,7 @@ import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
 import type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler } from './aws'
 import type { HandlerContext } from './common'
 import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer'
+import { httpStatusMessages } from './internal/http-status-codes'
 import { jsonBodyParser } from './internal/jsonBodyParser'
 import { makeToHandler } from './makeToHandler'
 
@@ -181,7 +182,8 @@ export function toLambdaHandler<R, E = never>(
 			Effect.catchAllDefect(() =>
 				Effect.succeed({
 					statusCode: 500,
-					body: JSON.stringify({ message: 'Internal Server Error' }),
+					body: JSON.stringify({ status: 500, title: httpStatusMessages[500] }),
+					headers: { 'content-type': 'application/problem+json' },
 				}),
 			),
 		),

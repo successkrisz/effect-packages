@@ -76,6 +76,7 @@ export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
   - [Usage](#usage)
     - [API Gateway Proxy Handler](#api-gateway-proxy-handler)
     - [HTTP API (payload v2) Handler](#http-api-payload-v2-handler)
+    - [HttpResponse (response helpers)](#httpresponse-response-helpers)
     - [SQS Trigger Handler](#sqs-trigger-handler)
     - [SNS Trigger Handler](#sns-trigger-handler)
     - [DynamoDB Stream Event Handler](#dynamodb-stream-event-handler)
@@ -188,6 +189,63 @@ export const handlerWithSchemas = HttpApi.toLambdaHandler(
   ),
 )({ layer: Layer.empty })
 ```
+
+### HttpResponse (response helpers)
+
+Helpers to build consistent API responses (including RFC 7807 problem+json) with `effect` encoders. Works with both REST API (v1) and HTTP API (v2) handlers, since both accept the same `statusCode/headers/body` shape.
+
+```ts
+import { HttpResponse } from "effect-lambda"
+import { Effect, Schema as S } from "effect"
+
+// JSON response with schema-based encoding
+const getUser = HttpResponse.jsonResponse({
+  statusCode: 200,
+  body: { id: 123, active: true },
+  schema: S.Struct({ id: S.NumberFromString, active: S.Boolean }),
+  headers: { "X-Trace": "req-1" },
+})
+// => { statusCode: 200, headers: { 'x-trace': 'req-1', 'content-type': 'application/json' }, body: '{"id":"123","active":true}' }
+
+// 2xx helpers
+const ok = HttpResponse.ok({ statusCode: 200, body: { ok: true } })
+const created = HttpResponse.created({ body: { id: 1 }, location: "/users/1" })
+const noContent = HttpResponse.noContent({ "X-Trace": "1" })
+
+// 3xx redirect
+const moved = HttpResponse.redirect({ to: "/new", statusCode: 301, headers: { "X-Req": "1" } })
+
+// 4xx problem+json
+const badReq = HttpResponse.clientError({
+  statusCode: 400,
+  detail: "Invalid input",
+  extensions: { field: "email" },
+})
+
+// Build from ParseError (Effect/Schema)
+const make422 = (parseError: import("effect/ParseResult").ParseError) =>
+  HttpResponse.badRequestFromParseError(parseError, {
+    statusCode: 422,
+    type: "https://example.com/problems/validation-error",
+  })
+
+// 5xx problem+json
+const boom = HttpResponse.serverError({ statusCode: 503, detail: "Downstream unavailable" })
+
+// Each helper returns an Effect (except noContent / redirect), so you can compose:
+export const handler = Effect.succeed({ userId: 1 }).pipe(
+  Effect.flatMap((_) => ok),
+  // ... or choose based on domain outcome
+)
+```
+
+Notes:
+
+- All JSON-producing helpers ensure `content-type: application/json` (or keep a valid JSON media type you provide, e.g. `application/vnd.api+json`).
+- Problem+json helpers (`clientError`, `serverError`, `problem`, `badRequestFromParseError`) always set `content-type: application/problem+json` and derive `title` from the HTTP status.
+- Headers you pass in are normalized to lowercase. This makes comparison and merging predictable.
+- `ok` forbids `204` at the type-level; use `noContent()` for 204.
+- `redirect` merges the `Location` header for you and leaves the body undefined.
 
 You can use [helmet](https://www.npmjs.com/package/helmet) to secure your application using the provided applyMiddleware utility.
 

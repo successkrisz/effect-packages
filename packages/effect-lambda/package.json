@@ -48,6 +48,11 @@
 			"types": "./dist/DynamoDb.d.ts",
 			"import": "./dist/DynamoDb.js",
 			"require": "./dist/DynamoDb.cjs"
+		},
+		"./HttpResponse": {
+			"types": "./dist/HttpResponse.d.ts",
+			"import": "./dist/HttpResponse.js",
+			"require": "./dist/HttpResponse.cjs"
 		}
 	},
 	"files": [
