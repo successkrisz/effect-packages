@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.5.1
+
+### Patch Changes
+
+- [`247af83`](https://github.com/successkrisz/effect-packages/commit/247af83d1ccc0dad188d4628e03af46a339d39a2) Thanks [@successkrisz](https://github.com/successkrisz)! - fix: lambda response body can't be undefined
+
 ## 0.5.0
 
 ### Minor Changes
