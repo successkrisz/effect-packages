@@ -122,7 +122,7 @@ describe('HttpResponse.noContent', () => {
 		const res = noContent({ 'X-Trace': '1' })
 		expect(res.statusCode).toBe(204)
 		expect(res.headers).toEqual({ 'x-trace': '1' })
-		expect(res.body).toBeUndefined()
+		expect(res.body).toBe('')
 	})
 })
 

@@ -194,6 +194,16 @@ export const handlerWithSchemas = HttpApi.toLambdaHandler(
 
 Helpers to build consistent API responses (including RFC 7807 problem+json) with `effect` encoders. Works with both REST API (v1) and HTTP API (v2) handlers, since both accept the same `statusCode/headers/body` shape.
 
+Available helpers:
+
+- `ok` - 2xx response defaulting to 200 OK (excluding 204 No Content)
+- `created` - 201 Created response with optional location header
+- `noContent` - 204 No Content response
+- `redirect` - 3xx response defaulting to 302 Found
+- `clientError` - 4xx client error response
+- `serverError` - 5xx server error response
+- `jsonResponse` - JSON response with schema-based encoding
+
 ```ts
 import { HttpResponse } from "effect-lambda"
 import { Effect, Schema as S } from "effect"

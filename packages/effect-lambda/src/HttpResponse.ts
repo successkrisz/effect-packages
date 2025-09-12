@@ -58,7 +58,7 @@ const jsonResponse = <T = unknown>({
 export type HttpResponse = Readonly<{
 	statusCode: HttpStatusCode
 	headers?: CommonHeaders
-	body?: string
+	body: string
 	isBase64Encoded?: false
 }>
 
@@ -154,6 +154,7 @@ const created: CreatedResponse = ({ location, headers, ...props }) =>
 const noContent: NoContentResponse = (headers) => ({
 	statusCode: 204,
 	headers: headers && lowercaseKeys(headers),
+	body: '',
 })
 
 // -- 3xx Redirection responses --
