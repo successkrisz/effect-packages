@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.5.0
+
+### Minor Changes
+
+- [#12](https://github.com/successkrisz/effect-packages/pull/12) [`c4414ec`](https://github.com/successkrisz/effect-packages/commit/c4414ecfd9782afb96ba1b5296460694a465b25c) Thanks [@successkrisz](https://github.com/successkrisz)! - feat: add HttpResponse
+
 ## 0.4.2
 
 ### Patch Changes
