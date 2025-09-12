@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 0.5.2
+
+### Patch Changes
+
+- [`2fbce66`](https://github.com/successkrisz/effect-packages/commit/2fbce66d657e910a04a7f908cea4c68b8cbd7234) Thanks [@successkrisz](https://github.com/successkrisz)! - fix: HttpResponse types
+
 ## 0.5.1
 
 ### Patch Changes
