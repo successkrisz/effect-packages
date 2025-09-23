@@ -190,4 +190,19 @@ describe('OAuthClient', () => {
 		expect(OAuthClient.isAuthorizationError(notError)).toBe(false)
 		expect(OAuthClient.isAuthorizationError(anotherError)).toBe(false)
 	})
+
+	it('should only send scope and audience if they are provided', async () => {
+		const prog = Effect.gen(function* () {
+			const service = yield* SomeService1
+			return yield* service.getSecretFoo()
+		})
+
+		await rt.runPromiseExit(prog)
+		const s = Object.fromEntries(
+			new URLSearchParams(new TextDecoder('utf-8').decode(fetch.mock.calls[0][1].body)),
+		)
+		expect(s.grant_type).toBe('client_credentials')
+		expect(s.scope).toBeUndefined()
+		expect(s.audience).toBeUndefined()
+	})
 })

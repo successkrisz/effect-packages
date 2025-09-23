@@ -55,8 +55,8 @@ export const make = ({
 			HttpClientRequest.setBody(
 				HttpBody.urlParams([
 					['grant_type', 'client_credentials'],
-					['scope', scope ? scope : ''],
-					['audience', audience ? audience : ''],
+					...((scope ? [['scope', scope]] : []) as readonly [string, string][]),
+					...((audience ? [['audience', audience]] : []) as readonly [string, string][]),
 				]),
 			),
 			HttpClientRequest.basicAuth(clientId, Redacted.value(clientSecret)),
