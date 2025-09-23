@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 0.3.2
+
+### Patch Changes
+
+- [`33a575e`](https://github.com/successkrisz/effect-packages/commit/33a575e3c6ba944439d47414602ffeec2531c54e) Thanks [@successkrisz](https://github.com/successkrisz)! - fix: don't pass in scope or audience as empty string when not provided
+
 ## 0.3.1
 
 ### Patch Changes
