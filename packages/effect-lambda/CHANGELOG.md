@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 1.0.0-beta.0
+
+### Major Changes
+
+- [`1de2850`](https://github.com/successkrisz/effect-packages/commit/1de2850126fc0be581254d486c685e9b2fc66778) - Support Effect v4
+
 ## 0.5.2
 
 ### Patch Changes
