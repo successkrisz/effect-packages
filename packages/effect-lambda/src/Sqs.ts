@@ -1,4 +1,4 @@
-import { Context, Effect, Either } from 'effect'
+import { Effect, Result, ServiceMap } from 'effect'
 import type { AwsSQSEvent, AwsSQSRecord } from './aws'
 import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
@@ -11,18 +11,22 @@ export type { AwsSQSEvent, AwsSQSRecord }
 /**
  * Context tag for an incoming SQS event.
  */
-export class SQSEvent extends Context.Tag('@effect-lambda/SQSEvent')<SQSEvent, AwsSQSEvent>() {}
+export class SQSEvent extends ServiceMap.Service<SQSEvent, AwsSQSEvent>()(
+	'@effect-lambda/SQSEvent',
+) {}
 
 /**
  * Context tag for a single SQS record.
  */
-export class SQSRecord extends Context.Tag('@effect-lambda/SQSRecord')<SQSRecord, AwsSQSRecord>() {}
+export class SQSRecord extends ServiceMap.Service<SQSRecord, AwsSQSRecord>()(
+	'@effect-lambda/SQSRecord',
+) {}
 
 /**
  * Extract the message bodies from all records in the SQS event.
  */
-export const SQSMessageBodies = SQSEvent.pipe(
-	Effect.map((event) => event.Records.map((record) => record.body)),
+export const SQSMessageBodies = SQSEvent.useSync((event) =>
+	event.Records.map((record) => record.body),
 )
 
 /**
@@ -33,10 +37,10 @@ export const SQSMessageBodies = SQSEvent.pipe(
  * import { SQSEvent, toLambdaHandler } from '@effect-lambda/Sqs'
  * import { Effect, Console } from 'effect'
  *
- * const program = SQSEvent.pipe(
- *   Effect.tap((e) => Console.log(`records: ${e.Records.length}`))
+ * const program = SQSEvent.use((e) =>
+ *   Console.log(`records: ${e.Records.length}`)
  * )
- * export const handler = program.pipe(toLambdaHandler)()
+ * export const handler = toLambdaHandler(program)()
  * ```
  */
 export const toLambdaHandler = makeToHandler<
@@ -55,17 +59,16 @@ export const toLambdaHandler = makeToHandler<
  *
  * @example
  * ```typescript
- * import { Console, Effect, Either } from 'effect';
+ * import { Console, Effect } from 'effect';
  * import { SQSRecord, toLambdaHandler, recordProcessorAdapter } from '@effect-lambda/Sqs';
- * // Define an effect that processes a single SQS record
- * const processRecord = SQSRecord.pipe(
- *     Effect.tap((record) => Console.log(record.body))
+ *
+ * const processRecord = SQSRecord.use((record) =>
+ *   Console.log(record.body)
  * );
  *
- * // Adapt the single record processor effect to handle a batch of records and use it with an SQSEventHandler
  * export const handler = processRecord.pipe(
- *    recordProcessorAdapter<never>, // type parameter is required due to TypeScript limitations
- *    Effect.withConcurrency(1), // optional if want sequential processing
+ *    recordProcessorAdapter<never>,
+ *    Effect.withConcurrency(1),
  *    toLambdaHandler,
  * )();
  * ```
@@ -79,13 +82,13 @@ export const recordProcessorAdapter = <R = SQSRecord, E = never>(
 		const effects = Records.map((record) => effect.pipe(Effect.provideService(SQSRecord, record)))
 		const results = yield* Effect.all(effects, {
 			concurrency: 'inherit',
-			mode: 'either',
+			mode: 'result',
 		})
 
 		return {
 			batchItemFailures: results
 				.map((eff, i) => [eff, Records[i].messageId] as const)
-				.filter(([eff]) => Either.isLeft(eff))
+				.filter(([eff]) => Result.isFailure(eff))
 				.map(([_, id]) => ({ itemIdentifier: id })),
 		}
 	})

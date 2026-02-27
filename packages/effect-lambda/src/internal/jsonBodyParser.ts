@@ -1,4 +1,4 @@
-import { Effect, type ParseResult, Schema as s } from 'effect'
+import { Effect, Schema } from 'effect'
 import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws'
 
 /** Determine if a content type should be treated as JSON. */
@@ -22,18 +22,15 @@ export const isJsonContentType = (contentType: string | undefined): boolean => {
 
 export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent | AwsAPIGatewayProxyEventV2>(
 	event: T,
-): Effect.Effect<T & { rawBody?: T['body'] }, ParseResult.ParseError> => {
+): Effect.Effect<T & { rawBody?: T['body'] }, Schema.SchemaError> => {
 	if (
 		// v1 has null when absent, v2 is undefined when absent
 		event.body != null &&
 		isJsonContentType(event.headers['content-type'])
 	) {
 		const { body } = event
-		return Effect.if({
-			onTrue: () => Effect.succeed(Buffer.from(body, 'base64').toString()),
-			onFalse: () => Effect.succeed(body),
-		})(event.isBase64Encoded).pipe(
-			Effect.flatMap(s.decodeEither(s.parseJson(s.Unknown))),
+		const decodedBody = event.isBase64Encoded ? Buffer.from(body, 'base64').toString() : body
+		return Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(decodedBody).pipe(
 			Effect.map((jsonBody) => ({
 				...event,
 				body: jsonBody,

@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Layer, pipe } from 'effect'
+import { Data, Effect, Layer, pipe, ServiceMap } from 'effect'
 import type {
 	APIGatewayAuthorizerHandler,
 	APIGatewayAuthorizerResult,
@@ -20,9 +20,10 @@ export type {
  *
  * Provides access to the raw `APIGatewayAuthorizerEvent` within effects.
  */
-export class APIGatewayAuthorizerEvent extends Context.Tag(
-	'@effect-lambda/APIGatewayAuthorizerEvent',
-)<APIGatewayAuthorizerEvent, AwsAPIGatewayAuthorizerEvent>() {}
+export class APIGatewayAuthorizerEvent extends ServiceMap.Service<
+	APIGatewayAuthorizerEvent,
+	AwsAPIGatewayAuthorizerEvent
+>()('@effect-lambda/APIGatewayAuthorizerEvent') {}
 
 /**
  * Error signaling an authorization failure in a custom authorizer.

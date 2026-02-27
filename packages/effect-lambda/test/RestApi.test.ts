@@ -4,7 +4,7 @@ import type {
 	APIGatewayProxyEvent as AwsAPIGatewayProxyEvent,
 	Context as AwsContext,
 } from 'aws-lambda'
-import { Context, Effect, Layer, pipe, Schema } from 'effect'
+import { Effect, Layer, pipe, Schema, ServiceMap } from 'effect'
 import { applyMiddleware, type Middleware } from '../src/applyMiddleware'
 import {
 	APIGatewayProxyEvent,
@@ -66,15 +66,12 @@ describe('RestApi', () => {
 
 	describe('toLambdaHandler', () => {
 		it('should expose event on the context with original headers', async () => {
-			let evt = {} as Context.Tag.Service<APIGatewayProxyEvent>
+			let evt = {} as AwsAPIGatewayProxyEvent
 
-			const handler = APIGatewayProxyEvent.pipe(
-				Effect.tap((e) => {
-					evt = e
-				}),
-				Effect.as({ statusCode: 200, body: 'Woohoo' }),
-				(eff) => toLambdaHandler(eff),
-			)({ layer: Layer.empty })
+			const handler = APIGatewayProxyEvent.use((e) => {
+				evt = e
+				return Effect.succeed({ statusCode: 200, body: 'Woohoo' })
+			}).pipe((eff) => toLambdaHandler(eff))({ layer: Layer.empty })
 
 			const body = JSON.stringify({ foo: 'bar' })
 			const rawHeaders = { 'Content-Type': 'application/json' }
@@ -175,17 +172,17 @@ describe('RestApi', () => {
 			})
 		})
 
-		it('should return ParseError when body is not valid JSON', async () => {
+		it('should return SchemaError when body is not valid JSON', async () => {
 			const schema = Schema.Struct({ foo: Schema.String })
 			const handler = schemaBodyJson(schema).pipe(
 				Effect.map((body) => ({
 					statusCode: 200,
 					body: JSON.stringify(body),
 				})),
-				Effect.catchTag('ParseError', () =>
+				Effect.catchTag('SchemaError', () =>
 					Effect.succeed({
 						statusCode: 400,
-						body: 'ParseError',
+						body: 'SchemaError',
 					}),
 				),
 				(eff) => toLambdaHandler(eff),
@@ -197,20 +194,20 @@ describe('RestApi', () => {
 			const result = await handler(event, mockContext, () => {})
 
 			expect(result?.statusCode).toBe(400)
-			expect(result?.body).toBe('ParseError')
+			expect(result?.body).toBe('SchemaError')
 		})
 
-		it('should return ParseError when body in not matching schema', async () => {
+		it('should return SchemaError when body in not matching schema', async () => {
 			const schema = Schema.Struct({ foo: Schema.String })
 			const handler = schemaBodyJson(schema).pipe(
 				Effect.map((body) => ({
 					statusCode: 200,
 					body: JSON.stringify(body),
 				})),
-				Effect.catchTag('ParseError', () =>
+				Effect.catchTag('SchemaError', () =>
 					Effect.succeed({
 						statusCode: 400,
-						body: 'ParseError',
+						body: 'SchemaError',
 					}),
 				),
 				(eff) => toLambdaHandler(eff),
@@ -222,7 +219,7 @@ describe('RestApi', () => {
 			const result = await handler(event, mockContext, () => {})
 
 			expect(result?.statusCode).toBe(400)
-			expect(result?.body).toBe('ParseError')
+			expect(result?.body).toBe('SchemaError')
 		})
 	})
 
@@ -299,7 +296,7 @@ describe('RestApi', () => {
 				statusCode: 200,
 				body: `Hello ${name}, ${message}`,
 			})),
-			Effect.catchTag('ParseError', () =>
+			Effect.catchTag('SchemaError', () =>
 				Effect.succeed({
 					statusCode: 400,
 					body: 'Invalid JSON',
@@ -354,15 +351,15 @@ describe('RestApi', () => {
 			res.setHeader('X-XSS-Protection', '0')
 		}) as Middleware
 
-		class FooLogger extends Context.Tag('FooLogger')<
+		class FooLogger extends ServiceMap.Service<
 			FooLogger,
 			{ log: (message: string) => Effect.Effect<void> }
-		>() {}
+		>()('FooLogger') {}
 
 		const handlerEffect = Effect.succeed({
 			statusCode: 200,
 			body: 'Woohoo',
-		}).pipe(Effect.tap(() => Effect.flatMap(FooLogger, (logger) => logger.log('Woohoo'))))
+		}).pipe(Effect.tap(() => FooLogger.use((logger) => logger.log('Woohoo'))))
 
 		const toHandler = <R, E = never>(effect: HandlerEffect<R>) =>
 			effect.pipe(Effect.map(applyMiddleware(middleware)), (eff) => toLambdaHandler<R, E>(eff))

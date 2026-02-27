@@ -40,10 +40,9 @@ export type Middleware = (
  *    statusCode: 200,
  *    body: 'Woohoo',
  * });
- * export const handler = handlerEffect.pipe(
- *    Effect.map(applyMiddleware(middleware)),
- *    RestApi.toLambdaHandler,
- * )();
+ * export const handler = RestApi.toLambdaHandler(
+ *    handlerEffect.pipe(Effect.map(applyMiddleware(middleware)))
+ * )({ layer: Layer.empty });
  */
 /**
  * Apply an Express-style middleware to a response-like object to mutate headers.

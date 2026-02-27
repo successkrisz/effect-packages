@@ -4,7 +4,10 @@
 
 Effect friendly wrapper for AWS Lambda functions.
 
-> **Disclaimer:** This library is still in early development stage and the API is likely to change. Feedback is welcome.
+> [!WARNING]
+> **This version targets [Effect v4 beta](https://github.com/Effect-TS/effect-smol) (`effect@4.0.0-beta.*`).** The APIs use v4 constructs such as `ServiceMap.Service`, `Schema.SchemaError`, and `effect/unstable/http`. If you are on Effect v3, use an earlier version of this package.
+>
+> See the [Effect v4 Beta announcement](https://effect.website/blog/releases/effect/40-beta/) for details.
 
 ## Motivation
 
@@ -29,12 +32,12 @@ const PayloadSchema = Schema.Struct({
   message: Schema.String,
 })
 
-export const _handler = schemaBodyJson(PayloadSchema).pipe(
+export const _handler = RestApi.schemaBodyJson(PayloadSchema).pipe(
   Effect.map((payload) => ({
     statusCode: 200,
     body: JSON.stringify({ message: payload.message }),
   })),
-  Effect.catchTag("ParseError", () =>
+  Effect.catchTag("SchemaError", () =>
     Effect.succeed({
       statusCode: 400,
       body: "Bad Request",
@@ -42,22 +45,23 @@ export const _handler = schemaBodyJson(PayloadSchema).pipe(
   ),
 )
 
-export const handler = _handler.pipe(RestApi.toLambdaHandler)({ layer: Layer.empty })
+export const handler = RestApi.toLambdaHandler(_handler)({ layer: Layer.empty })
 
 // Or you can add a post processing middleware to the handler just by mapping over the effect
-export const handlerWithMiddleware = _handler.pipe(
-  Effect.map((response) => ({
-    ...response,
-    headers: { "Content-Type": "application/json" },
-  })),
-  RestApi.toLambdaHandler,
+export const handlerWithMiddleware = RestApi.toLambdaHandler(
+  _handler.pipe(
+    Effect.map((response) => ({
+      ...response,
+      headers: { "Content-Type": "application/json" },
+    })),
+  ),
 )({ layer: Layer.empty })
 
 // Or you can add a pre-processing middleware
-export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
-  Effect.tap((event) => Console.log(`Received event: ${event}`)),
-  Effect.flatMap(() => _handler),
-  RestApi.toLambdaHandler,
+export const handlerWithPreMiddleware = RestApi.toLambdaHandler(
+  RestApi.APIGatewayProxyEvent.use((event) =>
+    Console.log(`Received event: ${event}`)
+  ).pipe(Effect.flatMap(() => _handler)),
 )({ layer: Layer.empty })
 ```
 
@@ -87,13 +91,13 @@ export const handlerWithPreMiddleware = RestApi.APIGatewayProxyEvent.pipe(
 
 ## Installation
 
-This library has a peer dependency on `effect`. You can install it via npm or pnpm or any other package manager you prefer.
+This library has a peer dependency on `effect` v4 beta. Since `pnpm add effect` installs v3 by default, you must specify the beta tag explicitly:
 
 ```bash
 # pnpm
-pnpm add effect-lambda effect
+pnpm add effect-lambda effect@beta
 # npm
-npm install effect-lambda effect
+npm install effect-lambda effect@beta
 ```
 
 ## Usage
@@ -138,7 +142,7 @@ export const handler = RestApi.toLambdaHandler(
       statusCode: 200,
       body: `Hello ${name}, ${message}`,
     })),
-    Effect.catchTag("ParseError", () =>
+    Effect.catchTag("SchemaError", () =>
       Effect.succeed({
         statusCode: 400,
         body: "Invalid JSON",
@@ -183,7 +187,7 @@ export const handlerWithSchemas = HttpApi.toLambdaHandler(
       // v2 supports setting cookies on the response
       cookies: ["session=abc Secure HttpOnly"],
     })),
-    Effect.catchTag("ParseError", () =>
+    Effect.catchTag("SchemaError", () =>
       Effect.succeed({ statusCode: 400, body: "Invalid JSON" }),
     ),
   ),
@@ -232,9 +236,9 @@ const badReq = HttpResponse.clientError({
   extensions: { field: "email" },
 })
 
-// Build from ParseError (Effect/Schema)
-const make422 = (parseError: import("effect/ParseResult").ParseError) =>
-  HttpResponse.badRequestFromParseError(parseError, {
+// Build from SchemaError (Effect/Schema)
+const make422 = (schemaError: import("effect").Schema.SchemaError) =>
+  HttpResponse.badRequestFromSchemaError(schemaError, {
     statusCode: 422,
     type: "https://example.com/problems/validation-error",
   })
@@ -252,7 +256,7 @@ export const handler = Effect.succeed({ userId: 1 }).pipe(
 Notes:
 
 - All JSON-producing helpers ensure `content-type: application/json` (or keep a valid JSON media type you provide, e.g. `application/vnd.api+json`).
-- Problem+json helpers (`clientError`, `serverError`, `problem`, `badRequestFromParseError`) always set `content-type: application/problem+json` and derive `title` from the HTTP status.
+- Problem+json helpers (`clientError`, `serverError`, `problem`, `badRequestFromSchemaError`) always set `content-type: application/problem+json` and derive `title` from the HTTP status.
 - Headers you pass in are normalized to lowercase. This makes comparison and merging predictable.
 - `ok` forbids `204` at the type-level; use `noContent()` for 204.
 - `redirect` merges the `Location` header for you and leaves the body undefined.
@@ -265,12 +269,14 @@ import helmet from "helmet"
 import { Effect, Layer, pipe } from "effect"
 
 const toHandler = (effect: Parameters<typeof RestApi.toLambdaHandler>[0]) =>
-  pipe(effect, Effect.map(applyMiddleware(helmet())), RestApi.toLambdaHandler)
+  RestApi.toLambdaHandler(pipe(effect, Effect.map(applyMiddleware(helmet()))))
 
-export const handler = Effect.succeed({
-  statusCode: 200,
-  body: JSON.stringify({ message: "Hello, World!" }),
-}).pipe(toHandler)({ layer: Layer.empty })
+export const handler = toHandler(
+  Effect.succeed({
+    statusCode: 200,
+    body: JSON.stringify({ message: "Hello, World!" }),
+  }),
+)({ layer: Layer.empty })
 ```
 
 ### SQS Trigger Handler
@@ -278,12 +284,12 @@ export const handler = Effect.succeed({
 ```typescript
 import { SQSEvent, toLambdaHandler } from "effect-lambda/Sqs"
 import { Effect, Layer } from "effect"
+
 export const handler = toLambdaHandler(
-  SQSEvent.pipe(
-    Effect.map((event) => {
-      // Do something with the event
-    }),
-  ),
+  SQSEvent.use((event) => {
+    // Do something with the event
+    return Effect.void
+  }),
 )({ layer: Layer.empty })
 ```
 
@@ -297,11 +303,10 @@ import {
 } from "effect-lambda/Sqs"
 import { Effect, Layer } from "effect"
 
-const processRecord = SQSRecord.pipe(
-  Effect.map((record) => {
-    // Do something with the record
-  }),
-)
+const processRecord = SQSRecord.use((record) => {
+  // Do something with the record
+  return Effect.void
+})
 
 export const handler = toLambdaHandler(
   processRecord.pipe(recordProcessorAdapter),
@@ -313,12 +318,12 @@ export const handler = toLambdaHandler(
 ```typescript
 import { Sns } from "effect-lambda"
 import { Effect, Layer } from "effect"
+
 export const handler = Sns.toLambdaHandler(
-  Sns.SNSEvent.pipe(
-    Effect.map((event) => {
-      // Do something with the event
-    }),
-  ),
+  Sns.SNSEvent.use((event) => {
+    // Do something with the event
+    return Effect.void
+  }),
 )({ layer: Layer.empty })
 ```
 
@@ -330,11 +335,9 @@ import { DynamoDb } from "effect-lambda"
 import { Effect, Layer } from "effect"
 
 export const handler = DynamoDb.toLambdaHandler(
-  DynamoDb.DynamoDBStreamEvent.pipe(
-    Effect.tap((event) =>
-      Effect.forEach(event.Records, (record) =>
-        Effect.log(`DynamoDB Record: ${record.eventID}`),
-      ),
+  DynamoDb.DynamoDBStreamEvent.use((event) =>
+    Effect.forEach(event.Records, (record) =>
+      Effect.log(`DynamoDB Record: ${record.eventID}`),
     ),
   ),
 )({ layer: Layer.empty })
@@ -377,21 +380,18 @@ export const handler = CustomAuthorizer.toLambdaHandler(
 Helper utility to create a handler from an effect, for other event types.
 
 ```typescript
-
 import { makeToHandler } from "effect-lambda"
-import { Effect } from "effect"
-import { CloudWatchAlarmEvent } from "aws-lambda"
+import { Effect, ServiceMap } from "effect"
+import type { CloudWatchAlarmEvent } from "aws-lambda"
 
-export class Event extends Context.Tag<Event, CloudWatchAlarmEvent>() {}
+class Event extends ServiceMap.Service<Event, CloudWatchAlarmEvent>()("@app/CloudWatchAlarmEvent") {}
 
 export const toHandler = makeToHandler<typeof Event, void>(Event)
 
-const program = Event.pipe(
-  Effect.map((event) => {
-    // Do something with the event
-  }),
-  Effect.asVoid,
-)
+const program = Event.use((event) => {
+  // Do something with the event
+  return Effect.void
+})
 
 export const handler = toHandler(program)({ layer: Layer.empty })
 ```

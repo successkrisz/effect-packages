@@ -55,7 +55,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			})
 
 			// install peers and tarballs
-			run('pnpm add effect @effect/platform', proj)
+			run('pnpm add effect', proj)
 			run(`pnpm add ${lambdaTarPath} ${oauthTarPath}`.trim(), proj)
 
 			fs.writeFileSync(
@@ -82,7 +82,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 				type: 'module',
 			})
 
-			run('pnpm add effect @effect/platform', proj)
+			run('pnpm add effect', proj)
 			run(`pnpm add ${lambdaTarPath} ${oauthTarPath}`.trim(), proj)
 
 			fs.writeFileSync(
@@ -109,7 +109,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			})
 
 			// deps: peers + typescript
-			run('pnpm add effect @effect/platform @types/aws-lambda', proj)
+			run('pnpm add effect @types/aws-lambda', proj)
 			run('pnpm add -D typescript', proj)
 			run(`pnpm add ${lambdaTarPath} ${oauthTarPath}`.trim(), proj)
 

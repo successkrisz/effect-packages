@@ -28,12 +28,10 @@
 	"devDependencies": {
 		"@ballatech/tsconfig": "catalog:",
 		"@effect/language-service": "catalog:",
-		"@effect/platform": "catalog:",
 		"@types/node": "catalog:",
 		"effect": "catalog:"
 	},
 	"peerDependencies": {
-		"@effect/platform": "catalog:",
 		"effect": "catalog:"
 	},
 	"publishConfig": {

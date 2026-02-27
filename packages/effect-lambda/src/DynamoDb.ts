@@ -1,4 +1,4 @@
-import { Context, Effect } from 'effect'
+import { ServiceMap } from 'effect'
 import type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent } from './aws'
 import type { BatchResponse } from './common'
 import { makeToHandler } from './makeToHandler'
@@ -11,24 +11,23 @@ export type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent }
 /**
  * Context tag for the DynamoDB stream event.
  */
-export class DynamoDBStreamEvent extends Context.Tag('@effect-lambda/DynamoDBStreamEvent')<
+export class DynamoDBStreamEvent extends ServiceMap.Service<
 	DynamoDBStreamEvent,
 	AwsDynamoDBStreamEvent
->() {}
+>()('@effect-lambda/DynamoDBStreamEvent') {}
 
 /**
  * Context tag for a single DynamoDB record within a stream event.
  */
-export class DynamoDBRecord extends Context.Tag('@effect-lambda/DynamoDBRecord')<
-	DynamoDBStreamEvent,
-	AwsDynamoDBRecord
->() {}
+export class DynamoDBRecord extends ServiceMap.Service<DynamoDBRecord, AwsDynamoDBRecord>()(
+	'@effect-lambda/DynamoDBRecord',
+) {}
 
 /**
  * Extract the `NewImage` values from each record in the DynamoDB stream event.
  */
-export const DynamoDBNewImages = DynamoDBStreamEvent.pipe(
-	Effect.map((event) => event.Records.map((record) => record.dynamodb?.NewImage)),
+export const DynamoDBNewImages = DynamoDBStreamEvent.useSync((event) =>
+	event.Records.map((record) => record.dynamodb?.NewImage),
 )
 
 /**

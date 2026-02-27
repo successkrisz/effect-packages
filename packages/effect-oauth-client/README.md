@@ -2,7 +2,12 @@
 
 [![npm version](https://img.shields.io/npm/v/%40ballatech%2Feffect-oauth-client)](https://www.npmjs.com/package/@ballatech/effect-oauth-client) [![Checked with Biome](https://img.shields.io/badge/Checked_with-Biome-60a5fa?style=flat&logo=biome)](https://biomejs.dev)
 
-Effect-first OAuth 2.0 Client Credentials helper for `@effect/platform`'s `HttpClient`.
+Effect-first OAuth 2.0 Client Credentials helper for Effect v4 HTTP `HttpClient`.
+
+> [!WARNING]
+> **This version targets [Effect v4 beta](https://github.com/Effect-TS/effect-smol) (`effect@4.0.0-beta.*`).** The APIs use v4 constructs such as `ServiceMap.Service`, `ManagedRuntime`, and `effect/unstable/http`. If you are on Effect v3, use an earlier version of this package.
+>
+> See the [Effect v4 Beta announcement](https://effect.website/blog/releases/effect/40-beta/) for details.
 
 - Fetches access tokens using the client credentials grant
 - Caches tokens and auto-refreshes near expiry
@@ -15,10 +20,10 @@ Effect-first OAuth 2.0 Client Credentials helper for `@effect/platform`'s `HttpC
 pnpm add @ballatech/effect-oauth-client
 ```
 
-This package expects `effect` and `@effect/platform` to be available as peers.
+This package expects `effect` v4 beta as a peer. Since `pnpm add effect` installs v3 by default, you must specify the beta tag explicitly:
 
 ```bash
-pnpm add effect @effect/platform
+pnpm add effect@beta
 ```
 
 ## API
@@ -64,7 +69,7 @@ Notes:
 ```ts
 import { OAuthClient } from "@ballatech/effect-oauth-client"
 import { Effect, Redacted, Schema } from "effect"
-import { FetchHttpClient, HttpClientResponse } from "@effect/platform"
+import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
 
 const FooSchema = Schema.Struct({ foo: Schema.String })
 
@@ -94,9 +99,9 @@ Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
 ### With Layer and service composition
 
 ```ts
-import { Context, Effect, Layer, Redacted } from "effect"
+import { Effect, Layer, Redacted, ServiceMap } from "effect"
 import { OAuthClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient, HttpClientResponse } from "@effect/platform"
+import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
 
 const makeService = Effect.gen(function* () {
   const client = yield* OAuthClient.make({
@@ -109,12 +114,10 @@ const makeService = Effect.gen(function* () {
   return { getFoo }
 })
 
-class MyService extends Context.Tag("MyService")<
-  MyService,
-  Effect.Effect.Success<typeof makeService>
->() {}
+type MyServiceShape = Effect.Effect.Success<typeof makeService>
+class MyService extends ServiceMap.Service<MyService, MyServiceShape>()("MyService") {}
 
-export const MyServiceLayer = Layer.effect(MyService, makeService).pipe(
+export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
   Layer.provide(FetchHttpClient.layer)
 )
 ```
@@ -124,7 +127,7 @@ export const MyServiceLayer = Layer.effect(MyService, makeService).pipe(
 ```ts
 import { beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import { Duration, Effect, Layer, ManagedRuntime, Redacted } from "effect"
-import { FetchHttpClient } from "@effect/platform"
+import { FetchHttpClient } from "effect/unstable/http"
 import { OAuthClient } from "@ballatech/effect-oauth-client"
 
 describe("OAuthClient", () => {
@@ -164,7 +167,7 @@ describe("OAuthClient", () => {
 ## Requirements
 
 - Provide an `HttpClient` layer, e.g. `FetchHttpClient.layer`
-- `effect` and `@effect/platform` must be installed (peer dependencies)
+- `effect@4.0.0-beta.*` must be installed (peer dependency) — install with `pnpm add effect@beta`
 
 ## Build
 

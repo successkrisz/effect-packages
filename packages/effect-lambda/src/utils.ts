@@ -4,7 +4,7 @@ import { Effect } from 'effect'
  * Run an array of effects in parallel with unbounded concurrency, collecting `Either` results.
  */
 export const runPar = <T, E = never>(effects: Array<Effect.Effect<T, E>>) =>
-	Effect.all(effects, { concurrency: 'unbounded', mode: 'either' })
+	Effect.all(effects, { concurrency: 'unbounded', mode: 'result' })
 
 // Utility type to generate the effect signature for a handler function.
 /**

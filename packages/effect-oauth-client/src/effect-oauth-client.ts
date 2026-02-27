@@ -1,5 +1,5 @@
-import { HttpBody, HttpClient, HttpClientRequest, HttpClientResponse } from '@effect/platform'
-import { DateTime, Duration, Effect, Predicate, pipe, Redacted, Schema } from 'effect'
+import { Data, DateTime, Duration, Effect, Predicate, Redacted, Schema } from 'effect'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 /**
  * OAuth client utilities for obtaining and attaching client credentials tokens.
@@ -13,12 +13,12 @@ export const isAuthorizationError = (u: unknown): u is AuthorizationError =>
 	Predicate.hasProperty(u, AuthorizationErrorTypeId)
 
 /** Error type for OAuth authorization failures. */
-export class AuthorizationError extends Schema.TaggedError<AuthorizationError>(
+export class AuthorizationError extends Data.TaggedError(
 	'@ballatech/effect-oauth-client/AuthorizationError',
-)('@ballatech/effect-oauth-client/AuthorizationError', {
-	message: Schema.String,
-	code: Schema.Literal('credentials_error', 'client_error', 'unauthorized'),
-}) {
+)<{
+	readonly message: string
+	readonly code: 'credentials_error' | 'client_error' | 'unauthorized'
+}> {
 	readonly [AuthorizationErrorTypeId] = AuthorizationErrorTypeId
 }
 
@@ -31,6 +31,12 @@ export type Credentials = {
 	audience?: string
 	ttl?: Duration.Duration
 	expiryBuffer?: Duration.Duration
+}
+
+type Token = {
+	accessToken: string
+	expiresIn: number
+	expiresAt: DateTime.DateTime
 }
 /**
  * Build an HttpClient that automatically injects a bearer token.
@@ -50,51 +56,43 @@ export const make = ({
 	Effect.gen(function* () {
 		const client = yield* HttpClient.HttpClient
 
-		const getNewCredentials = pipe(
-			HttpClientRequest.post(tokenUrl),
-			HttpClientRequest.setBody(
-				HttpBody.urlParams([
-					['grant_type', 'client_credentials'],
-					...((scope ? [['scope', scope]] : []) as readonly [string, string][]),
-					...((audience ? [['audience', audience]] : []) as readonly [string, string][]),
-				]),
-			),
-			HttpClientRequest.basicAuth(clientId, Redacted.value(clientSecret)),
-			HttpClientRequest.setHeader('Content-Type', 'application/x-www-form-urlencoded'),
-			client.execute,
-			Effect.flatMap(
-				HttpClientResponse.schemaBodyJson(
-					Schema.Struct({
-						access_token: Schema.String,
-						token_type: Schema.String,
-						expires_in: Schema.Number,
-					}),
+		const tokenBody = {
+			grant_type: 'client_credentials',
+			...(scope ? { scope } : undefined),
+			...(audience ? { audience } : undefined),
+		}
+		const tokenSchema = Schema.Struct({
+			access_token: Schema.String,
+			token_type: Schema.String,
+			expires_in: Schema.Number,
+		})
+
+		const getNewCredentials = client
+			.execute(
+				HttpClientRequest.post(tokenUrl).pipe(
+					HttpClientRequest.bodyUrlParams(tokenBody),
+					HttpClientRequest.basicAuth(clientId, Redacted.value(clientSecret)),
+					HttpClientRequest.setHeader('Content-Type', 'application/x-www-form-urlencoded'),
 				),
-			),
-			Effect.map((response) => ({
-				accessToken: response.access_token,
-				tokenType: response.token_type,
-				expiresIn: response.expires_in,
-			})),
-			Effect.scoped,
-			Effect.catchTags({
-				ParseError: (error) =>
-					new AuthorizationError({
-						message: error.message,
-						code: 'credentials_error',
-					}),
-				RequestError: (error) =>
-					new AuthorizationError({
-						message: error.message,
-						code: 'client_error',
-					}),
-				ResponseError: (error) =>
-					new AuthorizationError({
-						message: error.message,
-						code: 'client_error',
-					}),
-			}),
-		)
+			)
+			.pipe(
+				Effect.flatMap(HttpClientResponse.schemaBodyJson(tokenSchema)),
+				Effect.map((response) => ({
+					accessToken: response.access_token,
+					expiresIn: response.expires_in,
+				})),
+				Effect.scoped,
+				Effect.mapError(
+					(error) =>
+						new AuthorizationError({
+							message: error instanceof Error ? error.message : 'Failed to fetch OAuth credentials',
+							code:
+								Predicate.hasProperty(error, '_tag') && error._tag === 'SchemaError'
+									? 'credentials_error'
+									: 'client_error',
+						}),
+				),
+			)
 
 		// Create a cached token effect that uses the token's actual expiry time for TTL
 		const getToken = Effect.flatMap(getNewCredentials, (credentials) =>
@@ -110,7 +108,10 @@ export const make = ({
 			}),
 		)
 
-		const [creds, invalidateToken] = yield* Effect.cachedInvalidateWithTTL(getToken, ttl)
+		const [creds, invalidateToken]: readonly [
+			Effect.Effect<Token, AuthorizationError>,
+			Effect.Effect<void>,
+		] = yield* Effect.cachedInvalidateWithTTL(getToken, ttl)
 
 		return client.pipe(
 			HttpClient.mapRequestInput(HttpClientRequest.acceptJson),
@@ -118,23 +119,37 @@ export const make = ({
 				Effect.gen(function* () {
 					const { accessToken, expiresAt } = yield* creds
 					const now = yield* DateTime.now
-					if (DateTime.greaterThan(now, expiresAt)) {
+					if (DateTime.isGreaterThan(now, expiresAt)) {
 						yield* invalidateToken
-						return HttpClientRequest.bearerToken((yield* creds).accessToken)(request)
+						const refreshed = yield* creds
+						if (refreshed.accessToken === undefined) {
+							return yield* new AuthorizationError({
+								message: 'Missing access token in OAuth response',
+								code: 'credentials_error',
+							})
+						}
+						return HttpClientRequest.bearerToken(refreshed.accessToken)(request)
+					}
+					if (accessToken === undefined) {
+						return yield* new AuthorizationError({
+							message: 'Missing access token in OAuth response',
+							code: 'credentials_error',
+						})
 					}
 					return HttpClientRequest.bearerToken(accessToken)(request)
 				}),
 			),
 			HttpClient.tap((response) => {
 				if (response.status === 401) {
-					return new AuthorizationError({
-						message: 'Unauthorized',
-						code: 'unauthorized',
-					})
+					return Effect.fail(
+						new AuthorizationError({
+							message: 'Unauthorized',
+							code: 'unauthorized',
+						}),
+					)
 				}
 
 				return Effect.void
 			}),
-			HttpClient.filterStatusOk,
 		)
 	})

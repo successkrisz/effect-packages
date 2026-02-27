@@ -1,4 +1,4 @@
-import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
+import { Effect, type Layer, Schema, type SchemaAST, ServiceMap } from 'effect'
 import type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler } from './aws'
 import type { HandlerContext } from './common'
 import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer'
@@ -12,25 +12,18 @@ import { makeToHandler } from './makeToHandler'
 export type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler }
 
 /**
- * The API Gateway event with additional fields for raw headers and
- * raw body.
+ * Service tag for the API Gateway proxy event.
  *
- * The headers are normalized to lowercase.
- *
- * The body is
- * parsed as JSON if the content-type is application/json and
- * base64-decoded if isBase64Encoded is true.
+ * Headers are normalized to lowercase. The body is parsed as JSON when the
+ * content-type is `application/json` and base64-decoded when `isBase64Encoded` is true.
  */
-/**
- * Context tag for the API Gateway proxy event with normalized headers and JSON/body helpers.
- */
-export class APIGatewayProxyEvent extends Context.Tag('@effect-lambda/APIGatewayProxyEvent')<
+export class APIGatewayProxyEvent extends ServiceMap.Service<
 	APIGatewayProxyEvent,
 	AwsAPIGatewayProxyEvent
->() {}
+>()('@effect-lambda/APIGatewayProxyEvent') {}
 
-export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.pipe(
-	Effect.map((event) => headerNormalizer(event)),
+export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.useSync((event) =>
+	headerNormalizer(event),
 )
 
 /**
@@ -38,46 +31,44 @@ export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.pipe(
  *
  * Useful when you only need headers without the full normalized event.
  */
-export const NormalizedHeaders = APIGatewayProxyEvent.pipe(
-	Effect.map((event) => normalizeHeaders(event.headers)),
+export const NormalizedHeaders = APIGatewayProxyEvent.useSync((event) =>
+	normalizeHeaders(event.headers),
 )
 
 /**
  * Utility to parse the body of an API Gateway event into a type.
  */
-export const schemaBodyJson = <A, I, R extends never>(
-	schema: Schema.Schema<A, I, R>,
+export const schemaBodyJson = <S extends Schema.Top>(
+	schema: S,
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
 	NormalizedAPIGatewayProxyEvent.pipe(
 		Effect.flatMap(jsonBodyParser),
 		Effect.map(({ body }) => body as unknown),
-		Effect.flatMap((body) => Schema.decodeUnknownEither(schema, options)(body)),
+		Effect.flatMap((body) => Schema.decodeUnknownEffect(schema)(body, options)),
 	)
 
 /**
  * Utility to parse the path parameters of an API Gateway event into a type.
  */
-export const schemaPathParams = <A, I, R extends never>(
-	schema: Schema.Schema<A, I, R>,
+export const schemaPathParams = <S extends Schema.Top>(
+	schema: S,
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
-	APIGatewayProxyEvent.pipe(
-		Effect.map(({ pathParameters }) => pathParameters || {}),
-		Effect.flatMap((pathParameters) => Schema.decodeUnknownEither(schema, options)(pathParameters)),
+	APIGatewayProxyEvent.useSync((e) => e.pathParameters || {}).pipe(
+		Effect.flatMap((pathParameters) => Schema.decodeUnknownEffect(schema)(pathParameters, options)),
 	)
 
 /**
  * Utility to parse the query parameters of an API Gateway event into a type.
  */
-export const schemaQueryParams = <A, I, R extends never>(
-	schema: Schema.Schema<A, I, R>,
+export const schemaQueryParams = <S extends Schema.Top>(
+	schema: S,
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
-	APIGatewayProxyEvent.pipe(
-		Effect.map(({ queryStringParameters }) => queryStringParameters || {}),
+	APIGatewayProxyEvent.useSync((e) => e.queryStringParameters || {}).pipe(
 		Effect.flatMap((queryStringParameters) =>
-			Schema.decodeUnknownEither(schema, options)(queryStringParameters),
+			Schema.decodeUnknownEffect(schema)(queryStringParameters, options),
 		),
 	)
 
@@ -86,7 +77,7 @@ export const schemaQueryParams = <A, I, R extends never>(
  *
  * @deprecated Use `schemaPathParams` instead.
  */
-export const PathParameters = APIGatewayProxyEvent.pipe(Effect.map((x) => x.pathParameters || {}))
+export const PathParameters = APIGatewayProxyEvent.useSync((e) => e.pathParameters || {})
 
 /**
  * Utility type can be useful when you are composing with
@@ -107,7 +98,7 @@ export type HandlerEffect<R = never> = Effect.Effect<
  * @example
  * ```typescript
  * import { toLambdaHandler } from 'effect-lambda/RestApi';
- * import { Effect, Layer } from 'effect';
+ * import { Effect, Layer, ServiceMap } from 'effect';
  *
  * // Handler without dependencies
  * const simpleHandler = Effect.gen(function* () {
@@ -121,7 +112,7 @@ export type HandlerEffect<R = never> = Effect.Effect<
  * export const handler = toLambdaHandler(simpleHandler)();
  *
  * // Handler with dependencies
- * class DatabaseService extends Context.Tag('@app/database')<DatabaseService, { query: (sql: string) => Effect.Effect<any> }>() {}
+ * class DatabaseService extends ServiceMap.Service<DatabaseService, { query: (sql: string) => Effect.Effect<any> }>()('@app/database') {}
  *
  * const handlerWithDeps = Effect.gen(function* () {
  *   const event = yield* APIGatewayProxyEvent;
@@ -179,7 +170,7 @@ export function toLambdaHandler<R, E = never>(
 
 	const result2 = result1<R | APIGatewayProxyEvent | HandlerContext, E>(
 		handler.pipe(
-			Effect.catchAllDefect(() =>
+			Effect.catchDefect(() =>
 				Effect.succeed({
 					statusCode: 500,
 					body: JSON.stringify({ status: 500, title: httpStatusMessages[500] }),

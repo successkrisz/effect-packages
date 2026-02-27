@@ -28,11 +28,10 @@ describe('snsHandler', () => {
 
 	it('effect should have access to the event', async () => {
 		const actual = toLambdaHandler(
-			SNSEvent.pipe(
-				Effect.map((_event) => {
-					expect(_event).toEqual(event)
-				}),
-			),
+			SNSEvent.use((_event) => {
+				expect(_event).toEqual(event)
+				return Effect.void
+			}),
 		)({ layer: Layer.empty })(event, {} as Context, () => {})
 
 		await expect(actual).resolves.toBe(undefined)
@@ -41,11 +40,10 @@ describe('snsHandler', () => {
 	it('effect should have access to the context', async () => {
 		const context = { functionName: 'foobar' } as Context
 		const actual = toLambdaHandler(
-			HandlerContext.pipe(
-				Effect.map((_context) => {
-					expect(_context).toEqual(context)
-				}),
-			),
+			HandlerContext.use((_context) => {
+				expect(_context).toEqual(context)
+				return Effect.void
+			}),
 		)({ layer: Layer.empty })(event, context, () => {
 			expect(context).toEqual(context)
 		})

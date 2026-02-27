@@ -69,13 +69,11 @@
 	"devDependencies": {
 		"@ballatech/tsconfig": "catalog:",
 		"@effect/language-service": "catalog:",
-		"@effect/platform": "catalog:",
 		"@types/node": "catalog:",
 		"effect": "catalog:",
 		"helmet": "^8.1.0"
 	},
 	"peerDependencies": {
-		"@effect/platform": "catalog:",
 		"@types/aws-lambda": "catalog:",
 		"@types/node": "catalog:",
 		"effect": "catalog:"

@@ -34,11 +34,10 @@ describe('sqsHandler', () => {
 
 	it('effect should have access to the event', async () => {
 		const actual = toLambdaHandler(
-			SQSEvent.pipe(
-				Effect.map((_event) => {
-					expect(_event).toEqual(event)
-				}),
-			),
+			SQSEvent.use((_event) => {
+				expect(_event).toEqual(event)
+				return Effect.void
+			}),
 		)({ layer: Layer.empty })(event, {} as Context, () => {})
 
 		await expect(actual).resolves.toBe(undefined)
@@ -47,11 +46,10 @@ describe('sqsHandler', () => {
 	it('effect should have access to the context', async () => {
 		const context = { functionName: 'foobar' } as Context
 		const actual = toLambdaHandler(
-			HandlerContext.pipe(
-				Effect.map((_context) => {
-					expect(_context).toEqual(context)
-				}),
-			),
+			HandlerContext.use((_context) => {
+				expect(_context).toEqual(context)
+				return Effect.void
+			}),
 		)({ layer: Layer.empty })(event, context, () => {
 			expect(context).toEqual(context)
 		})
@@ -72,12 +70,10 @@ describe('sqsHandler', () => {
 	})
 
 	it('should process each record and return a batch response', async () => {
-		const processRecord = SQSRecord.pipe(
-			Effect.tap((record) => {
-				expect(record.body).toBeDefined()
-			}),
-			Effect.asVoid,
-		)
+		const processRecord = SQSRecord.use((record) => {
+			expect(record.body).toBeDefined()
+			return Effect.void
+		})
 
 		const result = await processRecord.pipe(
 			recordProcessorAdapter,
@@ -91,10 +87,8 @@ describe('sqsHandler', () => {
 	})
 
 	it('should return batchItemFailures for failed records', async () => {
-		const processRecord = SQSRecord.pipe(
-			Effect.flatMap((record) =>
-				record.body === 'fail' ? Effect.fail('Processing failed') : Effect.succeed(undefined),
-			),
+		const processRecord = SQSRecord.use((record) =>
+			record.body === 'fail' ? Effect.fail('Processing failed') : Effect.succeed(undefined),
 		)
 
 		const modifiedEvent = {

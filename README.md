@@ -7,7 +7,7 @@ Useful Effect libraries
 ## Packages
 
 - `effect-lambda`: Effect-friendly AWS Lambda wrappers and utilities.
-- `effect-oauth-client`: OAuth 2.0 Client Credentials `HttpClient` wrapper for `@effect/platform`.
+- `effect-oauth-client`: OAuth 2.0 Client Credentials `HttpClient` wrapper for Effect v4 HTTP.
 
 ### effect-lambda quickstart
 
@@ -25,7 +25,7 @@ export const handler = toLambdaHandler(
 ```ts
 import { OAuthClient } from "effect-oauth-client"
 import { Effect, Redacted } from "effect"
-import { FetchHttpClient } from "@effect/platform"
+import { FetchHttpClient } from "effect/unstable/http"
 
 const program = Effect.gen(function* () {
   const client = yield* OAuthClient.make({
