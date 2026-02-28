@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 1.0.0-beta.1
+
+### Minor Changes
+
+- [`4bb46a4`](https://github.com/successkrisz/effect-packages/commit/4bb46a454394753d503c681764c5e9e86b27c0aa) - Add `baseUrl` option, `makeFromConfig` constructor, `layer`/`layerFromConfig` helpers, `OAuthHttpClient` service tag, and `Client` type alias.
+
 ## 1.0.0-beta.0
 
 ### Major Changes
