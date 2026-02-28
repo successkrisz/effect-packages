@@ -5,5 +5,5 @@
 		"effect-lambda": "0.5.2",
 		"@ballatech/effect-oauth-client": "0.3.2"
 	},
-	"changesets": ["young-schools-melt"]
+	"changesets": ["busy-ideas-sleep", "young-schools-melt"]
 }
