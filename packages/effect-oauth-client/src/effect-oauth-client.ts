@@ -1,4 +1,15 @@
-import { type Config, Data, DateTime, Duration, Effect, Predicate, Redacted, Schema } from 'effect'
+import {
+	type Config,
+	Data,
+	DateTime,
+	Duration,
+	Effect,
+	Layer,
+	Predicate,
+	Redacted,
+	Schema,
+	ServiceMap,
+} from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 /**
@@ -192,3 +203,43 @@ export const makeFromConfig = (config: CredentialsConfig) =>
 			expiryBuffer: config.expiryBuffer,
 		})
 	})
+
+/**
+ * The `HttpClient` shape returned by {@link make} / {@link makeFromConfig}.
+ *
+ * Use this when you need multiple OAuth clients in the same program — create a
+ * dedicated `ServiceMap.Service` tag for each API:
+ *
+ * ```ts
+ * class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
+ * class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
+ * ```
+ *
+ * The built-in {@link OAuthHttpClient} tag is a convenience for programs that only
+ * talk to a single OAuth-protected API. When you connect to multiple APIs, define
+ * your own tags with this type and wire them with {@link make} / {@link makeFromConfig}.
+ */
+export type Client = Effect.Success<ReturnType<typeof make>>
+
+/**
+ * Built-in service tag for an OAuth-authenticated `HttpClient`.
+ *
+ * This is a convenience for the common single-client case — use with
+ * {@link layer} or {@link layerFromConfig}. When your program connects to
+ * multiple OAuth-protected APIs, create your own tags instead:
+ *
+ * ```ts
+ * class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
+ * class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
+ * ```
+ */
+export class OAuthHttpClient extends ServiceMap.Service<OAuthHttpClient, Client>()(
+	'@ballatech/effect-oauth-client/OAuthHttpClient',
+) {}
+
+/** Build a `Layer` that provides {@link OAuthHttpClient} from static credentials. */
+export const layer = (credentials: Credentials) => Layer.effect(OAuthHttpClient)(make(credentials))
+
+/** Build a `Layer` that provides {@link OAuthHttpClient} from `Config` values. */
+export const layerFromConfig = (config: CredentialsConfig) =>
+	Layer.effect(OAuthHttpClient)(makeFromConfig(config))

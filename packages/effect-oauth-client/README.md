@@ -36,6 +36,12 @@ import { OAuthClient } from "@ballatech/effect-oauth-client"
   - Builds an `HttpClient` that automatically obtains and injects access tokens.
 - `OAuthClient.makeFromConfig(credentialsConfig)` → `Effect<HttpClient>`
   - Same as `make`, but resolves each credential from a `Config` value. Useful when credentials come from environment variables or a config provider.
+- `OAuthClient.layer(credentials)` → `Layer<OAuthHttpClient>`
+  - Provides an `OAuthHttpClient` service from static credentials.
+- `OAuthClient.layerFromConfig(credentialsConfig)` → `Layer<OAuthHttpClient>`
+  - Provides an `OAuthHttpClient` service from `Config` values.
+- `OAuthClient.OAuthHttpClient` — Built-in service tag for the single-client case. Use with `layer` / `layerFromConfig`.
+- `OAuthClient.Client` — Type alias for the authenticated `HttpClient` shape. Use this when creating your own service tags for multi-client setups.
 
 ### Credentials
 
@@ -144,12 +150,57 @@ export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
 )
 ```
 
+### With `layer` (zero-boilerplate single client)
+
+```ts
+import { Effect, Layer, Redacted } from "effect"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
+
+const AppLayer = OAuthClient.layer({
+  clientId: "id123",
+  clientSecret: Redacted.make("secret"),
+  tokenUrl: "https://auth.example.com/oauth/token",
+  baseUrl: "https://api.example.com",
+}).pipe(Layer.provide(FetchHttpClient.layer))
+
+const program = OAuthClient.OAuthHttpClient.use((client) =>
+  client.get("/secret-foo").pipe(Effect.scoped)
+)
+
+Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
+```
+
 ### With Config provider (environment variables)
+
+Using `layerFromConfig` for the simplest case:
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { FetchHttpClient } from "effect/unstable/http"
+
+const AppLayer = OAuthClient.layerFromConfig({
+  clientId: Config.string("OAUTH_CLIENT_ID"),
+  clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
+  tokenUrl: Config.string("OAUTH_TOKEN_URL"),
+  baseUrl: Config.string("API_BASE_URL"),
+  scope: Config.string("OAUTH_SCOPE"),
+}).pipe(Layer.provide(FetchHttpClient.layer))
+
+const program = OAuthClient.OAuthHttpClient.use((client) =>
+  client.get("/secret-foo").pipe(Effect.scoped)
+)
+
+Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
+```
+
+Or with `makeFromConfig` when wrapping in a custom service:
 
 ```ts
 import { Config, Effect, Layer, ServiceMap } from "effect"
 import { OAuthClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/unstable/http"
 
 const makeService = Effect.gen(function* () {
   const client = yield* OAuthClient.makeFromConfig({
@@ -157,7 +208,6 @@ const makeService = Effect.gen(function* () {
     clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
     tokenUrl: Config.string("OAUTH_TOKEN_URL"),
     baseUrl: Config.string("API_BASE_URL"),
-    scope: Config.string("OAUTH_SCOPE"),
   })
   const getFoo = () =>
     client.get("/secret-foo").pipe(Effect.scoped)
@@ -170,6 +220,50 @@ class MyService extends ServiceMap.Service<MyService, MyServiceShape>()("MyServi
 export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
   Layer.provide(FetchHttpClient.layer)
 )
+```
+
+### Multiple OAuth clients
+
+The built-in `OAuthHttpClient` tag covers the single-client case. When your program
+connects to multiple OAuth-protected APIs, create a dedicated tag for each one using
+`OAuthClient.Client` as the shape:
+
+```ts
+import { Effect, Layer, Redacted, ServiceMap } from "effect"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { FetchHttpClient } from "effect/unstable/http"
+
+class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()("AzureClient") {
+  static live = Layer.effect(this)(OAuthClient.make({
+    clientId: "azure-id",
+    clientSecret: Redacted.make("azure-secret"),
+    tokenUrl: "https://login.microsoftonline.com/.../oauth2/v2.0/token",
+    baseUrl: "https://api.azure.example.com",
+  }))
+}
+
+class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthClient.Client>()("GoogleClient") {
+  static live = Layer.effect(this)(OAuthClient.make({
+    clientId: "google-id",
+    clientSecret: Redacted.make("google-secret"),
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    baseUrl: "https://api.google.example.com",
+  }))
+}
+
+const program = Effect.gen(function* () {
+  const azure = yield* AzureClient
+  const google = yield* GoogleClient
+
+  const azureData = yield* azure.get("/data").pipe(Effect.scoped)
+  const googleData = yield* google.get("/data").pipe(Effect.scoped)
+})
+
+const AppLayer = Layer.mergeAll(AzureClient.live, GoogleClient.live).pipe(
+  Layer.provide(FetchHttpClient.layer)
+)
+
+Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
 ```
 
 ### Testing (mocking Fetch)

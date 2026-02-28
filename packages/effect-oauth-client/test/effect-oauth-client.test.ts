@@ -11,21 +11,12 @@ import {
 	Schema,
 	ServiceMap,
 } from 'effect'
-import {
-	FetchHttpClient,
-	type HttpClient,
-	type HttpClientError,
-	HttpClientResponse,
-} from 'effect/unstable/http'
+import { FetchHttpClient, HttpClientResponse } from 'effect/unstable/http'
 import * as OAuthClient from '../src/effect-oauth-client'
 
 const FooSchema = Schema.Struct({ foo: Schema.String })
 
-type OAuthHttpClientShape = HttpClient.HttpClient.With<
-	HttpClientError.HttpClientError | OAuthClient.AuthorizationError
->
-
-class OAuthHttpClient extends ServiceMap.Service<OAuthHttpClient, OAuthHttpClientShape>()(
+class OAuthHttpClient extends ServiceMap.Service<OAuthHttpClient, OAuthClient.Client>()(
 	'test/OAuthHttpClient',
 ) {}
 
@@ -210,6 +201,42 @@ describe('OAuthClient', () => {
 			new URLSearchParams(new TextDecoder('utf-8').decode(body ?? new Uint8Array())),
 		)
 		expect(params.scope).toBe('read:foo')
+	})
+
+	it('layer should provide OAuthHttpClient from static credentials', async () => {
+		const oauthLayer = OAuthClient.layer({
+			...baseCredentials,
+			baseUrl: 'https://api.example.com',
+		}).pipe(Layer.provide(makeFetchLayer(fetch)))
+
+		const program = OAuthClient.OAuthHttpClient.use((client) =>
+			client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+		)
+
+		const result = await Effect.runPromise(program.pipe(Effect.provide(oauthLayer)))
+		expect(result.foo).toBe('secretFoo')
+		expect(fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token')).length).toBe(1)
+	})
+
+	it('layerFromConfig should provide OAuthHttpClient from Config values', async () => {
+		const oauthLayer = OAuthClient.layerFromConfig({
+			clientId: Config.succeed('id123'),
+			clientSecret: Config.succeed(Redacted.make('secret')),
+			tokenUrl: Config.succeed('https://api.example.com/token'),
+			baseUrl: Config.succeed('https://api.example.com'),
+		}).pipe(Layer.provide(makeFetchLayer(fetch)))
+
+		const program = OAuthClient.OAuthHttpClient.use((client) =>
+			client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+		)
+
+		const result = await Effect.runPromise(program.pipe(Effect.provide(oauthLayer)))
+		expect(result.foo).toBe('secretFoo')
+		expect(fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token')).length).toBe(1)
 	})
 
 	it('should only send scope and audience if they are provided', async () => {
