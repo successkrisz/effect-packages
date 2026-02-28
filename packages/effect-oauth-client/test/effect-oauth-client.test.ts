@@ -164,6 +164,25 @@ describe('OAuthClient', () => {
 		expect(OAuthClient.isAuthorizationError(anotherError)).toBe(false)
 	})
 
+	it('should prepend baseUrl to outgoing requests', async () => {
+		const program = Effect.gen(function* () {
+			const client = yield* OAuthClient.make({
+				...baseCredentials,
+				baseUrl: 'https://api.example.com',
+			})
+			return yield* client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
+		})
+
+		const result = await Effect.runPromise(provideFetch(program, fetch))
+		expect(result.foo).toBe('secretFoo')
+
+		const apiCalls = fetch.mock.calls.filter((c) => !(c[0] as URL).href.includes('token'))
+		expect(apiCalls.length).toBe(1)
+		expect(apiCalls[0][0].href).toContain('https://api.example.com/secret-foo')
+	})
+
 	it('should only send scope and audience if they are provided', async () => {
 		await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
 

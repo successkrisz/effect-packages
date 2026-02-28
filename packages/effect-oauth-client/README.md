@@ -44,13 +44,15 @@ type Credentials = {
   tokenUrl: string
   scope?: string
   audience?: string
-  ttl?: Duration.Duration // default: 3600 seconds
+  baseUrl?: string            // prepended to all outgoing request URLs
+  ttl?: Duration.Duration     // default: 3600 seconds
   expiryBuffer?: Duration.Duration // default: 300 seconds (refresh ~5m early)
 }
 ```
 
 Notes:
 
+- `baseUrl` is prepended to every outgoing request URL, so you can use relative paths like `client.get("/users")` instead of full URLs.
 - `ttl` controls the cache TTL for the token effect. Actual token expiry is respected via the `expires_in` value and refreshed ~10 seconds early.
 - `scope` and `audience` are optional and sent as URL-encoded form parameters.
 
@@ -108,9 +110,10 @@ const makeService = Effect.gen(function* () {
     clientId: "id123",
     clientSecret: Redacted.make("secret"),
     tokenUrl: "https://auth.example.com/oauth/token",
+    baseUrl: "https://api.example.com",
   })
   const getFoo = () =>
-    client.get("https://api.example.com/secret-foo").pipe(Effect.scoped)
+    client.get("/secret-foo").pipe(Effect.scoped)
   return { getFoo }
 })
 

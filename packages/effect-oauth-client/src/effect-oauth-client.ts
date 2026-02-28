@@ -29,6 +29,8 @@ export type Credentials = {
 	tokenUrl: string
 	scope?: string
 	audience?: string
+	/** Base URL prepended to all outgoing requests (e.g. `https://api.example.com`). */
+	baseUrl?: string
 	ttl?: Duration.Duration
 	expiryBuffer?: Duration.Duration
 }
@@ -50,6 +52,7 @@ export const make = ({
 	tokenUrl,
 	scope,
 	audience,
+	baseUrl,
 	ttl = Duration.seconds(3600),
 	expiryBuffer = Duration.seconds(300),
 }: Credentials) =>
@@ -113,7 +116,11 @@ export const make = ({
 			Effect.Effect<void>,
 		] = yield* Effect.cachedInvalidateWithTTL(getToken, ttl)
 
-		return client.pipe(
+		const withBaseUrl = baseUrl
+			? HttpClient.mapRequestInput(HttpClientRequest.prependUrl(baseUrl))(client)
+			: client
+
+		return withBaseUrl.pipe(
 			HttpClient.mapRequestInput(HttpClientRequest.acceptJson),
 			HttpClient.mapRequestInputEffect((request) =>
 				Effect.gen(function* () {
