@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from '@effect/vitest'
 import {
 	Cause,
+	Config,
 	Duration,
 	Effect,
 	Exit,
@@ -181,6 +182,34 @@ describe('OAuthClient', () => {
 		const apiCalls = fetch.mock.calls.filter((c) => !(c[0] as URL).href.includes('token'))
 		expect(apiCalls.length).toBe(1)
 		expect(apiCalls[0][0].href).toContain('https://api.example.com/secret-foo')
+	})
+
+	it('makeFromConfig should resolve Config values and create an authenticated client', async () => {
+		const program = Effect.gen(function* () {
+			const client = yield* OAuthClient.makeFromConfig({
+				clientId: Config.succeed('id123'),
+				clientSecret: Config.succeed(Redacted.make('secret')),
+				tokenUrl: Config.succeed('https://api.example.com/token'),
+				baseUrl: Config.succeed('https://api.example.com'),
+				scope: Config.succeed('read:foo'),
+			})
+			return yield* client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
+		})
+
+		const result = await Effect.runPromise(provideFetch(program, fetch))
+		expect(result.foo).toBe('secretFoo')
+
+		const tokenCalls = fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token'))
+		expect(tokenCalls.length).toBe(1)
+
+		const requestInit = tokenCalls[0]?.[1] as RequestInit | undefined
+		const body = requestInit?.body as Uint8Array | undefined
+		const params = Object.fromEntries(
+			new URLSearchParams(new TextDecoder('utf-8').decode(body ?? new Uint8Array())),
+		)
+		expect(params.scope).toBe('read:foo')
 	})
 
 	it('should only send scope and audience if they are provided', async () => {

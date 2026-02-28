@@ -34,6 +34,8 @@ import { OAuthClient } from "@ballatech/effect-oauth-client"
 
 - `OAuthClient.make(credentials)` → `Effect<HttpClient>`
   - Builds an `HttpClient` that automatically obtains and injects access tokens.
+- `OAuthClient.makeFromConfig(credentialsConfig)` → `Effect<HttpClient>`
+  - Same as `make`, but resolves each credential from a `Config` value. Useful when credentials come from environment variables or a config provider.
 
 ### Credentials
 
@@ -55,6 +57,23 @@ Notes:
 - `baseUrl` is prepended to every outgoing request URL, so you can use relative paths like `client.get("/users")` instead of full URLs.
 - `ttl` controls the cache TTL for the token effect. Actual token expiry is respected via the `expires_in` value and refreshed ~10 seconds early.
 - `scope` and `audience` are optional and sent as URL-encoded form parameters.
+
+### CredentialsConfig
+
+`makeFromConfig` accepts `Config` values for fields that typically come from the environment:
+
+```ts
+type CredentialsConfig = {
+  clientId: Config.Config<string>
+  clientSecret: Config.Config<Redacted.Redacted<string>>
+  tokenUrl: Config.Config<string>
+  scope?: Config.Config<string>
+  audience?: Config.Config<string>
+  baseUrl?: Config.Config<string>
+  ttl?: Duration.Duration
+  expiryBuffer?: Duration.Duration
+}
+```
 
 ### Errors
 
@@ -117,7 +136,35 @@ const makeService = Effect.gen(function* () {
   return { getFoo }
 })
 
-type MyServiceShape = Effect.Effect.Success<typeof makeService>
+type MyServiceShape = Effect.Success<typeof makeService>
+class MyService extends ServiceMap.Service<MyService, MyServiceShape>()("MyService") {}
+
+export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
+  Layer.provide(FetchHttpClient.layer)
+)
+```
+
+### With Config provider (environment variables)
+
+```ts
+import { Config, Effect, Layer, ServiceMap } from "effect"
+import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
+
+const makeService = Effect.gen(function* () {
+  const client = yield* OAuthClient.makeFromConfig({
+    clientId: Config.string("OAUTH_CLIENT_ID"),
+    clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
+    tokenUrl: Config.string("OAUTH_TOKEN_URL"),
+    baseUrl: Config.string("API_BASE_URL"),
+    scope: Config.string("OAUTH_SCOPE"),
+  })
+  const getFoo = () =>
+    client.get("/secret-foo").pipe(Effect.scoped)
+  return { getFoo }
+})
+
+type MyServiceShape = Effect.Success<typeof makeService>
 class MyService extends ServiceMap.Service<MyService, MyServiceShape>()("MyService") {}
 
 export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(

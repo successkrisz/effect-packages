@@ -1,4 +1,4 @@
-import { Data, DateTime, Duration, Effect, Predicate, Redacted, Schema } from 'effect'
+import { type Config, Data, DateTime, Duration, Effect, Predicate, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 /**
@@ -33,6 +33,18 @@ export type Credentials = {
 	baseUrl?: string
 	ttl?: Duration.Duration
 	expiryBuffer?: Duration.Duration
+}
+
+/** Config-based credentials where each value is resolved from a `Config` provider. */
+export type CredentialsConfig = {
+	readonly clientId: Config.Config<string>
+	readonly clientSecret: Config.Config<Redacted.Redacted<string>>
+	readonly tokenUrl: Config.Config<string>
+	readonly scope?: Config.Config<string>
+	readonly audience?: Config.Config<string>
+	readonly baseUrl?: Config.Config<string>
+	readonly ttl?: Duration.Duration
+	readonly expiryBuffer?: Duration.Duration
 }
 
 type Token = {
@@ -159,4 +171,24 @@ export const make = ({
 				return Effect.void
 			}),
 		)
+	})
+
+/**
+ * Like {@link make}, but resolves credentials from `Config` values.
+ *
+ * This avoids the `Config → asEffect → flatMap → make` boilerplate
+ * when credentials come from environment variables or a config provider.
+ */
+export const makeFromConfig = (config: CredentialsConfig) =>
+	Effect.gen(function* () {
+		return yield* make({
+			clientId: yield* config.clientId,
+			clientSecret: yield* config.clientSecret,
+			tokenUrl: yield* config.tokenUrl,
+			scope: config.scope ? yield* config.scope : undefined,
+			audience: config.audience ? yield* config.audience : undefined,
+			baseUrl: config.baseUrl ? yield* config.baseUrl : undefined,
+			ttl: config.ttl,
+			expiryBuffer: config.expiryBuffer,
+		})
 	})
