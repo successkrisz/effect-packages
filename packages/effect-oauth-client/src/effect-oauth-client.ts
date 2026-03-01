@@ -7,6 +7,7 @@ import {
 	Layer,
 	Predicate,
 	Redacted,
+	Schedule,
 	Schema,
 	ServiceMap,
 } from 'effect'
@@ -93,6 +94,8 @@ export const make = ({
 			expires_in: Schema.Number,
 		})
 
+		const isTransientStatus = (status: number) => status === 429 || status >= 500
+
 		const getNewCredentials = client
 			.execute(
 				HttpClientRequest.post(tokenUrl).pipe(
@@ -102,20 +105,29 @@ export const make = ({
 				),
 			)
 			.pipe(
+				Effect.filterOrFail(
+					(response) => !isTransientStatus(response.status),
+					(response) =>
+						new AuthorizationError({
+							message: `Token endpoint returned ${response.status}`,
+							code: 'client_error',
+						}),
+				),
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(tokenSchema)),
 				Effect.map((response) => ({
 					accessToken: response.access_token,
 					expiresIn: response.expires_in,
 				})),
 				Effect.scoped,
+				Effect.retry({
+					while: (error) => !Schema.isSchemaError(error),
+					schedule: Schedule.exponential('200 millis').pipe(Schedule.compose(Schedule.recurs(2))),
+				}),
 				Effect.mapError(
 					(error) =>
 						new AuthorizationError({
 							message: error instanceof Error ? error.message : 'Failed to fetch OAuth credentials',
-							code:
-								Predicate.hasProperty(error, '_tag') && error._tag === 'SchemaError'
-									? 'credentials_error'
-									: 'client_error',
+							code: Schema.isSchemaError(error) ? 'credentials_error' : 'client_error',
 						}),
 				),
 			)
@@ -152,35 +164,34 @@ export const make = ({
 					if (DateTime.isGreaterThan(now, expiresAt)) {
 						yield* invalidateToken
 						const refreshed = yield* creds
-						if (refreshed.accessToken === undefined) {
-							return yield* new AuthorizationError({
-								message: 'Missing access token in OAuth response',
-								code: 'credentials_error',
-							})
-						}
 						return HttpClientRequest.bearerToken(refreshed.accessToken)(request)
-					}
-					if (accessToken === undefined) {
-						return yield* new AuthorizationError({
-							message: 'Missing access token in OAuth response',
-							code: 'credentials_error',
-						})
 					}
 					return HttpClientRequest.bearerToken(accessToken)(request)
 				}),
 			),
-			HttpClient.tap((response) => {
-				if (response.status === 401) {
-					return Effect.fail(
-						new AuthorizationError({
-							message: 'Unauthorized',
-							code: 'unauthorized',
-						}),
-					)
-				}
-
-				return Effect.void
-			}),
+			HttpClient.transform((effect) =>
+				effect.pipe(
+					Effect.tap((response) => {
+						if (response.status === 401) {
+							return invalidateToken.pipe(
+								Effect.andThen(
+									Effect.fail(
+										new AuthorizationError({
+											message: 'Unauthorized',
+											code: 'unauthorized',
+										}),
+									),
+								),
+							)
+						}
+						return Effect.void
+					}),
+					Effect.retry({
+						while: (error) => isAuthorizationError(error) && error.code === 'unauthorized',
+						times: 1,
+					}),
+				),
+			),
 		)
 	})
 

@@ -252,4 +252,217 @@ describe('OAuthClient', () => {
 		expect(params.scope).toBeUndefined()
 		expect(params.audience).toBeUndefined()
 	})
+
+	it('should invalidate token and retry once on 401, succeeding with a fresh token', async () => {
+		let apiCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			apiCallCount++
+			if (apiCallCount === 1) {
+				return new Response('Unauthorized', { status: 401 })
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(apiCallCount).toBe(2)
+	})
+
+	it('should not retry more than once on persistent 401', async () => {
+		let apiCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			apiCallCount++
+			return new Response('Unauthorized', { status: 401 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('unauthorized')
+			}
+		}
+
+		expect(apiCallCount).toBe(2)
+	})
+
+	it('should fail with credentials_error when token response is malformed and not retry', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				return new Response(JSON.stringify({ error: 'invalid_client' }), { status: 400 })
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('credentials_error')
+			}
+		}
+
+		expect(tokenCallCount).toBe(1)
+	})
+
+	it('should fail with client_error after exhausting retries on persistent network failure', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				throw new Error('Network error')
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('client_error')
+			}
+		}
+
+		expect(tokenCallCount).toBe(3)
+	})
+
+	it('should recover from transient token endpoint failures', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				if (tokenCallCount <= 2) {
+					throw new Error('Connection refused')
+				}
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(tokenCallCount).toBe(3)
+	})
+
+	it('should retry on 429 rate limiting from token endpoint', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				if (tokenCallCount <= 2) {
+					return new Response(JSON.stringify({ error: 'rate_limit_exceeded' }), { status: 429 })
+				}
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(tokenCallCount).toBe(3)
+	})
+
+	it('should retry on 502 from token endpoint', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				if (tokenCallCount <= 1) {
+					return new Response('<html>Bad Gateway</html>', { status: 502 })
+				}
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(tokenCallCount).toBe(2)
+	})
+
+	it('should not retry on 400 from token endpoint', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				return new Response(
+					JSON.stringify({ error: 'invalid_client', error_description: 'Bad credentials' }),
+					{ status: 400 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('credentials_error')
+			}
+		}
+
+		expect(tokenCallCount).toBe(1)
+	})
 })

@@ -12,7 +12,8 @@ Effect-first OAuth 2.0 Client Credentials helper for Effect v4 HTTP `HttpClient`
 - Fetches access tokens using the client credentials grant
 - Caches tokens and auto-refreshes near expiry
 - Transparently attaches `Authorization: Bearer <token>` to outgoing requests
-- Retries once on 401 responses
+- Retries once on downstream 401 responses (invalidates cached token, fetches a fresh one)
+- Retries transient token endpoint failures (429, 5xx, network errors) with exponential backoff
 
 ## Installation
 
@@ -42,6 +43,8 @@ import { OAuthClient } from "@ballatech/effect-oauth-client"
   - Provides an `OAuthHttpClient` service from `Config` values.
 - `OAuthClient.OAuthHttpClient` — Built-in service tag for the single-client case. Use with `layer` / `layerFromConfig`.
 - `OAuthClient.Client` — Type alias for the authenticated `HttpClient` shape. Use this when creating your own service tags for multi-client setups.
+- `OAuthClient.AuthorizationError` — Tagged error class for all OAuth failures. Has a `code` field: `'credentials_error'`, `'client_error'`, or `'unauthorized'`.
+- `OAuthClient.isAuthorizationError(u)` — Type guard that narrows `unknown` to `AuthorizationError`.
 
 ### Credentials
 
@@ -61,7 +64,7 @@ type Credentials = {
 Notes:
 
 - `baseUrl` is prepended to every outgoing request URL, so you can use relative paths like `client.get("/users")` instead of full URLs.
-- `ttl` controls the cache TTL for the token effect. Actual token expiry is respected via the `expires_in` value and refreshed ~10 seconds early.
+- `ttl` controls the maximum cache lifetime for the token. The actual token expiry from `expires_in` is also tracked, and the token is proactively refreshed `expiryBuffer` before it expires (default: 5 minutes early).
 - `scope` and `audience` are optional and sent as URL-encoded form parameters.
 
 ### CredentialsConfig
@@ -85,9 +88,9 @@ type CredentialsConfig = {
 
 `OAuthClient` can fail with `AuthorizationError` (a tagged error) with `code`:
 
-- `credentials_error`: parsing or validation of the token response failed
-- `client_error`: HTTP client or response error while obtaining a token
-- `unauthorized`: downstream API responded with 401
+- `credentials_error`: the token endpoint returned a response that doesn't match the expected schema (e.g. 400 with an OAuth error body, or missing `access_token`). Not retried.
+- `client_error`: transient failure while obtaining a token (network error, 429, 5xx). Retried up to 2 times with exponential backoff before failing.
+- `unauthorized`: downstream API responded with 401. The cached token is invalidated and the request is retried once with a fresh token. If the retry also returns 401, the error propagates.
 
 ## Usage
 
