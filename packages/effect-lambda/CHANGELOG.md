@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 1.0.0-beta.1
+
+### Patch Changes
+
+- [#20](https://github.com/successkrisz/effect-packages/pull/20) [`ded75cc`](https://github.com/successkrisz/effect-packages/commit/ded75cc22292d94558955c39a83e23220ad8c330) Thanks [@github-actions](https://github.com/apps/github-actions)! - Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
 ## 1.0.0-beta.0
 
 ### Major Changes
