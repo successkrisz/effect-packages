@@ -1,1 +1,1 @@
-export * as OAuthClient from './effect-oauth-client.ts'
+export * as OAuthHttpClient from './OAuthHttpClient.ts'

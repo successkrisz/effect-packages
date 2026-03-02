@@ -12,7 +12,7 @@ import {
 	ServiceMap,
 } from 'effect'
 import { FetchHttpClient, HttpClientResponse } from 'effect/unstable/http'
-import * as OAuthClient from '../src/effect-oauth-client'
+import * as OAuthClient from '../src/OAuthHttpClient'
 
 const FooSchema = Schema.Struct({ foo: Schema.String })
 

@@ -30,21 +30,21 @@ pnpm add effect@beta
 ## API
 
 ```ts
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 ```
 
-- `OAuthClient.make(credentials)` → `Effect<HttpClient>`
+- `OAuthHttpClient.make(credentials)` → `Effect<HttpClient>`
   - Builds an `HttpClient` that automatically obtains and injects access tokens.
-- `OAuthClient.makeFromConfig(credentialsConfig)` → `Effect<HttpClient>`
+- `OAuthHttpClient.makeFromConfig(credentialsConfig)` → `Effect<HttpClient>`
   - Same as `make`, but resolves each credential from a `Config` value. Useful when credentials come from environment variables or a config provider.
-- `OAuthClient.layer(credentials)` → `Layer<OAuthHttpClient>`
+- `OAuthHttpClient.layer(credentials)` → `Layer<OAuthHttpClient>`
   - Provides an `OAuthHttpClient` service from static credentials.
-- `OAuthClient.layerFromConfig(credentialsConfig)` → `Layer<OAuthHttpClient>`
+- `OAuthHttpClient.layerFromConfig(credentialsConfig)` → `Layer<OAuthHttpClient>`
   - Provides an `OAuthHttpClient` service from `Config` values.
-- `OAuthClient.OAuthHttpClient` — Built-in service tag for the single-client case. Use with `layer` / `layerFromConfig`.
-- `OAuthClient.Client` — Type alias for the authenticated `HttpClient` shape. Use this when creating your own service tags for multi-client setups.
-- `OAuthClient.AuthorizationError` — Tagged error class for all OAuth failures. Has a `code` field: `'credentials_error'`, `'client_error'`, or `'unauthorized'`.
-- `OAuthClient.isAuthorizationError(u)` — Type guard that narrows `unknown` to `AuthorizationError`.
+- `OAuthHttpClient.OAuthHttpClient` — Built-in service tag for the single-client case. Use with `layer` / `layerFromConfig`.
+- `OAuthHttpClient.Client` — Type alias for the authenticated `HttpClient` shape. Use this when creating your own service tags for multi-client setups.
+- `OAuthHttpClient.AuthorizationError` — Tagged error class for all OAuth failures. Has a `code` field: `'credentials_error'`, `'client_error'`, or `'unauthorized'`.
+- `OAuthHttpClient.isAuthorizationError(u)` — Type guard that narrows `unknown` to `AuthorizationError`.
 
 ### Credentials
 
@@ -86,7 +86,7 @@ type CredentialsConfig = {
 
 ### Errors
 
-`OAuthClient` can fail with `AuthorizationError` (a tagged error) with `code`:
+`OAuthHttpClient` can fail with `AuthorizationError` (a tagged error) with `code`:
 
 - `credentials_error`: the token endpoint returned a response that doesn't match the expected schema (e.g. 400 with an OAuth error body, or missing `access_token`). Not retried.
 - `client_error`: transient failure while obtaining a token (network error, 429, 5xx). Retried up to 2 times with exponential backoff before failing.
@@ -97,14 +97,14 @@ type CredentialsConfig = {
 ### Basic request
 
 ```ts
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { Effect, Redacted, Schema } from "effect"
 import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
 
 const FooSchema = Schema.Struct({ foo: Schema.String })
 
 const program = Effect.gen(function* () {
-  const client = yield* OAuthClient.make({
+  const client = yield* OAuthHttpClient.make({
     clientId: "my-client-id",
     clientSecret: Redacted.make("my-secret"),
     tokenUrl: "https://auth.example.com/oauth/token",
@@ -130,11 +130,11 @@ Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
 
 ```ts
 import { Effect, Layer, Redacted, ServiceMap } from "effect"
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
 
 const makeService = Effect.gen(function* () {
-  const client = yield* OAuthClient.make({
+  const client = yield* OAuthHttpClient.make({
     clientId: "id123",
     clientSecret: Redacted.make("secret"),
     tokenUrl: "https://auth.example.com/oauth/token",
@@ -157,17 +157,17 @@ export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
 
 ```ts
 import { Effect, Layer, Redacted } from "effect"
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
 
-const AppLayer = OAuthClient.layer({
+const AppLayer = OAuthHttpClient.layer({
   clientId: "id123",
   clientSecret: Redacted.make("secret"),
   tokenUrl: "https://auth.example.com/oauth/token",
   baseUrl: "https://api.example.com",
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
-const program = OAuthClient.OAuthHttpClient.use((client) =>
+const program = OAuthHttpClient.OAuthHttpClient.use((client) =>
   client.get("/secret-foo").pipe(Effect.scoped)
 )
 
@@ -180,10 +180,10 @@ Using `layerFromConfig` for the simplest case:
 
 ```ts
 import { Config, Effect, Layer } from "effect"
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient } from "effect/unstable/http"
 
-const AppLayer = OAuthClient.layerFromConfig({
+const AppLayer = OAuthHttpClient.layerFromConfig({
   clientId: Config.string("OAUTH_CLIENT_ID"),
   clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
   tokenUrl: Config.string("OAUTH_TOKEN_URL"),
@@ -191,7 +191,7 @@ const AppLayer = OAuthClient.layerFromConfig({
   scope: Config.string("OAUTH_SCOPE"),
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
-const program = OAuthClient.OAuthHttpClient.use((client) =>
+const program = OAuthHttpClient.OAuthHttpClient.use((client) =>
   client.get("/secret-foo").pipe(Effect.scoped)
 )
 
@@ -202,11 +202,11 @@ Or with `makeFromConfig` when wrapping in a custom service:
 
 ```ts
 import { Config, Effect, Layer, ServiceMap } from "effect"
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient } from "effect/unstable/http"
 
 const makeService = Effect.gen(function* () {
-  const client = yield* OAuthClient.makeFromConfig({
+  const client = yield* OAuthHttpClient.makeFromConfig({
     clientId: Config.string("OAUTH_CLIENT_ID"),
     clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
     tokenUrl: Config.string("OAUTH_TOKEN_URL"),
@@ -229,15 +229,15 @@ export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
 
 The built-in `OAuthHttpClient` tag covers the single-client case. When your program
 connects to multiple OAuth-protected APIs, create a dedicated tag for each one using
-`OAuthClient.Client` as the shape:
+`OAuthHttpClient.Client` as the shape:
 
 ```ts
 import { Effect, Layer, Redacted, ServiceMap } from "effect"
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient } from "effect/unstable/http"
 
-class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()("AzureClient") {
-  static live = Layer.effect(this)(OAuthClient.make({
+class AzureClient extends ServiceMap.Service<AzureClient, OAuthHttpClient.Client>()("AzureClient") {
+  static live = Layer.effect(this)(OAuthHttpClient.make({
     clientId: "azure-id",
     clientSecret: Redacted.make("azure-secret"),
     tokenUrl: "https://login.microsoftonline.com/.../oauth2/v2.0/token",
@@ -245,8 +245,8 @@ class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()(
   }))
 }
 
-class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthClient.Client>()("GoogleClient") {
-  static live = Layer.effect(this)(OAuthClient.make({
+class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthHttpClient.Client>()("GoogleClient") {
+  static live = Layer.effect(this)(OAuthHttpClient.make({
     clientId: "google-id",
     clientSecret: Redacted.make("google-secret"),
     tokenUrl: "https://oauth2.googleapis.com/token",
@@ -275,9 +275,9 @@ Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
 import { beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import { Duration, Effect, Layer, ManagedRuntime, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import { OAuthClient } from "@ballatech/effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 
-describe("OAuthClient", () => {
+describe("OAuthHttpClient", () => {
   let rt: ManagedRuntime.ManagedRuntime<never, never>
   const fetch = vi.fn()
 
@@ -296,7 +296,7 @@ describe("OAuthClient", () => {
     })
 
     const prog = Effect.gen(function* () {
-      const client = yield* OAuthClient.make({
+      const client = yield* OAuthHttpClient.make({
         clientId: "id",
         clientSecret: Redacted.make("secret"),
         tokenUrl: "https://auth.example.com/oauth/token",

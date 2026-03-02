@@ -23,12 +23,12 @@ export const handler = toLambdaHandler(
 ### effect-oauth-client quickstart
 
 ```ts
-import { OAuthClient } from "effect-oauth-client"
+import { OAuthHttpClient } from "effect-oauth-client"
 import { Effect, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 
 const program = Effect.gen(function* () {
-  const client = yield* OAuthClient.make({
+  const client = yield* OAuthHttpClient.make({
     clientId: "my-client-id",
     clientSecret: Redacted.make("my-secret"),
     tokenUrl: "https://auth.example.com/oauth/token",
