@@ -1,5 +1,5 @@
 import { ServiceMap } from 'effect'
-import type { LambdaContext } from './aws'
+import type { LambdaContext } from './aws.ts'
 
 /**
  * Context tag for the AWS Lambda runtime `Context` object.

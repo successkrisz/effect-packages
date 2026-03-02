@@ -1,4 +1,4 @@
-import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws'
+import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws.ts'
 
 /**
  * Normalize header keys to lowercase without mutating the input.

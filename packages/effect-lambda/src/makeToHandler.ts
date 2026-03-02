@@ -1,7 +1,7 @@
 import { type Config, Effect, Layer, type ServiceMap } from 'effect'
-import type { Handler } from './aws'
-import { HandlerContext } from './common'
-import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime'
+import type { Handler } from './aws.ts'
+import { HandlerContext } from './common.ts'
+import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime.ts'
 
 /**
  * Create a curried adapter to turn an `Effect` program into a Lambda handler for a given event tag.

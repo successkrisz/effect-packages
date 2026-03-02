@@ -3,12 +3,12 @@ import type {
 	APIGatewayProxyHandlerV2,
 	AwsAPIGatewayProxyEventV2,
 	AwsAPIGatewayProxyResultV2,
-} from './aws'
-import type { HandlerContext } from './common'
-import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer'
-import { httpStatusMessages } from './internal/http-status-codes'
-import { jsonBodyParser } from './internal/jsonBodyParser'
-import { makeToHandler } from './makeToHandler'
+} from './aws.ts'
+import type { HandlerContext } from './common.ts'
+import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer.ts'
+import { httpStatusMessages } from './internal/http-status-codes.ts'
+import { jsonBodyParser } from './internal/jsonBodyParser.ts'
+import { makeToHandler } from './makeToHandler.ts'
 
 /**
  * Export types from aws-lambda for HTTP API (payload format v2)

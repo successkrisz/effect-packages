@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws'
+import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws.ts'
 
 /** Determine if a content type should be treated as JSON. */
 export const isJsonContentType = (contentType: string | undefined): boolean => {

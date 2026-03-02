@@ -1,6 +1,6 @@
 import { ServiceMap } from 'effect'
-import type { AwsSNSEvent } from './aws'
-import { makeToHandler } from './makeToHandler'
+import type { AwsSNSEvent } from './aws.ts'
+import { makeToHandler } from './makeToHandler.ts'
 
 /**
  * Export types from aws-lambda

@@ -1,7 +1,7 @@
 import { ServiceMap } from 'effect'
-import type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent } from './aws'
-import type { BatchResponse } from './common'
-import { makeToHandler } from './makeToHandler'
+import type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent } from './aws.ts'
+import type { BatchResponse } from './common.ts'
+import { makeToHandler } from './makeToHandler.ts'
 
 /**
  * Export types from aws-lambda

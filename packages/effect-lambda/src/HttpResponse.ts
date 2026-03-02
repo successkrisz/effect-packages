@@ -6,9 +6,9 @@ import {
 	type RedirectionStatusCode,
 	type ServerErrorStatusCode,
 	type SuccessStatusCode,
-} from './internal/http-status-codes'
-import { isJsonContentType } from './internal/jsonBodyParser'
-import { type ForbidKeysWithValues, lowercaseKeys } from './utils'
+} from './internal/http-status-codes.ts'
+import { isJsonContentType } from './internal/jsonBodyParser.ts'
+import { type ForbidKeysWithValues, lowercaseKeys } from './utils.ts'
 
 export type CommonHeaders = { [header: string]: boolean | number | string }
 

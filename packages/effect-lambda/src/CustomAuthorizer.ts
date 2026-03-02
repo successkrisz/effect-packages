@@ -3,8 +3,8 @@ import type {
 	APIGatewayAuthorizerHandler,
 	APIGatewayAuthorizerResult,
 	AwsAPIGatewayAuthorizerEvent,
-} from './aws'
-import { HandlerContext } from './common'
+} from './aws.ts'
+import { HandlerContext } from './common.ts'
 
 /**
  * Export types from aws-lambda

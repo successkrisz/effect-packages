@@ -1,7 +1,7 @@
 import { Effect, Result, ServiceMap } from 'effect'
-import type { AwsSQSEvent, AwsSQSRecord } from './aws'
-import type { BatchResponse } from './common'
-import { makeToHandler } from './makeToHandler'
+import type { AwsSQSEvent, AwsSQSRecord } from './aws.ts'
+import type { BatchResponse } from './common.ts'
+import { makeToHandler } from './makeToHandler.ts'
 
 /**
  * Export types from aws-lambda

@@ -10,60 +10,28 @@
 	},
 	"sideEffects": false,
 	"type": "module",
-	"main": "./dist/index.cjs",
-	"module": "./dist/index.js",
-	"types": "./dist/index.d.ts",
 	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"require": "./dist/index.cjs"
-		},
-		"./RestApi": {
-			"types": "./dist/RestApi.d.ts",
-			"import": "./dist/RestApi.js",
-			"require": "./dist/RestApi.cjs"
-		},
-		"./HttpApi": {
-			"types": "./dist/HttpApi.d.ts",
-			"import": "./dist/HttpApi.js",
-			"require": "./dist/HttpApi.cjs"
-		},
-		"./Sns": {
-			"types": "./dist/Sns.d.ts",
-			"import": "./dist/Sns.js",
-			"require": "./dist/Sns.cjs"
-		},
-		"./Sqs": {
-			"types": "./dist/Sqs.d.ts",
-			"import": "./dist/Sqs.js",
-			"require": "./dist/Sqs.cjs"
-		},
-		"./CustomAuthorizer": {
-			"types": "./dist/CustomAuthorizer.d.ts",
-			"import": "./dist/CustomAuthorizer.js",
-			"require": "./dist/CustomAuthorizer.cjs"
-		},
-		"./DynamoDb": {
-			"types": "./dist/DynamoDb.d.ts",
-			"import": "./dist/DynamoDb.js",
-			"require": "./dist/DynamoDb.cjs"
-		},
-		"./HttpResponse": {
-			"types": "./dist/HttpResponse.d.ts",
-			"import": "./dist/HttpResponse.js",
-			"require": "./dist/HttpResponse.cjs"
-		}
+		".": "./src/index.ts",
+		"./RestApi": "./src/RestApi.ts",
+		"./HttpApi": "./src/HttpApi.ts",
+		"./Sns": "./src/Sns.ts",
+		"./Sqs": "./src/Sqs.ts",
+		"./CustomAuthorizer": "./src/CustomAuthorizer.ts",
+		"./DynamoDb": "./src/DynamoDb.ts",
+		"./HttpResponse": "./src/HttpResponse.ts"
 	},
 	"files": [
-		"dist/**",
+		"src/**/*.ts",
+		"dist/**/*.js",
+		"dist/**/*.js.map",
+		"dist/**/*.d.ts",
+		"dist/**/*.d.ts.map",
 		"README.md",
 		"LICENSE"
 	],
 	"scripts": {
-		"prebuild": "rm -rf dist",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"build": "tsup",
+		"build": "tsc -p tsconfig.json",
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {
@@ -84,6 +52,19 @@
 		},
 		"@types/aws-lambda": {
 			"optional": true
+		}
+	},
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			".": "./dist/index.js",
+			"./RestApi": "./dist/RestApi.js",
+			"./HttpApi": "./dist/HttpApi.js",
+			"./Sns": "./dist/Sns.js",
+			"./Sqs": "./dist/Sqs.js",
+			"./CustomAuthorizer": "./dist/CustomAuthorizer.js",
+			"./DynamoDb": "./dist/DynamoDb.js",
+			"./HttpResponse": "./dist/HttpResponse.js"
 		}
 	},
 	"repository": {

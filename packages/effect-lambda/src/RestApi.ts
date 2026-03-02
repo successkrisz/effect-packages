@@ -1,10 +1,10 @@
 import { Effect, type Layer, Schema, type SchemaAST, ServiceMap } from 'effect'
-import type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler } from './aws'
-import type { HandlerContext } from './common'
-import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer'
-import { httpStatusMessages } from './internal/http-status-codes'
-import { jsonBodyParser } from './internal/jsonBodyParser'
-import { makeToHandler } from './makeToHandler'
+import type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler } from './aws.ts'
+import type { HandlerContext } from './common.ts'
+import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer.ts'
+import { httpStatusMessages } from './internal/http-status-codes.ts'
+import { jsonBodyParser } from './internal/jsonBodyParser.ts'
+import { makeToHandler } from './makeToHandler.ts'
 
 /**
  * Export types from aws-lambda
