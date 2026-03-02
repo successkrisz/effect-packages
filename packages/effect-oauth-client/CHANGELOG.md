@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 1.0.0-beta.4
+
+### Minor Changes
+
+- [#21](https://github.com/successkrisz/effect-packages/pull/21) [`74bf3e0`](https://github.com/successkrisz/effect-packages/commit/74bf3e001d982f15421fdbc9c57456cac1ef3c17) Thanks [@github-actions](https://github.com/apps/github-actions)! - Rename module export from `OAuthClient` to `OAuthHttpClient` to better communicate that this package provides an OAuth-authenticated HttpClient, not a generic OAuth client. The source file is also renamed to `OAuthHttpClient.ts` to align with Effect v4's convention of matching file names to their primary export. This is a breaking change — update imports from `{ OAuthClient }` to `{ OAuthHttpClient }`.
+
 ## 1.0.0-beta.3
 
 ### Patch Changes
