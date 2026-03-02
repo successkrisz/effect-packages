@@ -18,14 +18,10 @@ Effect-first OAuth 2.0 Client Credentials helper for Effect v4 HTTP `HttpClient`
 ## Installation
 
 ```bash
-pnpm add @ballatech/effect-oauth-client
+pnpm add @ballatech/effect-oauth-client@beta effect@beta
 ```
 
-This package expects `effect` v4 beta as a peer. Since `pnpm add effect` installs v3 by default, you must specify the beta tag explicitly:
-
-```bash
-pnpm add effect@beta
-```
+> This package expects `effect` v4 beta as a peer. Since `pnpm add effect` installs v3 by default, you must specify the beta tag explicitly.
 
 ## API
 
