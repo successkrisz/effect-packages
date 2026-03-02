@@ -331,6 +331,8 @@ describe('OAuthClient', () => {
 			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
 			if (OAuthClient.isAuthorizationError(firstError)) {
 				expect(firstError.code).toBe('credentials_error')
+				expect(firstError.cause).toBeDefined()
+				expect(Schema.isSchemaError(firstError.cause)).toBe(true)
 			}
 		}
 
@@ -357,6 +359,7 @@ describe('OAuthClient', () => {
 			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
 			if (OAuthClient.isAuthorizationError(firstError)) {
 				expect(firstError.code).toBe('client_error')
+				expect(firstError.cause).toBeDefined()
 			}
 		}
 

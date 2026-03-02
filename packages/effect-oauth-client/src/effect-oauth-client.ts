@@ -30,6 +30,7 @@ export class AuthorizationError extends Data.TaggedError(
 )<{
 	readonly message: string
 	readonly code: 'credentials_error' | 'client_error' | 'unauthorized'
+	readonly cause?: unknown
 }> {
 	readonly [AuthorizationErrorTypeId] = AuthorizationErrorTypeId
 }
@@ -128,6 +129,7 @@ export const make = ({
 						new AuthorizationError({
 							message: error instanceof Error ? error.message : 'Failed to fetch OAuth credentials',
 							code: Schema.isSchemaError(error) ? 'credentials_error' : 'client_error',
+							cause: error,
 						}),
 				),
 			)
