@@ -5,5 +5,11 @@
 		"effect-lambda": "0.5.2",
 		"@ballatech/effect-oauth-client": "0.3.2"
 	},
-	"changesets": ["busy-ideas-sleep", "soft-points-see", "young-schools-melt"]
+	"changesets": [
+		"busy-ideas-sleep",
+		"soft-points-see",
+		"stupid-hairs-occur",
+		"wet-cloths-argue",
+		"young-schools-melt"
+	]
 }
