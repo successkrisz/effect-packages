@@ -12,6 +12,9 @@ catalogs:
     '@effect/language-service':
       specifier: ^0.77.0
       version: 0.77.0
+    '@effect/vitest':
+      specifier: ^4.0.0-beta.12
+      version: 4.0.0-beta.12
     '@types/aws-lambda':
       specifier: ^8.10.152
       version: 8.10.152
@@ -39,7 +42,7 @@ importers:
         specifier: ^2.29.7
         version: 2.29.7(@types/node@22.18.6)
       '@effect/vitest':
-        specifier: ^4.0.0-beta.12
+        specifier: 'catalog:'
         version: 4.0.0-beta.12(effect@4.0.0-beta.12)(vitest@3.2.4(@types/node@22.18.6)(yaml@2.8.2))
       husky:
         specifier: ^9.1.7

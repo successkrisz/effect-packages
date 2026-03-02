@@ -11,6 +11,7 @@ import {
 	Schema,
 	ServiceMap,
 } from 'effect'
+import { TestClock } from 'effect/testing'
 import { FetchHttpClient, HttpClientResponse } from 'effect/unstable/http'
 import * as OAuthClient from '../src/OAuthHttpClient'
 
@@ -93,25 +94,22 @@ describe('OAuthClient', () => {
 		await runtime.dispose()
 	})
 
-	it('should refresh token when cache ttl elapses', async () => {
-		const runtime = ManagedRuntime.make(
-			makeOAuthLayer({ ...baseCredentials, ttl: Duration.millis(1) }, fetch),
-		)
-		const request = OAuthHttpClient.use((client) =>
-			client
-				.get('https://api.example.com/secret-foo')
-				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
-		)
+	it.effect('should refresh token when cache ttl elapses', () =>
+		Effect.gen(function* () {
+			const request = OAuthHttpClient.use((client) =>
+				client
+					.get('https://api.example.com/secret-foo')
+					.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+			)
 
-		await runtime.runPromise(request)
-		await new Promise((resolve) => setTimeout(resolve, 10))
-		await runtime.runPromise(request)
+			yield* request
+			yield* TestClock.adjust(Duration.millis(2))
+			yield* request
 
-		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(2)
-		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(2)
-
-		await runtime.dispose()
-	})
+			expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(2)
+			expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(2)
+		}).pipe(Effect.provide(makeOAuthLayer({ ...baseCredentials, ttl: Duration.millis(1) }, fetch))),
+	)
 
 	it('should fail with AuthorizationError on 401', async () => {
 		fetch.mockImplementation(async (url: URL) => {
