@@ -1,0 +1,15 @@
+{
+	"extends": "@ballatech/tsconfig/tsconfig.lib.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"rootDir": "src",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"emitDeclarationOnly": false,
+		"rewriteRelativeImportExtensions": true,
+		"erasableSyntaxOnly": true,
+		"declarationMap": true,
+		"sourceMap": true
+	},
+	"include": ["src"]
+}

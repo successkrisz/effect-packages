@@ -1,0 +1,52 @@
+{
+	"name": "@ballatech/effect-problem-json",
+	"version": "0.1.0",
+	"private": false,
+	"license": "MIT",
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"files": [
+		"src/**/*.ts",
+		"dist/**/*.js",
+		"dist/**/*.js.map",
+		"dist/**/*.d.ts",
+		"dist/**/*.d.ts.map",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"typecheck": "tsc -p tsconfig.dev.json",
+		"dev": "npx tsx dev/server.ts",
+		"build": "tsc -p tsconfig.json",
+		"prepack": "pnpm run build"
+	},
+	"devDependencies": {
+		"@ballatech/tsconfig": "catalog:",
+		"@effect/language-service": "catalog:",
+		"@effect/platform-node": "catalog:",
+		"@types/node": "catalog:",
+		"effect": "catalog:",
+		"tsx": "^4.21.0"
+	},
+	"peerDependencies": {
+		"effect": "catalog:"
+	},
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			".": "./dist/index.js"
+		}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/successkrisz/effect-packages.git",
+		"directory": "packages/effect-problem-json"
+	},
+	"bugs": {
+		"url": "https://github.com/successkrisz/effect-packages/issues"
+	},
+	"homepage": "https://github.com/successkrisz/effect-packages#readme"
+}
