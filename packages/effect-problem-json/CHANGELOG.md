@@ -1,5 +1,11 @@
 # @ballatech/effect-problem-json
 
+## 1.0.0-beta.1
+
+### Major Changes
+
+- [`b08c254`](https://github.com/successkrisz/effect-packages/commit/b08c2546b74b30018df0f7bd598fbd0bd95264eb) - Fix type inference issues and ensure that it works well with @effect-aws/lambda
+
 ## 0.2.0-beta.0
 
 ### Minor Changes
