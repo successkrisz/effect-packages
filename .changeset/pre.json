@@ -7,6 +7,7 @@
 		"@ballatech/effect-problem-json": "0.1.0"
 	},
 	"changesets": [
+		"bumpy-weeks-clean",
 		"busy-ideas-sleep",
 		"curly-lies-send",
 		"deep-lines-yell",
