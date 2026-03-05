@@ -8,7 +8,7 @@ catalog:
   '@effect/platform-node': *effect-beta
   '@effect/vitest': *effect-beta
   '@types/aws-lambda': ^8.10.152
-  '@types/node': ^22.18.6
+  '@types/node': ^24.0.4
 
 onlyBuiltDependencies:
   - esbuild

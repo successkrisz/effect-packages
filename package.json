@@ -23,6 +23,9 @@
 	"keywords": [],
 	"author": "Krisztian Balla",
 	"license": "MIT",
+	"engines": {
+		"node": ">=24"
+	},
 	"packageManager": "pnpm@10.17.1",
 	"devDependencies": {
 		"@ballatech/biome-config": "^1.0.1",
