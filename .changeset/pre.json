@@ -3,10 +3,12 @@
 	"tag": "beta",
 	"initialVersions": {
 		"effect-lambda": "0.5.2",
-		"@ballatech/effect-oauth-client": "0.3.2"
+		"@ballatech/effect-oauth-client": "0.3.2",
+		"@ballatech/effect-problem-json": "0.1.0"
 	},
 	"changesets": [
 		"busy-ideas-sleep",
+		"curly-lies-send",
 		"deep-lines-yell",
 		"soft-points-see",
 		"stupid-hairs-occur",
