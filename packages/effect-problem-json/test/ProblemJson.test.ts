@@ -339,6 +339,34 @@ describe('transformResponse', () => {
 		}
 	})
 
+	it('rewrites an empty-body 400 response to problem+json', () => {
+		const original = HttpServerResponse.empty({ status: 400 })
+		const result = ProblemJson.transformResponse(original)
+		expect(result.status).toBe(400)
+		if (result.body._tag === 'Uint8Array') {
+			expect(result.body.contentType).toBe('application/problem+json')
+			const body = JSON.parse(new TextDecoder().decode(result.body.body))
+			expect(body.type).toBe('/problems/bad-request')
+			expect(body.title).toBe('Bad Request')
+			expect(body.status).toBe(400)
+			expect(body.detail).toBe('The request did not match the expected schema')
+		}
+	})
+
+	it('rewrites an empty-body 4xx (non-400) response to problem+json', () => {
+		const original = HttpServerResponse.empty({ status: 404 })
+		const result = ProblemJson.transformResponse(original)
+		expect(result.status).toBe(404)
+		if (result.body._tag === 'Uint8Array') {
+			expect(result.body.contentType).toBe('application/problem+json')
+			const body = JSON.parse(new TextDecoder().decode(result.body.body))
+			expect(body.type).toBe('/problems/not-found')
+			expect(body.title).toBe('Not Found')
+			expect(body.status).toBe(404)
+			expect(body.detail).toBe('Not Found')
+		}
+	})
+
 	it('uses a custom typePrefix', () => {
 		const original = HttpServerResponse.jsonUnsafe(
 			{ _tag: 'NotFound', message: 'missing' },
@@ -348,6 +376,15 @@ describe('transformResponse', () => {
 		if (result.body._tag === 'Uint8Array') {
 			const body = JSON.parse(new TextDecoder().decode(result.body.body))
 			expect(body.type).toBe('/api/errors/notfound')
+		}
+	})
+
+	it('uses a custom typePrefix for empty-body responses', () => {
+		const original = HttpServerResponse.empty({ status: 400 })
+		const result = ProblemJson.transformResponse(original, { typePrefix: '/api/errors/' })
+		if (result.body._tag === 'Uint8Array') {
+			const body = JSON.parse(new TextDecoder().decode(result.body.body))
+			expect(body.type).toBe('/api/errors/bad-request')
 		}
 	})
 

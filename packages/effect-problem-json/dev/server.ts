@@ -226,6 +226,18 @@ const ManualValidateRoute = HttpRouter.add('POST', '/manual-validate', (request)
 )
 
 // ---------------------------------------------------------------------------
+// Middleware-only validation route (SchemaError caught by global middleware)
+// ---------------------------------------------------------------------------
+
+const MiddlewareValidateRoute = HttpRouter.add('POST', '/middleware-validate', (request) =>
+	Effect.gen(function* () {
+		const body = yield* request.json
+		const data = yield* Schema.decodeUnknownEffect(ContactForm)(body)
+		return HttpServerResponse.jsonUnsafe({ ok: true, data })
+	}),
+)
+
+// ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
 
@@ -239,7 +251,13 @@ const SwaggerLive = HttpApiSwagger.layer(api, { path: '/docs' })
 const ServerLive = NodeHttpServer.layer(createServer, { port: 3000 })
 
 const AppLive = HttpRouter.serve(
-	Layer.mergeAll(ApiLive, SwaggerLive, ManualValidateRoute, ProblemJson.middleware()),
+	Layer.mergeAll(
+		ApiLive,
+		SwaggerLive,
+		ManualValidateRoute,
+		MiddlewareValidateRoute,
+		ProblemJson.middleware(),
+	),
 ).pipe(Layer.provide(ServerLive))
 
 const logStartup = Effect.gen(function* () {
@@ -257,7 +275,8 @@ Try it out:
   curl -X PUT http://localhost:3000/todos/1 -H 'Content-Type: application/json' -d '{"completed":true}'
   curl -X DELETE http://localhost:3000/todos/1
   curl -X POST http://localhost:3000/manual-validate -H 'Content-Type: application/json' -d '{"email":"bad","age":-1,"name":""}'
-  curl -X POST http://localhost:3000/manual-validate -H 'Content-Type: application/json' -d '{"email":"a@b.com","age":25,"name":"Alice"}'`)
+  curl -X POST http://localhost:3000/manual-validate -H 'Content-Type: application/json' -d '{"email":"a@b.com","age":25,"name":"Alice"}'
+  curl -X POST http://localhost:3000/middleware-validate -H 'Content-Type: application/json' -d '{"email":"bad","age":-1,"name":""}'  # caught by global middleware`)
 })
 
 // @ts-expect-error -- Layer.launch R-channel inference issue with Effect v4 beta

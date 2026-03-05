@@ -228,6 +228,12 @@ export function fromSchemaError(
 // ---------------------------------------------------------------------------
 // parseSchemaErrors — parse Effect schema error messages into RFC 9457
 //                     validation error extension items (detail + pointer)
+//
+// This is a tertiary fallback. The middleware catches most SchemaErrors at the
+// Effect level (catchIf) or as defects (catchDefect) using the structured
+// SchemaIssue formatter. This string parser only activates for responses that
+// are already rendered as application/json by error classes that don't use
+// asProblemJson. It is fragile against Effect error-message format changes.
 // ---------------------------------------------------------------------------
 
 function parseBracketPath(raw: string): string {
@@ -270,8 +276,20 @@ export function parseSchemaErrors(message: string): Array<ValidationError> {
 // middleware — global HttpRouter middleware that rewrites errors to problem+json
 // ---------------------------------------------------------------------------
 
+const decodeJsonRecord = Schema.decodeUnknownOption(
+	Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+)
+const textDecoder = new TextDecoder()
+
 /**
- * Rewrites a 4xx `application/json` response into `application/problem+json`.
+ * Rewrites a 4xx response into `application/problem+json`.
+ *
+ * Handles two fallback cases (most SchemaErrors are caught at the Effect
+ * level by `middleware()` before reaching this):
+ * 1. **Empty-body 4xx** — produces a generic problem+json body.
+ * 2. **JSON-body 4xx** — parses `_tag` and `message` from the body and
+ *    rewrites to problem+json with structured validation errors.
+ *
  * Returns the response unchanged for non-error or already-problem+json responses.
  */
 export function transformResponse(
@@ -280,20 +298,29 @@ export function transformResponse(
 ): HttpServerResponseType.HttpServerResponse {
 	const prefix = options?.typePrefix ?? '/problems/'
 
-	if (
-		response.status < 400 ||
-		response.body._tag !== 'Uint8Array' ||
-		response.body.contentType !== 'application/json'
-	) {
+	if (response.status < 400) return response
+
+	if (response.body._tag === 'Empty' && response.status >= 400 && response.status < 500) {
+		return HttpServerResponse.jsonUnsafe(
+			{
+				type: `${prefix}${(statusTitles as Record<number, string>)[response.status]?.toLowerCase().replace(/\s+/g, '-') ?? 'error'}`,
+				title: (statusTitles as Record<number, string>)[response.status] ?? 'Error',
+				status: response.status,
+				detail:
+					response.status === 400
+						? 'The request did not match the expected schema'
+						: ((statusTitles as Record<number, string>)[response.status] ?? 'Client error'),
+			},
+			{ status: response.status, contentType: 'application/problem+json' },
+		)
+	}
+
+	if (response.body._tag !== 'Uint8Array' || response.body.contentType !== 'application/json') {
 		return response
 	}
 
-	const decodeJsonRecord = Schema.decodeUnknownOption(
-		Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-	)
-
 	return pipe(
-		decodeJsonRecord(new TextDecoder().decode(response.body.body)),
+		decodeJsonRecord(textDecoder.decode(response.body.body)),
 		Option.map((parsed) => {
 			const errors = parseSchemaErrors(String(parsed.message ?? ''))
 			return HttpServerResponse.jsonUnsafe(
@@ -313,6 +340,29 @@ export function transformResponse(
 	)
 }
 
+/**
+ * Global middleware that catches `Schema.SchemaError` at the Effect level
+ * (producing structured validation details via `fromSchemaError`), transforms
+ * any remaining 4xx responses to `application/problem+json`, and catches
+ * unhandled defects with a safe 500 response.
+ *
+ * Three layers of defense, in order:
+ * 1. `catchIf` — catches SchemaErrors in the error channel (HttpRouter routes)
+ * 2. `transformResponse` — rewrites empty-body or JSON 4xx responses
+ * 3. `catchDefect` — catches SchemaErrors that HttpApiBuilder converted to
+ *     defects via `Effect.orDie(encodeError(...))`, plus any other defects
+ *
+ * **Execution order**: Effect applies global middleware in reverse registration
+ * order. Place this as the **last** argument to `Layer.mergeAll` so it wraps
+ * all other layers:
+ *
+ * @example
+ * ```ts
+ * const AppLive = HttpRouter.serve(
+ *   Layer.mergeAll(ApiLive, SwaggerLive, ProblemJson.middleware()),
+ * )
+ * ```
+ */
 export function middleware(options?: { readonly typePrefix?: string }) {
 	const prefix = options?.typePrefix ?? '/problems/'
 
@@ -326,11 +376,20 @@ export function middleware(options?: { readonly typePrefix?: string }) {
 		{ status: 500, contentType: 'application/problem+json' },
 	)
 
-	return HttpRouter.middleware(
+	return HttpRouter.middleware<{ handles: Schema.SchemaError }>()(
 		(httpEffect) =>
 			httpEffect.pipe(
+				Effect.catchIf(Schema.isSchemaError, (error) =>
+					Effect.succeed(fromSchemaError(error, { type: `${prefix}schema-error` })),
+				),
 				Effect.map((response) => transformResponse(response, { typePrefix: prefix })),
-				Effect.catchDefect(() => Effect.succeed(safeServerError)),
+				Effect.catchDefect((defect) =>
+					Effect.succeed(
+						Schema.isSchemaError(defect)
+							? fromSchemaError(defect, { type: `${prefix}schema-error` })
+							: safeServerError,
+					),
+				),
 			),
 		{ global: true },
 	)

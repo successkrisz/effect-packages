@@ -108,7 +108,11 @@ Effect.catchTag("SchemaError", (error) =>
 
 ### 5. Apply the middleware
 
-The middleware rewrites schema-validation errors (and any other 4xx `application/json` responses) into RFC 9457 problem+json format, and catches unhandled defects with a safe 500 response.
+The middleware does three things in one:
+
+1. **Catches `Schema.SchemaError`** at the Effect level — before it becomes an empty 400 — producing structured validation details with JSON Pointer paths
+2. **Transforms remaining 4xx responses** (empty-body or JSON) into `application/problem+json`
+3. **Catches unhandled defects** with a safe 500 response
 
 ```ts
 import { Layer } from "effect";
@@ -118,6 +122,20 @@ import { ProblemJson } from "@ballatech/effect-problem-json";
 const AppLive = HttpRouter.serve(
   Layer.mergeAll(ApiLive, ProblemJson.middleware()),
 );
+```
+
+Schema validation failures produce rich error details automatically:
+
+```json
+{
+  "type": "/problems/schema-error",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "The request did not match the expected schema",
+  "errors": [
+    { "detail": "Expected string, got 42", "pointer": "#/name" }
+  ]
+}
 ```
 
 ### 6. Patch the OpenAPI spec
@@ -148,8 +166,8 @@ This replaces the generated `effect_HttpApiSchemaError` schema with an RFC 9457-
 | `formatSchemaIssues(error)` | Converts a `Schema.SchemaError` into `Array<{ detail, pointer? }>` for composable use |
 | `ValidationErrorItem` | Schema for a single validation error (`{ detail: string, pointer?: string }`) |
 | `parseSchemaErrors(message)` | Parses Effect schema error message strings into `Array<{ detail, pointer? }>` |
-| `transformResponse(response, options?)` | Rewrites a 4xx `application/json` response into `application/problem+json` |
-| `middleware(options?)` | Global `HttpRouter` middleware — rewrites 4xx responses and catches defects with a safe 500 |
+| `transformResponse(response, options?)` | Rewrites a 4xx response (empty-body or JSON) into `application/problem+json` |
+| `middleware(options?)` | Global middleware — catches SchemaErrors with structured details, rewrites 4xx responses, and catches defects with a safe 500 |
 | `openApiTransform(spec)` | Transforms a generated OpenAPI spec to use problem+json for error responses |
 | `BadRequest`, `NotFound`, ... | Pre-built error classes for 15 common HTTP error statuses |
 
@@ -158,6 +176,28 @@ This replaces the generated `effect_HttpApiSchemaError` schema with an RFC 9457-
 Both `middleware` and `transformResponse` accept an optional `typePrefix` (default `"/problems/"`) used to build the problem `type` URI from the error's `_tag`.
 
 Both `makeResponse` and `fromSchemaError` accept an optional `extensions` record that gets flat-spread into the response body (base fields overwrite on collision).
+
+### How the middleware catches errors
+
+The middleware has three layers of defense, in order:
+
+1. **`catchIf`** — catches `Schema.SchemaError` in the error channel with full structured data (JSON Pointer paths via `formatSchemaIssues`). This handles plain `HttpRouter` routes.
+2. **`transformResponse`** — rewrites empty-body or JSON-body 4xx responses into `application/problem+json`. This is a fallback for responses that reach the server's default error handler.
+3. **`catchDefect`** — catches `SchemaError` instances that `HttpApiBuilder` converted to defects via its internal `Effect.orDie(encodeError(...))` path. Any other defects become a safe 500.
+
+> **Note:** `parseSchemaErrors` (string-based parsing) only activates in the `transformResponse` fallback path for responses already rendered as `application/json`. Most errors are caught earlier with the structured `SchemaIssue` formatter. The string parser is fragile against Effect error-message format changes but won't affect the primary structured paths.
+
+### Middleware execution order
+
+Effect applies global middleware in **reverse registration order**. Place `ProblemJson.middleware()` as the **last** argument in `Layer.mergeAll` so it wraps all other layers:
+
+```ts
+// ✅ Correct — middleware runs outermost
+Layer.mergeAll(ApiLive, SwaggerLive, ProblemJson.middleware())
+
+// ❌ Wrong — middleware runs before other layers are registered
+Layer.mergeAll(ProblemJson.middleware(), ApiLive, SwaggerLive)
+```
 
 ## Development
 
