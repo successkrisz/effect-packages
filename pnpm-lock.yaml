@@ -19,7 +19,7 @@ catalogs:
       specifier: 4.0.0-beta.26
       version: 4.0.0-beta.26
     '@types/aws-lambda':
-      specifier: ^8.10.152
+      specifier: 8.10.152
       version: 8.10.152
     '@types/node':
       specifier: ^24.0.4
@@ -102,12 +102,18 @@ importers:
       '@ballatech/tsconfig':
         specifier: 'catalog:'
         version: 1.2.0(@effect/language-service@0.77.0)(@types/node@24.11.0)
+      '@effect-aws/lambda':
+        specifier: 2.0.0-beta.2
+        version: 2.0.0-beta.2(@effect/platform-node-shared@4.0.0-beta.27(effect@4.0.0-beta.26))(effect@4.0.0-beta.26)
       '@effect/language-service':
         specifier: 'catalog:'
         version: 0.77.0
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.0.0-beta.26(effect@4.0.0-beta.26)(ioredis@5.10.0)
+      '@types/aws-lambda':
+        specifier: 'catalog:'
+        version: 8.10.152
       '@types/node':
         specifier: 'catalog:'
         version: 24.11.0
@@ -248,6 +254,12 @@ packages:
 
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
+
+  '@effect-aws/lambda@2.0.0-beta.2':
+    resolution: {integrity: sha512-DWqlYztHjJColH/9nzZVPLRU4A0I6+Zh9p7bZpWeAq5nd/6d44s4KgMH7ewZReA1quxYyTggD1o6RHGZPQXxLQ==}
+    peerDependencies:
+      '@effect/platform-node-shared': '>=4.0.0 <5.0.0'
+      effect: '>=4.0.0 <5.0.0'
 
   '@effect/language-service@0.77.0':
     resolution: {integrity: sha512-QP2bri8DdcK7Eo+SqFS2yNeD0Ch9kKHYxq2jeE9CaPpBknevCNFb3+hT6qSsPt2P6yOkhNP83KMy5Uk7DGBXlg==}
@@ -1775,6 +1787,11 @@ snapshots:
       fs-extra: 7.0.1
       human-id: 4.1.1
       prettier: 2.8.8
+
+  '@effect-aws/lambda@2.0.0-beta.2(@effect/platform-node-shared@4.0.0-beta.27(effect@4.0.0-beta.26))(effect@4.0.0-beta.26)':
+    dependencies:
+      '@effect/platform-node-shared': 4.0.0-beta.27(effect@4.0.0-beta.26)
+      effect: 4.0.0-beta.26
 
   '@effect/language-service@0.77.0': {}
 

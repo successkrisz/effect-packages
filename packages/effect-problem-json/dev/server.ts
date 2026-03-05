@@ -279,5 +279,4 @@ Try it out:
   curl -X POST http://localhost:3000/middleware-validate -H 'Content-Type: application/json' -d '{"email":"bad","age":-1,"name":""}'  # caught by global middleware`)
 })
 
-// @ts-expect-error -- Layer.launch R-channel inference issue with Effect v4 beta
 Layer.mergeAll(AppLive, Layer.effectDiscard(logStartup)).pipe(Layer.launch, NodeRuntime.runMain)

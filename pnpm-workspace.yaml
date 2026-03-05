@@ -4,11 +4,11 @@ packages:
 catalog:
   '@ballatech/tsconfig': ^1.2.0
   '@effect/language-service': ^0.77.0
-  effect: &effect-beta 4.0.0-beta.26
-  '@effect/platform-node': *effect-beta
-  '@effect/vitest': *effect-beta
-  '@types/aws-lambda': ^8.10.152
+  '@effect/platform-node': 4.0.0-beta.26
+  '@effect/vitest': 4.0.0-beta.26
+  '@types/aws-lambda': 8.10.152
   '@types/node': ^24.0.4
+  effect: 4.0.0-beta.26
 
 onlyBuiltDependencies:
   - esbuild

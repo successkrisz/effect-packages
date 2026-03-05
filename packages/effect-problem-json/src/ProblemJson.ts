@@ -73,7 +73,7 @@ export function errorFields<S extends StatusCode>(status: S) {
 	return {
 		type: Schema.String.pipe(Schema.withConstructorDefault(() => Option.some('about:blank'))),
 		title: Schema.String.pipe(
-			Schema.withConstructorDefault(() => Option.some(statusTitles[status])),
+			Schema.withConstructorDefault(() => Option.some(statusTitles[status] as string)),
 		),
 		status: Schema.Literal(status).pipe(
 			Schema.withConstructorDefault(() => Option.some(status as S)),
