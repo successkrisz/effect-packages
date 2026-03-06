@@ -19,12 +19,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: '.node-version'
 
-      - name: Enable Corepack and pin pnpm
+      - name: Enable Corepack
         run: |
           corepack enable
-          corepack use pnpm@10.15.0
+          corepack install
           pnpm -v
 
       - name: Get pnpm store directory

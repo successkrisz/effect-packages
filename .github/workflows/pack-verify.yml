@@ -11,11 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-      - name: Enable Corepack and pnpm
+          node-version-file: '.node-version'
+      - name: Enable Corepack
         run: |
           corepack enable
-          corepack use pnpm@10.15.0
+          corepack install
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Build packages
