@@ -1,5 +1,11 @@
 # @ballatech/effect-problem-json
 
+## 1.0.0-beta.2
+
+### Patch Changes
+
+- [`20856eb`](https://github.com/successkrisz/effect-packages/commit/20856ebaf56acf1393462b838c8f90ed921c4458) - Fix ci actions
+
 ## 1.0.0-beta.1
 
 ### Major Changes
