@@ -10,7 +10,7 @@ import {
 	HttpApiGroup,
 	HttpApiSchema,
 } from 'effect/unstable/httpapi'
-import * as ProblemJson from '../src/ProblemJson.ts'
+import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -110,12 +110,16 @@ class CreateItem extends Schema.Class<CreateItem>('CreateItem')({
 	quantity: Schema.Number,
 }) {}
 
+class JsonConflictPayload extends Schema.Class<JsonConflictPayload>('JsonConflictPayload')({
+	message: Schema.String,
+}) {}
+
 const itemsGroup = HttpApiGroup.make('items')
 	.add(
 		HttpApiEndpoint.get('getItem', '/items/:id', {
 			params: { id: Schema.NumberFromString },
 			success: Item,
-			error: ProblemJson.NotFound.problem,
+			error: HttpApiProblemDetail.NotFound,
 		}),
 	)
 	.add(
@@ -129,16 +133,26 @@ const itemsGroup = HttpApiGroup.make('items')
 			success: Item,
 		}),
 	)
+	.add(
+		HttpApiEndpoint.get('jsonConflict', '/items/json-conflict', {
+			success: JsonConflictPayload.pipe(HttpApiSchema.status(409)),
+		}),
+	)
 
 const api = HttpApi.make('TestApi').add(itemsGroup)
 
 const ItemsLive = HttpApiBuilder.group(api, 'items', (handlers) =>
 	handlers
 		.handle('getItem', ({ params }) =>
-			Effect.fail(ProblemJson.NotFound.make({ detail: `Item with id ${params.id} was not found` })),
+			Effect.fail(
+				new HttpApiProblemDetail.NotFound({ detail: `Item with id ${params.id} was not found` }),
+			),
 		)
 		.handle('createItem', ({ payload }) => Effect.succeed(new Item({ id: 1, name: payload.name })))
-		.handle('crashItem', () => Effect.die(new Error('Unexpected failure'))),
+		.handle('crashItem', () => Effect.die(new Error('Unexpected failure')))
+		.handle('jsonConflict', () =>
+			Effect.succeed(new JsonConflictPayload({ message: 'Version conflict' })),
+		),
 )
 
 const ApiLive = Layer.provide(HttpApiBuilder.layer(api), [ItemsLive, HttpServer.layerServices])
@@ -148,7 +162,7 @@ const ApiLive = Layer.provide(HttpApiBuilder.layer(api), [ItemsLive, HttpServer.
 // ---------------------------------------------------------------------------
 
 const handlerWithMiddleware = LambdaHandler.fromHttpApi(
-	Layer.mergeAll(ApiLive, ProblemJson.middleware()),
+	Layer.mergeAll(ApiLive, HttpApiProblemDetail.middleware()),
 )
 
 // ---------------------------------------------------------------------------
@@ -173,7 +187,7 @@ async function invoke(
 }
 
 describe('@effect-aws/lambda integration', () => {
-	describe('with ProblemJson middleware', () => {
+	describe('with HttpApiProblemDetail middleware', () => {
 		it('returns normal JSON for a successful POST', async () => {
 			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {
 				name: 'Widget',
@@ -210,38 +224,45 @@ describe('@effect-aws/lambda integration', () => {
 			const result = await invoke(handlerWithMiddleware, 'GET', '/items/crash')
 
 			expect(result.statusCode).toBe(500)
+			expect(result.contentType).toContain('application/problem+json')
 			expect(result.body).toMatchObject({
 				status: 500,
 				title: 'Internal Server Error',
 				detail: 'An unexpected error occurred',
 			})
+			expect(result.rawBody).not.toContain('Unexpected failure')
+			expect(result.rawBody).not.toContain('stack')
 		})
 
-		it('returns 400 for schema validation errors (HttpApi payload decoding)', async () => {
+		it('rewrites schema validation failures to 400 problem+json', async () => {
 			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {
 				bad: 'payload',
 			})
 
 			expect(result.statusCode).toBe(400)
-			// HttpApi framework handles schema validation before the middleware
-			// can intercept it — the body may be empty or in the HttpApi's own
-			// error format rather than RFC 9457 problem+json. The middleware's
-			// catchIf/catchDefect only kicks in for errors that flow through the
-			// route handler's Effect error channel or defect channel.
-			if (result.body) {
-				expect(result.body.status ?? result.statusCode).toBe(400)
-			}
+			expect(result.contentType).toContain('application/problem+json')
+			expect(result.body).toMatchObject({
+				type: '/problems/schema-error',
+				title: 'Bad Request',
+				status: 400,
+				detail: 'The request did not match the expected schema',
+			})
 		})
 
-		it('returns 400 for missing required fields in payload', async () => {
+		it('rewrites missing required fields to 400 problem+json', async () => {
 			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {})
 
 			expect(result.statusCode).toBe(400)
+			expect(result.contentType).toContain('application/problem+json')
+			expect(result.body).toMatchObject({
+				status: 400,
+				title: 'Bad Request',
+			})
 		})
 
 		it('uses custom typePrefix when configured', async () => {
 			const customHandler = LambdaHandler.fromHttpApi(
-				Layer.mergeAll(ApiLive, ProblemJson.middleware({ typePrefix: '/api/errors/' })),
+				Layer.mergeAll(ApiLive, HttpApiProblemDetail.middleware({ typePrefix: '/api/errors/' })),
 			)
 			const result = await invoke(customHandler, 'GET', '/items/crash')
 
@@ -260,9 +281,20 @@ describe('@effect-aws/lambda integration', () => {
 			expect(result.statusCode).toBe(201)
 			expect(result.contentType).not.toContain('application/problem+json')
 		})
+
+		it('does not relabel non-problem JSON errors as problem+json', async () => {
+			const result = await invoke(handlerWithMiddleware, 'GET', '/items/json-conflict')
+
+			expect(result.statusCode).toBe(409)
+			expect(result.contentType ?? '').toContain('application/json')
+			expect(result.contentType ?? '').not.toContain('application/problem+json')
+			expect(result.body).toMatchObject({
+				message: 'Version conflict',
+			})
+		})
 	})
 
-	describe('without ProblemJson middleware (baseline)', () => {
+	describe('without HttpApiProblemDetail middleware (baseline)', () => {
 		it('returns normal JSON for a successful POST', async () => {
 			const result = await invoke(handlerWithoutMiddleware, 'POST', '/items', {
 				name: 'Widget',
@@ -273,13 +305,15 @@ describe('@effect-aws/lambda integration', () => {
 			expect(result.body).toMatchObject({ id: 1, name: 'Widget' })
 		})
 
-		it('still returns problem+json for declared errors (asProblemJson)', async () => {
+		it('still returns the RFC 9457 body for declared errors without middleware', async () => {
 			const result = await invoke(handlerWithoutMiddleware, 'GET', '/items/999')
 
 			expect(result.statusCode).toBe(404)
-			// asProblemJson on the error class sets content-type even without middleware
-			expect(result.contentType).toContain('application/problem+json')
+			expect(result.contentType ?? '').toContain('application/json')
 			expect(result.body).toMatchObject({
+				type: 'about:blank',
+				title: 'Not Found',
+				status: 404,
 				detail: 'Item with id 999 was not found',
 			})
 		})
@@ -287,40 +321,47 @@ describe('@effect-aws/lambda integration', () => {
 		it('does NOT catch defects as problem+json (no middleware safety net)', async () => {
 			const result = await invoke(handlerWithoutMiddleware, 'GET', '/items/crash')
 
-			// Without middleware, defects are not caught — the response format
-			// depends on @effect-aws/lambda's own fallback handling
 			expect(result.statusCode).toBe(500)
+			expect(result.contentType ?? '').not.toContain('application/problem+json')
 		})
 
-		it('returns 400 for schema validation errors', async () => {
+		it('leaves validation failures in the framework default 400 form', async () => {
 			const result = await invoke(handlerWithoutMiddleware, 'POST', '/items', {
 				bad: 'payload',
 			})
 
 			expect(result.statusCode).toBe(400)
+			expect(result.contentType ?? '').not.toContain('application/problem+json')
 		})
 	})
 
 	describe('middleware value comparison (with vs without)', () => {
-		it('middleware adds defect handling that baseline lacks', async () => {
+		it('middleware adds structured defect handling and validation rewriting', async () => {
 			const withMw = await invoke(handlerWithMiddleware, 'GET', '/items/crash')
 			const withoutMw = await invoke(handlerWithoutMiddleware, 'GET', '/items/crash')
+			const withValidation = await invoke(handlerWithMiddleware, 'POST', '/items', {
+				bad: 'payload',
+			})
+			const withoutValidation = await invoke(handlerWithoutMiddleware, 'POST', '/items', {
+				bad: 'payload',
+			})
 
 			expect(withMw.statusCode).toBe(500)
 			expect(withoutMw.statusCode).toBe(500)
+			expect(withValidation.statusCode).toBe(400)
+			expect(withoutValidation.statusCode).toBe(400)
 
-			// With middleware: structured problem+json body
 			expect(withMw.body).toMatchObject({
 				type: expect.any(String),
 				title: 'Internal Server Error',
 				status: 500,
 				detail: 'An unexpected error occurred',
 			})
-
-			// Without middleware: no structured problem+json body (or different format)
+			expect(withValidation.contentType).toContain('application/problem+json')
 			if (withoutMw.body) {
 				expect(withoutMw.body).not.toHaveProperty('title')
 			}
+			expect(withoutValidation.contentType ?? '').not.toContain('application/problem+json')
 		})
 	})
 })

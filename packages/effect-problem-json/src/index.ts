@@ -1,1 +1,1 @@
-export * as ProblemJson from './ProblemJson.ts'
+export * as HttpApiProblemDetail from './HttpApiProblemDetail.ts'

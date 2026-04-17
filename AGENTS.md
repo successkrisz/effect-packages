@@ -1,5 +1,17 @@
 # This a repository for libararies using effect
 
+- Use `pnpm` as the package manager and task runner.
+- Available project commands:
+  - `pnpm run test`
+  - `pnpm run typecheck`
+  - `pnpm run format`
+- Never run commands in watch mode or start long-running dev servers.
+- Do not run `pnpm run test:watch`.
+- Do not start a dev server unless the user explicitly asks for it.
+- Run `pnpm run typecheck` and `pnpm run format` after code changes.
+- Run `pnpm run test` when behavior changes or tests are added.
+- When complated your code changes and `typecheck`, `format` and `test` all work trigger the `/effect-smol-qu-reviewer` to provide feedback on your changes
+
 ## Effect Reference Repository
 
 You have access to the Effect repository at `./.repos/effect`.
@@ -13,7 +25,7 @@ You have access to the Effect repository at `./.repos/effect`.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **effect-packages** (278 symbols, 445 relationships, 6 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **effect-packages** (278 symbols, 443 relationships, 6 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

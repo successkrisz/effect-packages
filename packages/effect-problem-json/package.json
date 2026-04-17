@@ -6,7 +6,8 @@
 	"sideEffects": false,
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./HttpApiProblemDetail": "./src/HttpApiProblemDetail.ts"
 	},
 	"files": [
 		"src/**/*.ts",
@@ -39,7 +40,8 @@
 	"publishConfig": {
 		"access": "public",
 		"exports": {
-			".": "./dist/index.js"
+			".": "./dist/index.js",
+			"./HttpApiProblemDetail": "./dist/HttpApiProblemDetail.js"
 		}
 	},
 	"repository": {

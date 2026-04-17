@@ -10,8 +10,9 @@ import {
 	HttpApiGroup,
 	HttpApiSchema,
 	HttpApiSwagger,
+	OpenApi,
 } from 'effect/unstable/httpapi'
-import * as ProblemJson from '../src/ProblemJson.ts'
+import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -33,10 +34,13 @@ class UpdateTodo extends Schema.Class<UpdateTodo>('UpdateTodo')({
 }) {}
 
 // ---------------------------------------------------------------------------
-// Error definitions — pre-built and custom via makeErrorClass
+// Error definitions — pre-built and custom via ProblemError
 // ---------------------------------------------------------------------------
 
-const DuplicateTodoTitle = ProblemJson.makeErrorClass('DuplicateTodoTitle', 422, {
+const DuplicateTodoTitle = HttpApiProblemDetail.ProblemError(
+	'DuplicateTodoTitle',
+	422,
+)({
 	existingTodoId: Schema.Number,
 })
 
@@ -50,17 +54,17 @@ class TodoRepo extends Context.Service<
 		readonly list: Effect.Effect<Array<Todo>>
 		readonly getById: (
 			id: number,
-		) => Effect.Effect<Todo, InstanceType<typeof ProblemJson.NotFound.Error>>
+		) => Effect.Effect<Todo, InstanceType<typeof HttpApiProblemDetail.NotFound>>
 		readonly create: (
 			input: CreateTodo,
-		) => Effect.Effect<Todo, InstanceType<typeof DuplicateTodoTitle.Error>>
+		) => Effect.Effect<Todo, InstanceType<typeof DuplicateTodoTitle>>
 		readonly update: (
 			id: number,
 			input: UpdateTodo,
-		) => Effect.Effect<Todo, InstanceType<typeof ProblemJson.NotFound.Error>>
+		) => Effect.Effect<Todo, InstanceType<typeof HttpApiProblemDetail.NotFound>>
 		readonly remove: (
 			id: number,
-		) => Effect.Effect<void, InstanceType<typeof ProblemJson.NotFound.Error>>
+		) => Effect.Effect<void, InstanceType<typeof HttpApiProblemDetail.NotFound>>
 	}
 >()('TodoRepo') {}
 
@@ -78,7 +82,9 @@ const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 				const todo = todos.get(id)
 				return todo
 					? Effect.succeed(todo)
-					: Effect.fail(ProblemJson.NotFound.make({ detail: `Todo with id ${id} was not found` }))
+					: Effect.fail(
+							new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
+						)
 			}),
 
 		create: (input: typeof CreateTodo.Type) =>
@@ -86,7 +92,7 @@ const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 				const duplicate = [...todos.values()].find((t) => t.title === input.title)
 				if (duplicate)
 					return Effect.fail(
-						DuplicateTodoTitle.make({
+						new DuplicateTodoTitle({
 							detail: `A todo with the title '${input.title}' already exists`,
 							existingTodoId: duplicate.id,
 						}),
@@ -102,7 +108,7 @@ const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 				const existing = todos.get(id)
 				if (!existing)
 					return Effect.fail(
-						ProblemJson.NotFound.make({ detail: `Todo with id ${id} was not found` }),
+						new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
 					)
 				const updated = new Todo({
 					id: existing.id,
@@ -117,7 +123,7 @@ const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 			Effect.suspend(() => {
 				if (!todos.has(id))
 					return Effect.fail(
-						ProblemJson.NotFound.make({ detail: `Todo with id ${id} was not found` }),
+						new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
 					)
 				todos.delete(id)
 				return Effect.void
@@ -139,14 +145,14 @@ const todosGroup = HttpApiGroup.make('todos')
 		HttpApiEndpoint.get('getTodo', '/todos/:id', {
 			params: { id: Schema.NumberFromString },
 			success: Todo,
-			error: ProblemJson.NotFound.problem,
+			error: HttpApiProblemDetail.NotFound,
 		}),
 	)
 	.add(
 		HttpApiEndpoint.post('createTodo', '/todos', {
 			payload: CreateTodo,
 			success: Todo.pipe(HttpApiSchema.status(201)),
-			error: DuplicateTodoTitle.problem,
+			error: DuplicateTodoTitle,
 		}),
 	)
 	.add(
@@ -154,18 +160,19 @@ const todosGroup = HttpApiGroup.make('todos')
 			params: { id: Schema.NumberFromString },
 			payload: UpdateTodo,
 			success: Todo,
-			error: ProblemJson.NotFound.problem,
+			error: HttpApiProblemDetail.NotFound,
 		}),
 	)
 	.add(
 		HttpApiEndpoint.delete('deleteTodo', '/todos/:id', {
 			params: { id: Schema.NumberFromString },
-			error: ProblemJson.NotFound.problem,
+			error: HttpApiProblemDetail.NotFound,
 		}),
 	)
 
-const api = HttpApi.make('TodoApi').add(todosGroup)
-// .annotate(OpenApi.Transform, ProblemJson.openApiTransform)
+const api = HttpApi.make('TodoApi')
+	.add(todosGroup)
+	.annotate(OpenApi.Transform, HttpApiProblemDetail.openApiTransform)
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -185,7 +192,7 @@ const TodosLive = HttpApiBuilder.group(api, 'todos', (handlers) =>
 ).pipe(Layer.provide(TodoRepoLive))
 
 // ---------------------------------------------------------------------------
-// Manual validation route (demonstrates ProblemJson.fromSchemaError)
+// Manual validation route (demonstrates HttpApiProblemDetail.ValidationProblem.toResponse)
 // ---------------------------------------------------------------------------
 
 const ContactForm = Schema.Struct({
@@ -199,7 +206,9 @@ const ManualValidateRoute = HttpRouter.add('POST', '/manual-validate', (request)
 		const body = yield* request.json
 		return yield* Schema.decodeUnknownEffect(ContactForm)(body).pipe(
 			Effect.map((data) => HttpServerResponse.jsonUnsafe({ ok: true, data })),
-			Effect.catchTag('SchemaError', (error) => Effect.succeed(ProblemJson.fromSchemaError(error))),
+			Effect.catchTag('SchemaError', (error) =>
+				Effect.succeed(HttpApiProblemDetail.ValidationProblem.toResponse(error)),
+			),
 		)
 	}),
 )
@@ -226,7 +235,7 @@ const AppLive = HttpRouter.serve(
 		SwaggerLive,
 		ManualValidateRoute,
 		MiddlewareValidateRoute,
-		ProblemJson.middleware(),
+		HttpApiProblemDetail.middleware(),
 	),
 ).pipe(Layer.provide(ServerLive))
 
@@ -249,4 +258,4 @@ Try it out:
   curl -X POST http://localhost:3000/middleware-validate -H 'Content-Type: application/json' -d '{"email":"bad","age":-1,"name":""}'  # caught by global middleware`)
 })
 
-Layer.mergeAll(AppLive, Layer.effectDiscard(logStartup)).pipe(Layer.launch, NodeRuntime.runMain)
+NodeRuntime.runMain(Layer.launch(Layer.mergeAll(AppLive, Layer.effectDiscard(logStartup))))
