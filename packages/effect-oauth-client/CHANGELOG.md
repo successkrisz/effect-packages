@@ -1,5 +1,11 @@
 # @ballatech/effect-oauth-client
 
+## 1.0.0-beta.5
+
+### Major Changes
+
+- [`0347319`](https://github.com/successkrisz/effect-packages/commit/0347319102d29b7b6eece5ef80cf68ffeb976363) - Update to work with effect beta.49
+
 ## 1.0.0-beta.4
 
 ### Minor Changes
