@@ -70,14 +70,18 @@ export type Extensions = { [P in ProblemBaseKeys]?: never } & Record<string, unk
 // ---------------------------------------------------------------------------
 
 export function errorFields<S extends StatusCode>(status: S) {
+	const type = Schema.withConstructorDefault<typeof Schema.String>(Effect.succeed('about:blank'))(
+		Schema.String,
+	)
+	const title = Schema.withConstructorDefault<typeof Schema.String>(
+		Effect.succeed(statusTitles[status] as string),
+	)(Schema.String)
+	const statusField = Schema.Literal(status)
+
 	return {
-		type: Schema.String.pipe(Schema.withConstructorDefault(() => Option.some('about:blank'))),
-		title: Schema.String.pipe(
-			Schema.withConstructorDefault(() => Option.some(statusTitles[status] as string)),
-		),
-		status: Schema.Literal(status).pipe(
-			Schema.withConstructorDefault(() => Option.some(status as S)),
-		),
+		type,
+		title,
+		status: Schema.withConstructorDefault<typeof statusField>(Effect.succeed(status))(statusField),
 		detail: Schema.String,
 		instance: Schema.optional(Schema.String),
 	}
@@ -87,7 +91,7 @@ export function errorFields<S extends StatusCode>(status: S) {
 // asProblemJson — set content type to application/problem+json
 // ---------------------------------------------------------------------------
 
-export function asProblemJson<S extends Schema.Top>(schema: S): S['~rebuild.out'] {
+export function asProblemJson<S extends Schema.Top>(schema: S): S['Rebuild'] {
 	return schema.pipe(HttpApiSchema.asJson({ contentType: 'application/problem+json' }))
 }
 
@@ -95,15 +99,16 @@ export function asProblemJson<S extends Schema.Top>(schema: S): S['~rebuild.out'
 // makeErrorClass — one-call helper for Schema.ErrorClass + asProblemJson
 // ---------------------------------------------------------------------------
 
-type SchemaToType<S> = S extends Schema.Schema<infer A> ? A : never
-
-type MakeInput<S extends StatusCode, F extends Schema.Struct.Fields> = {
-	readonly detail: string
-	readonly type?: string
-	readonly title?: string
-	readonly status?: S
-	readonly instance?: string
-} & { readonly [K in keyof F]: SchemaToType<F[K]> }
+type ProblemFields<S extends StatusCode, F extends Schema.Struct.Fields> = ReturnType<
+	typeof errorFields<S>
+> &
+	F
+type ProblemErrorInput<S extends StatusCode, F extends Schema.Struct.Fields> = Schema.Struct.MakeIn<
+	ProblemFields<S, F>
+>
+type ProblemErrorOutput<S extends StatusCode, F extends Schema.Struct.Fields> = Schema.Struct.Type<
+	ProblemFields<S, F>
+>
 
 // biome-ignore lint/complexity/noBannedTypes: {} means "no additional fields" for the extensions default
 export function makeErrorClass<S extends StatusCode, F extends Schema.Struct.Fields = {}>(
@@ -117,13 +122,20 @@ export function makeErrorClass<S extends StatusCode, F extends Schema.Struct.Fie
 		httpApiStatus: status,
 	}) {}
 
-	const problem = asProblemJson(ProblemError)
+	type Input = ProblemErrorInput<S, F>
+	type Output = ProblemErrorOutput<S, F>
+	const TypedError = ProblemError as typeof ProblemError & {
+		new (
+			input: Input,
+			options?: ConstructorParameters<typeof ProblemError>[1],
+		): InstanceType<typeof ProblemError> & Output
+	}
+	const problem = asProblemJson(TypedError)
 
 	return {
-		Error: ProblemError,
+		Error: TypedError,
 		problem,
-		make: (input: MakeInput<S, F>) =>
-			new ProblemError(input as unknown as ConstructorParameters<typeof ProblemError>[0]),
+		make: (input: Input): InstanceType<typeof TypedError> => new TypedError(input),
 	}
 }
 
@@ -376,7 +388,7 @@ export function middleware(options?: { readonly typePrefix?: string }) {
 		{ status: 500, contentType: 'application/problem+json' },
 	)
 
-	return HttpRouter.middleware<{ handles: Schema.SchemaError }>()(
+	return HttpRouter.middleware<{ provides: never; handles: Schema.SchemaError }>()(
 		(httpEffect) =>
 			httpEffect.pipe(
 				Effect.catchIf(Schema.isSchemaError, (error) =>

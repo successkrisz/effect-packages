@@ -1,4 +1,4 @@
-import { ServiceMap } from 'effect'
+import { Context } from 'effect'
 import type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent } from './aws.ts'
 import type { BatchResponse } from './common.ts'
 import { makeToHandler } from './makeToHandler.ts'
@@ -11,7 +11,7 @@ export type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent }
 /**
  * Context tag for the DynamoDB stream event.
  */
-export class DynamoDBStreamEvent extends ServiceMap.Service<
+export class DynamoDBStreamEvent extends Context.Service<
 	DynamoDBStreamEvent,
 	AwsDynamoDBStreamEvent
 >()('@effect-lambda/DynamoDBStreamEvent') {}
@@ -19,7 +19,7 @@ export class DynamoDBStreamEvent extends ServiceMap.Service<
 /**
  * Context tag for a single DynamoDB record within a stream event.
  */
-export class DynamoDBRecord extends ServiceMap.Service<DynamoDBRecord, AwsDynamoDBRecord>()(
+export class DynamoDBRecord extends Context.Service<DynamoDBRecord, AwsDynamoDBRecord>()(
 	'@effect-lambda/DynamoDBRecord',
 ) {}
 

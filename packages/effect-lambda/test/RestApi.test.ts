@@ -4,7 +4,7 @@ import type {
 	APIGatewayProxyEvent as AwsAPIGatewayProxyEvent,
 	Context as AwsContext,
 } from 'aws-lambda'
-import { Effect, Layer, pipe, Schema, ServiceMap } from 'effect'
+import { Context, Effect, Layer, pipe, Schema } from 'effect'
 import { applyMiddleware, type Middleware } from '../src/applyMiddleware'
 import {
 	APIGatewayProxyEvent,
@@ -351,7 +351,7 @@ describe('RestApi', () => {
 			res.setHeader('X-XSS-Protection', '0')
 		}) as Middleware
 
-		class FooLogger extends ServiceMap.Service<
+		class FooLogger extends Context.Service<
 			FooLogger,
 			{ log: (message: string) => Effect.Effect<void> }
 		>()('FooLogger') {}

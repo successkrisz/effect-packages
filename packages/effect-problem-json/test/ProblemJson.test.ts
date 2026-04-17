@@ -211,6 +211,24 @@ describe('makeErrorClass', () => {
 		expect(error.detail).toBe('Not found')
 	})
 
+	it('roundtrips through encode and decode with RFC 9457 fields intact', () => {
+		const TodoNotFound = ProblemJson.makeErrorClass('TodoNotFound', 404)
+		const original = TodoNotFound.make({ detail: 'Not found' })
+		const encoded = Schema.encodeSync(TodoNotFound.Error)(original)
+		const decoded = Schema.decodeUnknownSync(TodoNotFound.Error)(encoded)
+
+		expect(encoded).toEqual({
+			type: 'about:blank',
+			title: 'Not Found',
+			status: 404,
+			detail: 'Not found',
+		})
+		expect(decoded.type).toBe('about:blank')
+		expect(decoded.title).toBe('Not Found')
+		expect(decoded.status).toBe(404)
+		expect(decoded.detail).toBe('Not found')
+	})
+
 	it('supports extension fields', () => {
 		const WithExtensions = ProblemJson.makeErrorClass('WithExtensions', 400, {
 			traceId: Schema.String,
@@ -221,10 +239,8 @@ describe('makeErrorClass', () => {
 			traceId: 'abc-123',
 			validationErrors: [{ detail: 'Expected string', pointer: '#/name' }],
 		})
-		expect((error as unknown as Record<string, unknown>).traceId).toBe('abc-123')
-		expect((error as unknown as Record<string, unknown>).validationErrors).toEqual([
-			{ detail: 'Expected string', pointer: '#/name' },
-		])
+		expect(error.traceId).toBe('abc-123')
+		expect(error.validationErrors).toEqual([{ detail: 'Expected string', pointer: '#/name' }])
 	})
 })
 

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { NodeRuntime } from '@effect/platform-node'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
-import { Effect, Layer, Schema, ServiceMap } from 'effect'
+import { Context, Effect, Layer, Schema } from 'effect'
 import { HttpRouter, HttpServerResponse } from 'effect/unstable/http'
 import {
 	HttpApi,
@@ -44,7 +44,7 @@ const DuplicateTodoTitle = ProblemJson.makeErrorClass('DuplicateTodoTitle', 422,
 // Todo Repository (in-memory)
 // ---------------------------------------------------------------------------
 
-class TodoRepo extends ServiceMap.Service<
+class TodoRepo extends Context.Service<
 	TodoRepo,
 	{
 		readonly list: Effect.Effect<Array<Todo>>
@@ -172,38 +172,17 @@ const api = HttpApi.make('TodoApi').add(todosGroup)
 // ---------------------------------------------------------------------------
 
 const TodosLive = HttpApiBuilder.group(api, 'todos', (handlers) =>
-	handlers
-		.handle('listTodos', () =>
-			Effect.gen(function* () {
-				const repo = yield* TodoRepo
-				return yield* repo.list
-			}),
-		)
-		.handle('getTodo', ({ params }) =>
-			Effect.gen(function* () {
-				const repo = yield* TodoRepo
-				return yield* repo.getById(params.id)
-			}),
-		)
-		.handle('createTodo', ({ payload }) =>
-			Effect.gen(function* () {
-				const repo = yield* TodoRepo
-				return yield* repo.create(payload)
-			}),
-		)
-		.handle('updateTodo', ({ params, payload }) =>
-			Effect.gen(function* () {
-				const repo = yield* TodoRepo
-				return yield* repo.update(params.id, payload)
-			}),
-		)
-		.handle('deleteTodo', ({ params }) =>
-			Effect.gen(function* () {
-				const repo = yield* TodoRepo
-				yield* repo.remove(params.id)
-			}),
-		),
-)
+	Effect.gen(function* () {
+		const repo = yield* TodoRepo
+
+		return handlers
+			.handle('listTodos', () => repo.list)
+			.handle('getTodo', ({ params }) => repo.getById(params.id))
+			.handle('createTodo', ({ payload }) => repo.create(payload))
+			.handle('updateTodo', ({ params, payload }) => repo.update(params.id, payload))
+			.handle('deleteTodo', ({ params }) => repo.remove(params.id))
+	}),
+).pipe(Layer.provide(TodoRepoLive))
 
 // ---------------------------------------------------------------------------
 // Manual validation route (demonstrates ProblemJson.fromSchemaError)
@@ -237,22 +216,13 @@ const MiddlewareValidateRoute = HttpRouter.add('POST', '/middleware-validate', (
 	}),
 )
 
-// ---------------------------------------------------------------------------
-// Server
-// ---------------------------------------------------------------------------
-
-const ApiLive = HttpApiBuilder.layer(api, { openapiPath: '/openapi.json' }).pipe(
-	Layer.provide(TodosLive),
-	Layer.provide(TodoRepoLive),
-)
-
 const SwaggerLive = HttpApiSwagger.layer(api, { path: '/docs' })
 
 const ServerLive = NodeHttpServer.layer(createServer, { port: 3000 })
 
 const AppLive = HttpRouter.serve(
 	Layer.mergeAll(
-		ApiLive,
+		Layer.provide(HttpApiBuilder.layer(api, { openapiPath: '/openapi.json' }), [TodosLive]),
 		SwaggerLive,
 		ManualValidateRoute,
 		MiddlewareValidateRoute,

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from '@effect/vitest'
 import {
 	Cause,
 	Config,
+	Context,
 	Duration,
 	Effect,
 	Exit,
@@ -9,7 +10,6 @@ import {
 	ManagedRuntime,
 	Redacted,
 	Schema,
-	ServiceMap,
 } from 'effect'
 import { TestClock } from 'effect/testing'
 import { FetchHttpClient, HttpClientResponse } from 'effect/unstable/http'
@@ -17,7 +17,7 @@ import * as OAuthClient from '../src/OAuthHttpClient'
 
 const FooSchema = Schema.Struct({ foo: Schema.String })
 
-class OAuthHttpClient extends ServiceMap.Service<OAuthHttpClient, OAuthClient.Client>()(
+class OAuthHttpClient extends Context.Service<OAuthHttpClient, OAuthClient.Client>()(
 	'test/OAuthHttpClient',
 ) {}
 

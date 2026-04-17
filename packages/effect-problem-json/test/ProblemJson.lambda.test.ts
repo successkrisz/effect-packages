@@ -141,10 +141,7 @@ const ItemsLive = HttpApiBuilder.group(api, 'items', (handlers) =>
 		.handle('crashItem', () => Effect.die(new Error('Unexpected failure'))),
 )
 
-const ApiLive = HttpApiBuilder.layer(api).pipe(
-	Layer.provide(ItemsLive),
-	Layer.provide(HttpServer.layerServices),
-)
+const ApiLive = Layer.provide(HttpApiBuilder.layer(api), [ItemsLive, HttpServer.layerServices])
 
 // ---------------------------------------------------------------------------
 // Lambda handler: WITH middleware

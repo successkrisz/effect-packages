@@ -1,4 +1,4 @@
-import { Effect, Result, ServiceMap } from 'effect'
+import { Context, Effect, Result } from 'effect'
 import type { AwsSQSEvent, AwsSQSRecord } from './aws.ts'
 import type { BatchResponse } from './common.ts'
 import { makeToHandler } from './makeToHandler.ts'
@@ -11,14 +11,12 @@ export type { AwsSQSEvent, AwsSQSRecord }
 /**
  * Context tag for an incoming SQS event.
  */
-export class SQSEvent extends ServiceMap.Service<SQSEvent, AwsSQSEvent>()(
-	'@effect-lambda/SQSEvent',
-) {}
+export class SQSEvent extends Context.Service<SQSEvent, AwsSQSEvent>()('@effect-lambda/SQSEvent') {}
 
 /**
  * Context tag for a single SQS record.
  */
-export class SQSRecord extends ServiceMap.Service<SQSRecord, AwsSQSRecord>()(
+export class SQSRecord extends Context.Service<SQSRecord, AwsSQSRecord>()(
 	'@effect-lambda/SQSRecord',
 ) {}
 

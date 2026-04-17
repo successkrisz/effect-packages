@@ -1,4 +1,4 @@
-import { Effect, type Layer, Schema, type SchemaAST, ServiceMap } from 'effect'
+import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
 import type {
 	APIGatewayProxyHandlerV2,
 	AwsAPIGatewayProxyEventV2,
@@ -25,7 +25,7 @@ export type {
  * - Headers are normalized to lowercase when using `NormalizedAPIGatewayProxyEventV2`
  * - Body is parsed to JSON when `content-type` is JSON using `schemaBodyJson`
  */
-export class APIGatewayProxyEventV2 extends ServiceMap.Service<
+export class APIGatewayProxyEventV2 extends Context.Service<
 	APIGatewayProxyEventV2,
 	AwsAPIGatewayProxyEventV2
 >()('@effect-lambda/APIGatewayProxyEventV2') {}

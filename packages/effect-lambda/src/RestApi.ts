@@ -1,4 +1,4 @@
-import { Effect, type Layer, Schema, type SchemaAST, ServiceMap } from 'effect'
+import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
 import type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler } from './aws.ts'
 import type { HandlerContext } from './common.ts'
 import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer.ts'
@@ -17,7 +17,7 @@ export type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler }
  * Headers are normalized to lowercase. The body is parsed as JSON when the
  * content-type is `application/json` and base64-decoded when `isBase64Encoded` is true.
  */
-export class APIGatewayProxyEvent extends ServiceMap.Service<
+export class APIGatewayProxyEvent extends Context.Service<
 	APIGatewayProxyEvent,
 	AwsAPIGatewayProxyEvent
 >()('@effect-lambda/APIGatewayProxyEvent') {}
@@ -98,7 +98,7 @@ export type HandlerEffect<R = never> = Effect.Effect<
  * @example
  * ```typescript
  * import { toLambdaHandler } from 'effect-lambda/RestApi';
- * import { Effect, Layer, ServiceMap } from 'effect';
+ * import { Context, Effect, Layer } from 'effect';
  *
  * // Handler without dependencies
  * const simpleHandler = Effect.gen(function* () {
@@ -112,7 +112,7 @@ export type HandlerEffect<R = never> = Effect.Effect<
  * export const handler = toLambdaHandler(simpleHandler)();
  *
  * // Handler with dependencies
- * class DatabaseService extends ServiceMap.Service<DatabaseService, { query: (sql: string) => Effect.Effect<any> }>()('@app/database') {}
+ * class DatabaseService extends Context.Service<DatabaseService, { query: (sql: string) => Effect.Effect<any> }>()('@app/database') {}
  *
  * const handlerWithDeps = Effect.gen(function* () {
  *   const event = yield* APIGatewayProxyEvent;

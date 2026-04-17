@@ -1,4 +1,4 @@
-import { type Config, Effect, Layer, type ServiceMap } from 'effect'
+import { type Config, type Context, Effect, Layer } from 'effect'
 import type { Handler } from './aws.ts'
 import { HandlerContext } from './common.ts'
 import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime.ts'
@@ -20,9 +20,9 @@ import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime.ts'
  * @example
  * ```ts
  * import { makeToHandler } from 'effect-lambda'
- * import { Layer, Effect, ServiceMap } from 'effect'
+ * import { Context, Layer, Effect } from 'effect'
  *
- * class Event extends ServiceMap.Service<Event, number>()('@app/event') {}
+ * class Event extends Context.Service<Event, number>()('@app/event') {}
  *
  * // No extra dependencies
  * export const handler = makeToHandler<typeof Event, number>(Event)(
@@ -30,7 +30,7 @@ import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime.ts'
  * )()
  *
  * // With dependencies
- * class Db extends ServiceMap.Service<Db, { query: (sql: string) => Effect.Effect<unknown> }>()('@app/db') {}
+ * class Db extends Context.Service<Db, { query: (sql: string) => Effect.Effect<unknown> }>()('@app/db') {}
  * export const handlerWithDeps = makeToHandler<typeof Event, number>(Event)(
  *   Effect.gen(function* () {
  *     const n = yield* Event
@@ -43,37 +43,37 @@ import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime.ts'
  */
 
 // biome-ignore lint/suspicious/noExplicitAny: pattern is used for generic tags
-export function makeToHandler<T extends ServiceMap.Service<any, any>, A>(eventTag: T) {
+export function makeToHandler<T extends Context.Key<any, any>, A>(eventTag: T) {
 	// Overload for when no dependencies are needed (R is never)
 	function toHandler<E = never>(
 		handler: Effect.Effect<
 			NoInfer<A>,
 			Config.ConfigError,
-			ServiceMap.Service.Identifier<T> | HandlerContext
+			Context.Service.Identifier<T> | HandlerContext
 		> &
 			([A] extends [never] ? never : unknown),
 	): (params?: {
 		layer?: Layer.Layer<never, E>
 		options?: { readonly memoMap?: Layer.MemoMap }
-	}) => Handler<ServiceMap.Service.Shape<T>, A>
+	}) => Handler<Context.Service.Shape<T>, A>
 
 	// Overload for when dependencies are needed (R is not never)
 	function toHandler<R, E = never>(
 		handler: Effect.Effect<NoInfer<A>, Config.ConfigError, R> &
 			([A] extends [never] ? never : unknown),
 	): (params: {
-		layer: Layer.Layer<Exclude<R, ServiceMap.Service.Identifier<T> | HandlerContext>, E>
+		layer: Layer.Layer<Exclude<R, Context.Service.Identifier<T> | HandlerContext>, E>
 		options?: { readonly memoMap?: Layer.MemoMap }
-	}) => Handler<ServiceMap.Service.Shape<T>, A>
+	}) => Handler<Context.Service.Shape<T>, A>
 
 	// Implementation
 	function toHandler<R extends never, E = never>(
 		handler: Effect.Effect<NoInfer<A>, Config.ConfigError, R> &
 			([A] extends [never] ? never : unknown),
 	): (params?: {
-		layer: Layer.Layer<Exclude<R, ServiceMap.Service.Identifier<T> | HandlerContext>, E>
+		layer: Layer.Layer<Exclude<R, Context.Service.Identifier<T> | HandlerContext>, E>
 		options?: { readonly memoMap?: Layer.MemoMap }
-	}) => Handler<ServiceMap.Service.Shape<T>, A> {
+	}) => Handler<Context.Service.Shape<T>, A> {
 		return (params) => {
 			const { layer, options } = params || {}
 			const runtime = lambdaRuntimeFromLayer(layer || Layer.empty, options)

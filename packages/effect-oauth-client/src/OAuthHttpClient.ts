@@ -1,5 +1,6 @@
 import {
 	type Config,
+	Context,
 	Data,
 	DateTime,
 	Duration,
@@ -9,7 +10,6 @@ import {
 	Redacted,
 	Schedule,
 	Schema,
-	ServiceMap,
 } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
@@ -122,7 +122,7 @@ export const make = ({
 				Effect.scoped,
 				Effect.retry({
 					while: (error) => !Schema.isSchemaError(error),
-					schedule: Schedule.exponential('200 millis').pipe(Schedule.compose(Schedule.recurs(2))),
+					schedule: Schedule.exponential('200 millis').pipe(Schedule.both(Schedule.recurs(2))),
 				}),
 				Effect.mapError(
 					(error) =>
@@ -221,11 +221,11 @@ export const makeFromConfig = (config: CredentialsConfig) =>
  * The `HttpClient` shape returned by {@link make} / {@link makeFromConfig}.
  *
  * Use this when you need multiple OAuth clients in the same program — create a
- * dedicated `ServiceMap.Service` tag for each API:
+ * dedicated `Context.Service` tag for each API:
  *
  * ```ts
- * class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
- * class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
+ * class AzureClient extends Context.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
+ * class GoogleClient extends Context.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
  * ```
  *
  * The built-in {@link OAuthHttpClient} tag is a convenience for programs that only
@@ -242,11 +242,11 @@ export type Client = Effect.Success<ReturnType<typeof make>>
  * multiple OAuth-protected APIs, create your own tags instead:
  *
  * ```ts
- * class AzureClient extends ServiceMap.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
- * class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
+ * class AzureClient extends Context.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
+ * class GoogleClient extends Context.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
  * ```
  */
-export class OAuthHttpClient extends ServiceMap.Service<OAuthHttpClient, Client>()(
+export class OAuthHttpClient extends Context.Service<OAuthHttpClient, Client>()(
 	'@ballatech/effect-oauth-client/OAuthHttpClient',
 ) {}
 

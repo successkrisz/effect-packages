@@ -4,8 +4,8 @@
 	"description": "Useful Effect libraries",
 	"private": true,
 	"scripts": {
-		"format": "biome check --write",
-		"lint": "biome check",
+		"format": "biome check . --write --vcs-enabled=true --vcs-use-ignore-file=true",
+		"lint": "biome check . --vcs-enabled=true --vcs-use-ignore-file=true",
 		"test": "vitest --run",
 		"test:watch": "vitest --watch",
 		"test:compat": "vitest --run -c vitest.config.compat.ts",
