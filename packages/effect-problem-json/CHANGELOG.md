@@ -1,5 +1,11 @@
 # @ballatech/effect-problem-json
 
+## 1.0.0-beta.4
+
+### Major Changes
+
+- [`a936fbd`](https://github.com/successkrisz/effect-packages/commit/a936fbd2e6f8c2cf31abfb37230604abf1f16b23) - Refactor internals and rename ProblemJson to HttpApiProblemDetail
+
 ## 1.0.0-beta.3
 
 ### Major Changes
