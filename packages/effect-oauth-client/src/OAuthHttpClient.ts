@@ -86,8 +86,8 @@ export const make = ({
 
 		const tokenBody = {
 			grant_type: 'client_credentials',
-			...(scope ? { scope } : undefined),
-			...(audience ? { audience } : undefined),
+			...(scope !== undefined && scope.length > 0 ? { scope } : undefined),
+			...(audience !== undefined && audience.length > 0 ? { audience } : undefined),
 		}
 		const tokenSchema = Schema.Struct({
 			access_token: Schema.String,
@@ -153,9 +153,10 @@ export const make = ({
 			Effect.Effect<void>,
 		] = yield* Effect.cachedInvalidateWithTTL(getToken, ttl)
 
-		const withBaseUrl = baseUrl
-			? HttpClient.mapRequestInput(HttpClientRequest.prependUrl(baseUrl))(client)
-			: client
+		const withBaseUrl =
+			baseUrl !== undefined && baseUrl.length > 0
+				? HttpClient.mapRequestInput(HttpClientRequest.prependUrl(baseUrl))(client)
+				: client
 
 		return withBaseUrl.pipe(
 			HttpClient.mapRequestInput(HttpClientRequest.acceptJson),
@@ -205,17 +206,17 @@ export const make = ({
  */
 export const makeFromConfig = (config: CredentialsConfig) =>
 	Effect.gen(function* () {
-		return yield* make({
+		return {
 			clientId: yield* config.clientId,
 			clientSecret: yield* config.clientSecret,
 			tokenUrl: yield* config.tokenUrl,
-			scope: config.scope ? yield* config.scope : undefined,
-			audience: config.audience ? yield* config.audience : undefined,
-			baseUrl: config.baseUrl ? yield* config.baseUrl : undefined,
+			scope: config.scope !== undefined ? yield* config.scope : undefined,
+			audience: config.audience !== undefined ? yield* config.audience : undefined,
+			baseUrl: config.baseUrl !== undefined ? yield* config.baseUrl : undefined,
 			ttl: config.ttl,
 			expiryBuffer: config.expiryBuffer,
-		})
-	})
+		} satisfies Credentials
+	}).pipe(Effect.flatMap(make))
 
 /**
  * The `HttpClient` shape returned by {@link make} / {@link makeFromConfig}.

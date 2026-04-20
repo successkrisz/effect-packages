@@ -300,7 +300,9 @@ export function formatSchemaIssues(
 	error: Schema.SchemaError,
 ): Array<{ readonly detail: string; readonly pointer?: string }> {
 	return standardSchemaV1Formatter(error.issue).issues.map(({ path, message }) =>
-		path?.length ? { detail: message, pointer: `#/${path.join('/')}` } : { detail: message },
+		path !== undefined && path.length > 0
+			? { detail: message, pointer: `#/${path.join('/')}` }
+			: { detail: message },
 	)
 }
 
@@ -444,7 +446,7 @@ export function openApiTransform(spec: OpenApiSpec): OpenApiSpec {
 		for (const operation of Object.values(path)) {
 			const responses = operation.responses as Record<string, Record<string, unknown>> | undefined
 			const response = responses?.['400']
-			if (!response) continue
+			if (response === undefined) continue
 
 			const content = response.content as Record<string, unknown> | undefined
 			response.content = rewriteValidationProblemContent(content)

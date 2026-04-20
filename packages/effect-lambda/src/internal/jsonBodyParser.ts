@@ -3,7 +3,7 @@ import type { AwsAPIGatewayProxyEvent, AwsAPIGatewayProxyEventV2 } from '../aws.
 
 /** Determine if a content type should be treated as JSON. */
 export const isJsonContentType = (contentType: string | undefined): boolean => {
-	if (!contentType) return false
+	if (contentType === undefined || contentType.length === 0) return false
 	const normalized = contentType.toLowerCase()
 	return (
 		normalized.includes('application/json') ||
@@ -29,7 +29,8 @@ export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent | AwsAPIGateway
 		isJsonContentType(event.headers['content-type'])
 	) {
 		const { body } = event
-		const decodedBody = event.isBase64Encoded ? Buffer.from(body, 'base64').toString() : body
+		const decodedBody =
+			event.isBase64Encoded === true ? Buffer.from(body, 'base64').toString() : body
 		return Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(decodedBody).pipe(
 			Effect.map((jsonBody) => ({
 				...event,

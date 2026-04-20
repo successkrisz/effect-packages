@@ -81,6 +81,7 @@ export function makeToHandler<T extends Context.Key<any, any>, A>(eventTag: T) {
 			return (event, context) =>
 				handler.pipe(
 					Effect.tapDefect(Effect.logError),
+					// @effect-diagnostics-next-line strictEffectProvide:off -- Lambda handler IS the application entry point; the runtime invokes this function per-request
 					Effect.provide(
 						Layer.mergeAll(
 							Layer.sync(eventTag, () => event),

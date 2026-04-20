@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- type-only import, no runtime dependency on Node
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 type ObjectWithOptionalHeaders = {
@@ -50,7 +51,7 @@ export type Middleware = (
 export const applyMiddleware =
 	(middleware: Middleware) =>
 	<T extends ObjectWithOptionalHeaders>(response: T): T => {
-		const headers: Headers = response.headers ? { ...response.headers } : {}
+		const headers: Headers = response.headers !== undefined ? { ...response.headers } : {}
 		const req = {} as IncomingMessage
 		const res = {
 			setHeader: (key: string, value: string) => {

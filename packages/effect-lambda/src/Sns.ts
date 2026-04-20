@@ -10,7 +10,9 @@ export type { AwsSNSEvent }
 /**
  * Context tag for an incoming SNS event.
  */
-export class SNSEvent extends Context.Service<SNSEvent, AwsSNSEvent>()('@effect-lambda/SNSEvent') {}
+export class SNSEvent extends Context.Service<SNSEvent, AwsSNSEvent>()(
+	'effect-lambda/Sns/SNSEvent',
+) {}
 
 /**
  * Convert an effectful SNS program into an SNS Lambda handler.

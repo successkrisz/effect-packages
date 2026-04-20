@@ -52,9 +52,9 @@ function jsonResponse({
 	schema,
 	headers = {},
 }: JsonResponseBaseOptions & { schema?: Schema.Any }): Effect.Effect<HttpResponse> {
-	return Schema.encodeEffect(schema ? Schema.fromJsonString(schema) : Schema.UnknownFromJsonString)(
-		body,
-	).pipe(
+	return Schema.encodeEffect(
+		schema !== undefined ? Schema.fromJsonString(schema) : Schema.UnknownFromJsonString,
+	)(body).pipe(
 		Effect.map((encodedBody) => ({
 			statusCode,
 			body: encodedBody,
@@ -156,7 +156,7 @@ const ok: OkResponse = ({ statusCode = 200, ...props }) => jsonResponse({ status
 const created: CreatedResponse = ({ location, headers, ...props }) =>
 	jsonResponse({
 		statusCode: 201,
-		headers: location ? { ...headers, location } : headers,
+		headers: location !== undefined && location.length > 0 ? { ...headers, location } : headers,
 		...props,
 	})
 
@@ -228,7 +228,7 @@ const standardSchemaV1Formatter = SchemaIssue.makeFormatterStandardSchemaV1()
 
 const badRequestErrorFormatter = (error: Schema.SchemaError) =>
 	standardSchemaV1Formatter(error.issue).issues.map(({ path, message }) =>
-		path?.length ? { path, message } : { message },
+		path !== undefined && path.length > 0 ? { path, message } : { message },
 	)
 
 /**

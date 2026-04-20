@@ -23,7 +23,7 @@ export type {
 export class APIGatewayAuthorizerEvent extends Context.Service<
 	APIGatewayAuthorizerEvent,
 	AwsAPIGatewayAuthorizerEvent
->()('@effect-lambda/APIGatewayAuthorizerEvent') {}
+>()('effect-lambda/CustomAuthorizer/APIGatewayAuthorizerEvent') {}
 
 /**
  * Error signaling an authorization failure in a custom authorizer.
@@ -51,6 +51,7 @@ export const toLambdaHandler =
 	(event, context) =>
 		pipe(
 			effect,
+			// @effect-diagnostics-next-line strictEffectProvide:off -- Lambda handler IS the application entry point; the runtime invokes this function per-request
 			Effect.provide(
 				Layer.provideMerge(
 					Layer.sync(APIGatewayAuthorizerEvent, () => event),

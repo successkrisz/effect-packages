@@ -28,7 +28,7 @@ export type {
 export class APIGatewayProxyEventV2 extends Context.Service<
 	APIGatewayProxyEventV2,
 	AwsAPIGatewayProxyEventV2
->()('@effect-lambda/APIGatewayProxyEventV2') {}
+>()('effect-lambda/HttpApi/APIGatewayProxyEventV2') {}
 
 /** Lazily-normalized (lowercased) headers and preserved rawHeaders on the event. */
 export const NormalizedAPIGatewayProxyEventV2 = APIGatewayProxyEventV2.useSync((event) =>

@@ -22,10 +22,16 @@ You have access to the Effect repository at `./.repos/effect`.
 - Prefer following upstream Effect conventions when this workshop repo does not yet establish its own pattern.
 - Treat `./.repos/effect` as a reference implementation unless the task explicitly requires editing it.
 
+## TypeScript toolchain
+
+- This repo compiles and typechecks exclusively via `@typescript/native-preview` patched by `@effect/tsgo` (config in `tsconfigs/`). If `npx tsgo --version` does not end in `+effect-tsgo.*`, run `npx @effect/tsgo patch`.
+- Every Effect language-service rule is set to `error`, with `ignoreEffectSuggestionsInTscExitCode: false` — there is no soft/warning tier, the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit.
+- The plugin block lives in `tsconfigs/tsconfig.lib.json`, NOT in `tsconfig.base.json`, because `compilerOptions.plugins` does not propagate through a 2-level `extends` chain with `@effect/tsgo` 0.4.0. When adding a new variant in `tsconfigs/`, either extend `tsconfig.lib.json` from it or duplicate the plugin block — see `tsconfigs/README.md` for the smoke test.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **effect-packages** (278 symbols, 443 relationships, 6 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **effect-packages** (290 symbols, 467 relationships, 6 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

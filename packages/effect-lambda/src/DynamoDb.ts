@@ -14,13 +14,13 @@ export type { AwsDynamoDBRecord, AwsDynamoDBStreamEvent }
 export class DynamoDBStreamEvent extends Context.Service<
 	DynamoDBStreamEvent,
 	AwsDynamoDBStreamEvent
->()('@effect-lambda/DynamoDBStreamEvent') {}
+>()('effect-lambda/DynamoDb/DynamoDBStreamEvent') {}
 
 /**
  * Context tag for a single DynamoDB record within a stream event.
  */
 export class DynamoDBRecord extends Context.Service<DynamoDBRecord, AwsDynamoDBRecord>()(
-	'@effect-lambda/DynamoDBRecord',
+	'effect-lambda/DynamoDb/DynamoDBRecord',
 ) {}
 
 /**

@@ -5,7 +5,7 @@ import type { LambdaContext } from './aws.ts'
  * Context tag for the AWS Lambda runtime `Context` object.
  */
 export class HandlerContext extends Context.Service<HandlerContext, LambdaContext>()(
-	'@effect-lambda/HandlerContext',
+	'effect-lambda/common/HandlerContext',
 ) {}
 
 /**

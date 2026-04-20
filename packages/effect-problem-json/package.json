@@ -19,15 +19,13 @@
 		"LICENSE"
 	],
 	"scripts": {
-		"typecheck": "tsc -p tsconfig.dev.json",
+		"typecheck": "tsgo -p tsconfig.dev.json",
 		"dev": "npx tsx dev/server.ts",
-		"build": "tsc -p tsconfig.json",
+		"build": "tsgo -p tsconfig.json",
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {
-		"@ballatech/tsconfig": "catalog:",
 		"@effect-aws/lambda": "2.0.0-beta.4",
-		"@effect/language-service": "catalog:",
 		"@effect/platform-node": "catalog:",
 		"@types/aws-lambda": "catalog:",
 		"@types/node": "catalog:",

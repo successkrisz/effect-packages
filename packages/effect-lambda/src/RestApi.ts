@@ -20,7 +20,7 @@ export type { APIGatewayProxyResult, AwsAPIGatewayProxyEvent, Handler }
 export class APIGatewayProxyEvent extends Context.Service<
 	APIGatewayProxyEvent,
 	AwsAPIGatewayProxyEvent
->()('@effect-lambda/APIGatewayProxyEvent') {}
+>()('effect-lambda/RestApi/APIGatewayProxyEvent') {}
 
 export const NormalizedAPIGatewayProxyEvent = APIGatewayProxyEvent.useSync((event) =>
 	headerNormalizer(event),

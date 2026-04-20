@@ -1,5 +1,5 @@
 {
-	"extends": "@ballatech/tsconfig/tsconfig.lib.json",
+	"extends": "../../tsconfigs/tsconfig.lib.json",
 	"compilerOptions": {
 		"outDir": "dist",
 		"rootDir": "src",

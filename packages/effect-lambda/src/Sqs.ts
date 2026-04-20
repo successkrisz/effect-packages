@@ -11,13 +11,15 @@ export type { AwsSQSEvent, AwsSQSRecord }
 /**
  * Context tag for an incoming SQS event.
  */
-export class SQSEvent extends Context.Service<SQSEvent, AwsSQSEvent>()('@effect-lambda/SQSEvent') {}
+export class SQSEvent extends Context.Service<SQSEvent, AwsSQSEvent>()(
+	'effect-lambda/Sqs/SQSEvent',
+) {}
 
 /**
  * Context tag for a single SQS record.
  */
 export class SQSRecord extends Context.Service<SQSRecord, AwsSQSRecord>()(
-	'@effect-lambda/SQSRecord',
+	'effect-lambda/Sqs/SQSRecord',
 ) {}
 
 /**
