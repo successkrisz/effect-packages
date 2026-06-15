@@ -2,11 +2,11 @@ packages:
   - packages/*
 
 catalog:
-  '@effect/platform-node': ^4.0.0-beta.49
-  '@effect/vitest': ^4.0.0-beta.49
+  '@effect/platform-node': 4.0.0-beta.83
+  '@effect/vitest': 4.0.0-beta.83
   '@types/aws-lambda': ^8.10.152
   '@types/node': ^24.0.4
-  effect: ^4.0.0-beta.49
+  effect: 4.0.0-beta.83
 
 onlyBuiltDependencies:
   - esbuild

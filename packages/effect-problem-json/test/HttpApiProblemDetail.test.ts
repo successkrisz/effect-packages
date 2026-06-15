@@ -201,6 +201,29 @@ describe('openApiTransform', () => {
 		expect(schemas.effect_HttpApiSchemaError).toBeUndefined()
 	})
 
+	it('generated OpenAPI adds problem+json for parameter validation errors', () => {
+		const paramApi = HttpApi.make('OpenApiParamTestApi')
+			.add(
+				HttpApiGroup.make('items').add(
+					HttpApiEndpoint.get('getItem', '/items/:id', {
+						params: { id: Schema.NumberFromString },
+						success: Item,
+					}),
+				),
+			)
+			.annotate(OpenApi.Transform, HttpApiProblemDetail.openApiTransform)
+		const spec = OpenApi.fromApi(paramApi)
+		const paths = spec.paths as Record<string, Record<string, Record<string, unknown>>>
+		const responses = paths['/items/{id}'].get.responses as Record<string, Record<string, unknown>>
+		const response400 = responses['400']
+		const content = response400.content as Record<string, Record<string, unknown>>
+
+		expect(content['application/problem+json']).toBeDefined()
+		expect((content['application/problem+json'].schema as Record<string, string>).$ref).toBe(
+			'#/components/schemas/HttpApiProblemDetailValidationError',
+		)
+	})
+
 	it('preserves user-declared 400 schemas when rewriting validation responses', () => {
 		const spec = HttpApiProblemDetail.openApiTransform({
 			components: {
