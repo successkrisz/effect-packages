@@ -1,23 +1,32 @@
 /**
  * @since 1.0.0
  */
+import { TypeIdError } from "@effect/platform/Error"
 import * as Context from "effect/Context"
-import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 
-const TypeId = "~@effect/platform-browser/Permissions"
-const ErrorTypeId = "~@effect/platform-browser/Permissions/PermissionsError"
+/**
+ * @since 1.0.0
+ * @category type ids
+ */
+export const TypeId: unique symbol = Symbol.for("@effect/platform-browser/Permissions")
 
 /**
- * Wrapper on the Permission API (`navigator.permissions`) with methods for
- * querying status of permissions.
+ * @since 1.0.0
+ * @category type ids
+ */
+export type TypeId = typeof TypeId
+
+/**
+ * Wrapper on the Permission API (`navigator.permissions`)
+ * with methods for querying status of permissions.
  *
  * @since 1.0.0
- * @category Models
+ * @category interface
  */
 export interface Permissions {
-  readonly [TypeId]: typeof TypeId
+  readonly [TypeId]: TypeId
 
   /**
    * Returns the state of a user permission on the global scope.
@@ -34,66 +43,43 @@ export interface Permissions {
 
 /**
  * @since 1.0.0
+ * @category type ids
+ */
+export const ErrorTypeId: unique symbol = Symbol.for("@effect/platform-browser/Permissions/PermissionsError")
+
+/**
+ * @since 1.0.0
+ * @category type ids
+ */
+export type ErrorTypeId = typeof ErrorTypeId
+
+/**
+ * @since 1.0.0
  * @category errors
  */
-export class PermissionsInvalidStateError extends Data.TaggedError("InvalidStateError")<{
+export class PermissionsError extends TypeIdError(ErrorTypeId, "PermissionsError")<{
+  /** https://developer.mozilla.org/en-US/docs/Web/API/Permissions/query#exceptions */
+  readonly reason: "InvalidStateError" | "TypeError"
   readonly cause: unknown
 }> {
-  override get message(): string {
-    return this._tag
+  get message() {
+    return this.reason
   }
 }
 
 /**
  * @since 1.0.0
- * @category errors
+ * @category tags
  */
-export class PermissionsTypeError extends Data.TaggedError("TypeError")<{
-  readonly cause: unknown
-}> {
-  override get message(): string {
-    return this._tag
-  }
-}
-
-/**
- * @since 1.0.0
- * @category errors
- */
-export type PermissionsErrorReason = PermissionsInvalidStateError | PermissionsTypeError
-
-/**
- * @since 1.0.0
- * @category errors
- */
-export class PermissionsError extends Data.TaggedError("PermissionsError")<{
-  readonly reason: PermissionsErrorReason
-}> {
-  constructor(props: { readonly reason: PermissionsErrorReason }) {
-    super({
-      ...props,
-      cause: props.reason.cause
-    } as any)
-  }
-
-  readonly [ErrorTypeId] = ErrorTypeId
-
-  override get message(): string {
-    return this.reason.message
-  }
-}
-
-/**
- * @since 1.0.0
- * @category Service
- */
-export const Permissions: Context.Service<Permissions, Permissions> = Context.Service<Permissions>(TypeId)
+export const Permissions: Context.Tag<Permissions, Permissions> = Context.GenericTag<Permissions>(
+  "@effect/platform-browser/Permissions"
+)
 
 /**
  * A layer that directly interfaces with the `navigator.permissions` api
  *
  * @since 1.0.0
- * @category Layers
+ * @category layers
  */
 export const layer: Layer.Layer<Permissions> = Layer.succeed(
   Permissions,
@@ -104,9 +90,8 @@ export const layer: Layer.Layer<Permissions> = Layer.succeed(
         try: () => navigator.permissions.query({ name }) as Promise<any>,
         catch: (cause) =>
           new PermissionsError({
-            reason: cause instanceof DOMException
-              ? new PermissionsInvalidStateError({ cause })
-              : new PermissionsTypeError({ cause })
+            reason: cause instanceof DOMException ? "InvalidStateError" : "TypeError",
+            cause
           })
       })
   })

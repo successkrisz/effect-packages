@@ -1,6 +1,6 @@
 import { describe, it } from "@effect/vitest"
 import { assertFalse, assertTrue, strictEqual, throws } from "@effect/vitest/utils"
-import { Chunk, Equal, Hash, Redacted } from "effect"
+import { Chunk, Equal, Hash, Redacted, Secret } from "effect"
 
 describe("Redacted", () => {
   it("chunk constructor", () => {
@@ -31,19 +31,9 @@ describe("Redacted", () => {
     strictEqual(JSON.stringify(redacted), "\"<redacted>\"")
   })
 
-  it("label", () => {
-    const redacted = Redacted.make("redacted", { label: "MY_LABEL" })
-    strictEqual(redacted.label, "MY_LABEL")
-    strictEqual(redacted.toString(), "<redacted:MY_LABEL>")
-    strictEqual(JSON.stringify(redacted), `"<redacted:MY_LABEL>"`)
-
-    assertTrue(Redacted.wipeUnsafe(redacted))
-    throws(() => Redacted.value(redacted), new Error("Unable to get redacted value with label: \"MY_LABEL\""))
-  })
-
-  it("wipeUnsafe", () => {
+  it("unsafeWipe", () => {
     const redacted = Redacted.make("redacted")
-    assertTrue(Redacted.wipeUnsafe(redacted))
+    assertTrue(Redacted.unsafeWipe(redacted))
     throws(() => Redacted.value(redacted), new Error("Unable to get redacted value"))
   })
 
@@ -55,5 +45,23 @@ describe("Redacted", () => {
   it("Hash", () => {
     strictEqual(Hash.hash(Redacted.make(1)), Hash.hash(Redacted.make(1)))
     assertTrue(Hash.hash(Redacted.make(1)) !== Hash.hash(Redacted.make(2)))
+  })
+
+  describe("Secret extends Redacted", () => {
+    it("Redacted.isRedacted", () => {
+      const secret = Secret.fromString("test")
+      assertTrue(
+        Redacted.isRedacted(secret)
+      )
+    })
+    it("Redacted.unsafeWipe", () => {
+      const secret = Secret.fromString("test")
+      assertTrue(Redacted.unsafeWipe(secret))
+    })
+    it("Redacted.value", () => {
+      const value = "test"
+      const secret = Secret.fromString(value)
+      strictEqual(value, Redacted.value(secret))
+    })
   })
 })

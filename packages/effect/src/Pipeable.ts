@@ -2,20 +2,11 @@
  * @since 2.0.0
  */
 
+import type { Ctor } from "./Types.js"
+
 /**
  * @since 2.0.0
- * @category models
- * @example
- * ```ts
- * import { Effect } from "effect"
- *
- * // The Pipeable interface allows Effect values to be chained using the pipe method
- * const program = Effect.succeed(1).pipe(
- *   Effect.map((x) => x + 1),
- *   Effect.flatMap((x) => Effect.succeed(x * 2)),
- *   Effect.tap((x) => Effect.log(`Result: ${x}`))
- * )
- * ```
+ * @category Models
  */
 export interface Pipeable {
   pipe<A>(this: A): A
@@ -501,23 +492,6 @@ export interface Pipeable {
 
 /**
  * @since 2.0.0
- * @category utilities
- * @example
- * ```ts
- * import { Pipeable } from "effect"
- *
- * // pipeArguments is used internally to implement efficient piping
- * function customPipe<A>(self: A, ...fns: Array<(a: any) => any>): unknown {
- *   return Pipeable.pipeArguments(self, arguments as any)
- * }
- *
- * // Example usage
- * const add = (x: number) => (y: number) => x + y
- * const multiply = (x: number) => (y: number) => x * y
- *
- * const result = customPipe(5, add(2), multiply(3))
- * console.log(result) // 21
- * ```
  */
 export const pipeArguments = <A>(self: A, args: IArguments): unknown => {
   switch (args.length) {
@@ -552,7 +526,16 @@ export const pipeArguments = <A>(self: A, args: IArguments): unknown => {
 }
 
 /**
- * @since 4.0.0
+ * @since 3.15.0
+ * @category Models
+ */
+export interface PipeableConstructor {
+  new(...args: Array<any>): Pipeable
+}
+
+/**
+ * @since 3.15.0
+ * @category Prototypes
  */
 export const Prototype: Pipeable = {
   pipe() {
@@ -560,33 +543,24 @@ export const Prototype: Pipeable = {
   }
 }
 
-/**
- * @since 4.0.0
- * @category constructors
- */
-export const Class: new() => Pipeable = (function() {
+const Base: PipeableConstructor = (function() {
   function PipeableBase() {}
   PipeableBase.prototype = Prototype
   return PipeableBase as any
 })()
 
 /**
- * @since 4.0.0
- * @category models
+ * @since 3.15.0
+ * @category Constructors
  */
-export interface PipeableConstructor {
-  new(...args: ReadonlyArray<any>): Pipeable
-}
-
-/**
- * @since 4.0.0
- * @category constructors
- */
-export const Mixin = <TBase extends new(...args: ReadonlyArray<any>) => any>(
-  klass: TBase
-): TBase & PipeableConstructor =>
-  class extends klass {
-    pipe() {
-      return pipeArguments(this, arguments)
+export const Class: {
+  (): PipeableConstructor
+  <TBase extends Ctor>(klass: TBase): TBase & PipeableConstructor
+} = (klass?: Ctor) =>
+  klass ?
+    class extends klass {
+      pipe() {
+        return pipeArguments(this, arguments)
+      }
     }
-  }
+    : Base

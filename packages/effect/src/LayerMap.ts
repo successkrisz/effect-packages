@@ -1,60 +1,46 @@
 /**
  * @since 3.14.0
+ * @experimental
  */
-import * as Context from "./Context.ts"
-import type * as Duration from "./Duration.ts"
-import * as Effect from "./Effect.ts"
-import { identity } from "./Function.ts"
-import * as Layer from "./Layer.ts"
-import * as RcMap from "./RcMap.ts"
-import * as Scope from "./Scope.ts"
-import type { Mutable, NoExcessProperties } from "./Types.ts"
+import * as Context from "./Context.js"
+import type * as Duration from "./Duration.js"
+import * as Effect from "./Effect.js"
+import * as FiberRefsPatch from "./FiberRefsPatch.js"
+import { identity } from "./Function.js"
+import * as core from "./internal/core.js"
+import * as Layer from "./Layer.js"
+import * as RcMap from "./RcMap.js"
+import * as Runtime from "./Runtime.js"
+import * as Scope from "./Scope.js"
+import type { Mutable, NoExcessProperties } from "./Types.js"
 
-const TypeId = "~effect/LayerMap"
+/**
+ * @since 3.14.0
+ * @category Symbols
+ */
+export const TypeId: unique symbol = Symbol.for("effect/LayerMap")
 
-type IdleTimeToLiveInput<K> = Duration.Input | ((key: K) => Duration.Input)
+/**
+ * @since 3.14.0
+ * @category Symbols
+ */
+export type TypeId = typeof TypeId
 
 /**
  * @since 3.14.0
  * @category Models
- * @example
- * ```ts
- * import { Effect, Layer, LayerMap, Context } from "effect"
- *
- * // Define a service key
- * const DatabaseService = Context.Service<{
- *   readonly query: (sql: string) => Effect.Effect<string>
- * }>("Database")
- *
- * // Create a LayerMap that provides different database configurations
- * const createDatabaseLayerMap = LayerMap.make((env: string) =>
- *   Layer.succeed(DatabaseService)({
- *     query: Effect.fn("DatabaseService.query")((sql) => Effect.succeed(`${env}: ${sql}`))
- *   })
- * )
- *
- * // Use the LayerMap
- * const program = Effect.gen(function*() {
- *   const layerMap = yield* createDatabaseLayerMap
- *
- *   // Get a layer for a specific environment
- *   const devLayer = layerMap.get("development")
- *
- *   // Get context directly
- *   const context = yield* layerMap.contextEffect("production")
- *
- *   // Invalidate a cached layer
- *   yield* layerMap.invalidate("development")
- * })
- * ```
+ * @experimental
  */
-export interface LayerMap<in out K, in out I, in out E = never> {
-  readonly [TypeId]: typeof TypeId
+export interface LayerMap<in K, in out I, out E = never> {
+  readonly [TypeId]: TypeId
 
   /**
    * The internal RcMap that stores the resources.
    */
-  readonly rcMap: RcMap.RcMap<K, Context.Context<I>, E>
+  readonly rcMap: RcMap.RcMap<K, {
+    readonly layer: Layer.Layer<I, E>
+    readonly runtimeEffect: Effect.Effect<Runtime.Runtime<I>, E, Scope.Scope>
+  }, E>
 
   /**
    * Retrieves a Layer for the resources associated with the key.
@@ -62,9 +48,9 @@ export interface LayerMap<in out K, in out I, in out E = never> {
   get(key: K): Layer.Layer<I, E>
 
   /**
-   * Retrieves the context associated with the key.
+   * Retrieves a Runtime for the resources associated with the key.
    */
-  contextEffect(key: K): Effect.Effect<Context.Context<I>, E, Scope.Scope>
+  runtime(key: K): Effect.Effect<Runtime.Runtime<I>, E, Scope.Scope>
 
   /**
    * Invalidates the resource associated with the key.
@@ -75,43 +61,54 @@ export interface LayerMap<in out K, in out I, in out E = never> {
 /**
  * @since 3.14.0
  * @category Constructors
+ * @experimental
  *
  * A `LayerMap` allows you to create a map of Layer's that can be used to
  * dynamically access resources based on a key.
  *
- * @example
  * ```ts
- * import { Effect, Layer, LayerMap, Context } from "effect"
+ * import { NodeRuntime } from "@effect/platform-node"
+ * import { Context, Effect, FiberRef, Layer, LayerMap } from "effect"
  *
- * // Define a service key
- * const DatabaseService = Context.Service<{
- *   readonly query: (sql: string) => Effect.Effect<string>
- * }>("Database")
+ * class Greeter extends Context.Tag("Greeter")<Greeter, {
+ *   greet: Effect.Effect<string>
+ * }>() {}
  *
- * // Create a LayerMap that provides different database configurations
- * const program = Effect.gen(function*() {
- *   const layerMap = yield* LayerMap.make(
- *     (env: string) =>
- *       Layer.succeed(DatabaseService)({
- *         query: Effect.fn("DatabaseService.query")((sql) => Effect.succeed(`${env}: ${sql}`))
- *       }),
- *     { idleTimeToLive: "5 seconds" }
- *   )
+ * // create a service that wraps a LayerMap
+ * class GreeterMap extends LayerMap.Service<GreeterMap>()("GreeterMap", {
+ *   // define the lookup function for the layer map
+ *   //
+ *   // The returned Layer will be used to provide the Greeter service for the
+ *   // given name.
+ *   lookup: (name: string) =>
+ *     Layer.succeed(Greeter, {
+ *       greet: Effect.succeed(`Hello, ${name}!`)
+ *     }).pipe(
+ *       Layer.merge(Layer.locallyScoped(FiberRef.currentConcurrency, 123))
+ *     ),
  *
- *   // Get a layer for a specific environment
- *   const devLayer = layerMap.get("development")
+ *   // If a layer is not used for a certain amount of time, it can be removed
+ *   idleTimeToLive: "5 seconds",
  *
- *   // Use the layer to provide the service
- *   const result = yield* Effect.provide(
- *     Effect.gen(function*() {
- *       const db = yield* DatabaseService
- *       return yield* db.query("SELECT * FROM users")
- *     }),
- *     devLayer
- *   )
+ *   // Supply the dependencies for the layers in the LayerMap
+ *   dependencies: []
+ * }) {}
  *
- *   console.log(result) // "development: SELECT * FROM users"
- * })
+ * // usage
+ * const program: Effect.Effect<void, never, GreeterMap> = Effect.gen(function*() {
+ *   // access and use the Greeter service
+ *   const greeter = yield* Greeter
+ *   yield* Effect.log(yield* greeter.greet)
+ * }).pipe(
+ *   // use the GreeterMap service to provide a variant of the Greeter service
+ *   Effect.provide(GreeterMap.get("John"))
+ * )
+ *
+ * // run the program
+ * program.pipe(
+ *   Effect.provide(GreeterMap.Default),
+ *   NodeRuntime.runMain
+ * )
  * ```
  */
 export const make: <
@@ -121,35 +118,76 @@ export const make: <
 >(
   lookup: (key: K) => L,
   options?: {
-    readonly idleTimeToLive?: IdleTimeToLiveInput<K> | undefined
+    readonly idleTimeToLive?: Duration.DurationInput | undefined
     readonly preloadKeys?: PreloadKeys
   } | undefined
 ) => Effect.Effect<
-  LayerMap<K, Layer.Success<L>, Layer.Error<L>>,
-  PreloadKeys extends undefined ? never : Layer.Error<L>,
-  Scope.Scope | Layer.Services<L>
+  LayerMap<
+    K,
+    L extends Layer.Layer<infer _A, infer _E, infer _R> ? _A : never,
+    L extends Layer.Layer<infer _A, infer _E, infer _R> ? _E : never
+  >,
+  PreloadKeys extends undefined ? never : L extends Layer.Layer<infer _A, infer _E, infer _R> ? _E : never,
+  Scope.Scope | (L extends Layer.Layer<infer _A, infer _E, infer _R> ? _R : never)
 > = Effect.fnUntraced(function*<I, K, EL, RL>(
   lookup: (key: K) => Layer.Layer<I, EL, RL>,
   options?: {
-    readonly idleTimeToLive?: IdleTimeToLiveInput<K> | undefined
+    readonly idleTimeToLive?: Duration.DurationInput | undefined
+    readonly preloadKeys?: Iterable<K> | undefined
   } | undefined
 ) {
   const context = yield* Effect.context<never>()
-  const memoMap = Layer.CurrentMemoMap.getOrCreate(context)
+
+  // If we are inside another layer build, use the current memo map,
+  // otherwise create a new one.
+  const memoMap = context.unsafeMap.has(Layer.CurrentMemoMap.key)
+    ? Context.get(context, Layer.CurrentMemoMap)
+    : yield* Layer.makeMemoMap
 
   const rcMap = yield* RcMap.make({
     lookup: (key: K) =>
-      Effect.contextWith((_: Context.Context<Scope.Scope>) =>
-        Layer.buildWithMemoMap(lookup(key), memoMap, Context.get(_, Scope.Scope))
+      Effect.scopeWith((scope) => Effect.diffFiberRefs(Layer.buildWithMemoMap(lookup(key), memoMap, scope))).pipe(
+        Effect.map(([patch, context]) => ({
+          layer: Layer.scopedContext(
+            core.withFiberRuntime<Context.Context<I>, any, Scope.Scope>((fiber) => {
+              const scope = Context.unsafeGet(fiber.currentContext, Scope.Scope)
+              const oldRefs = fiber.getFiberRefs()
+              const newRefs = FiberRefsPatch.patch(patch, fiber.id(), oldRefs)
+              const revert = FiberRefsPatch.diff(newRefs, oldRefs)
+              fiber.setFiberRefs(newRefs)
+              return Effect.as(
+                Scope.addFinalizerExit(scope, () => {
+                  fiber.setFiberRefs(FiberRefsPatch.patch(revert, fiber.id(), fiber.getFiberRefs()))
+                  return Effect.void
+                }),
+                context
+              )
+            })
+          ),
+          runtimeEffect: Effect.withFiberRuntime<Runtime.Runtime<I>, any, Scope.Scope>((fiber) => {
+            const fiberRefs = FiberRefsPatch.patch(patch, fiber.id(), fiber.getFiberRefs())
+            return Effect.succeed(Runtime.make({
+              context,
+              fiberRefs,
+              runtimeFlags: Runtime.defaultRuntime.runtimeFlags
+            }))
+          })
+        } as const))
       ),
     idleTimeToLive: options?.idleTimeToLive
   })
 
-  return identity<LayerMap<K, I, any>>({
+  if (options?.preloadKeys) {
+    for (const key of options.preloadKeys) {
+      yield* (RcMap.get(rcMap, key) as Effect.Effect<any, EL, RL | Scope.Scope>)
+    }
+  }
+
+  return identity<LayerMap<K, Exclude<I, Scope.Scope>, any>>({
     [TypeId]: TypeId,
     rcMap,
-    get: (key) => Layer.effectContext(RcMap.get(rcMap, key)),
-    contextEffect: (key) => RcMap.get(rcMap, key),
+    get: (key) => Layer.unwrapScoped(Effect.map(RcMap.get(rcMap, key), ({ layer }) => layer)),
+    runtime: (key) => Effect.flatMap(RcMap.get(rcMap, key), ({ runtimeEffect }) => runtimeEffect),
     invalidate: (key) => RcMap.invalidate(rcMap, key)
   })
 })
@@ -157,42 +195,7 @@ export const make: <
 /**
  * @since 3.14.0
  * @category Constructors
- * @example
- * ```ts
- * import { Effect, Layer, LayerMap, Context } from "effect"
- *
- * // Define service keys
- * const DevDatabase = Context.Service<{
- *   readonly query: (sql: string) => Effect.Effect<string>
- * }>("DevDatabase")
- *
- * const ProdDatabase = Context.Service<{
- *   readonly query: (sql: string) => Effect.Effect<string>
- * }>("ProdDatabase")
- *
- * // Create predefined layers
- * const layers = {
- *   development: Layer.succeed(DevDatabase)({
- *     query: Effect.fn("DevDatabase.query")((sql) => Effect.succeed(`DEV: ${sql}`))
- *   }),
- *   production: Layer.succeed(ProdDatabase)({
- *     query: Effect.fn("ProdDatabase.query")((sql) => Effect.succeed(`PROD: ${sql}`))
- *   })
- * } as const
- *
- * // Create a LayerMap from the record
- * const program = Effect.gen(function*() {
- *   const layerMap = yield* LayerMap.fromRecord(layers, {
- *     idleTimeToLive: "10 seconds"
- *   })
- *
- *   // Get layers by key
- *   const devLayer = layerMap.get("development")
- *   const prodLayer = layerMap.get("production")
- *
- *   console.log("LayerMap created from record")
- * })
- * ```
+ * @experimental
  */
 export const fromRecord = <
   const Layers extends Record<string, Layer.Layer<any, any, any>>,
@@ -200,16 +203,16 @@ export const fromRecord = <
 >(
   layers: Layers,
   options?: {
-    readonly idleTimeToLive?: IdleTimeToLiveInput<keyof Layers> | undefined
+    readonly idleTimeToLive?: Duration.DurationInput | undefined
     readonly preload?: Preload | undefined
   } | undefined
 ): Effect.Effect<
   LayerMap<
     keyof Layers,
-    Layer.Success<Layers[keyof Layers]>,
-    Layer.Error<Layers[keyof Layers]>
+    Layers[keyof Layers] extends Layer.Layer<infer _A, infer _E, infer _R> ? _A : never,
+    Preload extends true ? never : Layers[keyof Layers] extends Layer.Layer<infer _A, infer _E, infer _R> ? _E : never
   >,
-  Preload extends true ? Layer.Error<Layers[keyof Layers]> : never,
+  Preload extends true ? never : Layers[keyof Layers] extends Layer.Layer<infer _A, infer _E, infer _R> ? _E : never,
   Scope.Scope | (Layers[keyof Layers] extends Layer.Layer<infer _A, infer _E, infer _R> ? _R : never)
 > =>
   make((key: keyof Layers) => layers[key], {
@@ -230,11 +233,11 @@ export interface TagClass<
   in out R,
   in out LE,
   in out Deps extends Layer.Layer<any, any, any>
-> extends Context.ServiceClass<Self, Id, LayerMap<K, I, E>> {
+> extends Context.TagClass<Self, Id, LayerMap<K, I, E>> {
   /**
    * A default layer for the `LayerMap` service.
    */
-  readonly layer: Layer.Layer<
+  readonly Default: Layer.Layer<
     Self,
     (Deps extends Layer.Layer<infer _A, infer _E, infer _R> ? _E : never) | LE,
     | Exclude<R, (Deps extends Layer.Layer<infer _A, infer _E, infer _R> ? _A : never)>
@@ -244,7 +247,7 @@ export interface TagClass<
   /**
    * A default layer for the `LayerMap` service without the dependencies provided.
    */
-  readonly layerNoDeps: Layer.Layer<Self, LE, R>
+  readonly DefaultWithoutDependencies: Layer.Layer<Self, LE, R>
 
   /**
    * Retrieves a Layer for the resources associated with the key.
@@ -252,9 +255,9 @@ export interface TagClass<
   readonly get: (key: K) => Layer.Layer<I, E, Self>
 
   /**
-   * Retrieves the context associated with the key.
+   * Retrieves a Runtime for the resources associated with the key.
    */
-  readonly contextEffect: (key: K) => Effect.Effect<Context.Context<I>, E, Scope.Scope | Self>
+  readonly runtime: (key: K) => Effect.Effect<Runtime.Runtime<I>, E, Scope.Scope | Self>
 
   /**
    * Invalidates the resource associated with the key.
@@ -265,62 +268,76 @@ export interface TagClass<
 /**
  * @since 3.14.0
  * @category Service
+ * @experimental
  *
  * Create a `LayerMap` service that provides a dynamic set of resources based on
  * a key.
  *
- * @example
  * ```ts
- * import { Console, Effect, Layer, LayerMap, Context } from "effect"
+ * import { NodeRuntime } from "@effect/platform-node"
+ * import { Context, Effect, FiberRef, Layer, LayerMap } from "effect"
  *
- * // Define a service key
- * const Greeter = Context.Service<{
- *   readonly greet: Effect.Effect<string>
- * }>("Greeter")
+ * class Greeter extends Context.Tag("Greeter")<Greeter, {
+ *   greet: Effect.Effect<string>
+ * }>() {}
  *
- * // Create a service that wraps a LayerMap
+ * // create a service that wraps a LayerMap
  * class GreeterMap extends LayerMap.Service<GreeterMap>()("GreeterMap", {
- *   // Define the lookup function for the layer map
+ *   // define the lookup function for the layer map
+ *   //
+ *   // The returned Layer will be used to provide the Greeter service for the
+ *   // given name.
  *   lookup: (name: string) =>
- *     Layer.succeed(Greeter)({
+ *     Layer.succeed(Greeter, {
  *       greet: Effect.succeed(`Hello, ${name}!`)
- *     }),
+ *     }).pipe(
+ *       Layer.merge(Layer.locallyScoped(FiberRef.currentConcurrency, 123))
+ *     ),
  *
  *   // If a layer is not used for a certain amount of time, it can be removed
- *   idleTimeToLive: "5 seconds"
+ *   idleTimeToLive: "5 seconds",
+ *
+ *   // Supply the dependencies for the layers in the LayerMap
+ *   dependencies: []
  * }) {}
  *
- * // Usage
- * const program = Effect.gen(function*() {
- *   // Access and use the Greeter service
+ * // usage
+ * const program: Effect.Effect<void, never, GreeterMap> = Effect.gen(function*() {
+ *   // access and use the Greeter service
  *   const greeter = yield* Greeter
- *   yield* Console.log(yield* greeter.greet)
+ *   yield* Effect.log(yield* greeter.greet)
  * }).pipe(
- *   // Use the GreeterMap service to provide a variant of the Greeter service
+ *   // use the GreeterMap service to provide a variant of the Greeter service
  *   Effect.provide(GreeterMap.get("John"))
- * ).pipe(
- *   // Provide the GreeterMap layer
- *   Effect.provide(GreeterMap.layer)
+ * )
+ *
+ * // run the program
+ * program.pipe(
+ *   Effect.provide(GreeterMap.Default),
+ *   NodeRuntime.runMain
  * )
  * ```
  */
 export const Service = <Self>() =>
 <
   const Id extends string,
-  const Options extends
-    | NoExcessProperties<{
-      readonly lookup: (key: any) => Layer.Layer<any, any, any>
-      readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>> | undefined
-      readonly idleTimeToLive?: IdleTimeToLiveInput<any> | undefined
-      readonly preloadKeys?:
-        | Iterable<Options extends { readonly lookup: (key: infer K) => any } ? K : never>
-        | undefined
-    }, Options>
+  Options extends
+    | NoExcessProperties<
+      {
+        readonly lookup: (key: any) => Layer.Layer<any, any, any>
+        readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>>
+        readonly idleTimeToLive?: Duration.DurationInput | undefined
+        readonly preloadKeys?:
+          | Iterable<Options extends { readonly lookup: (key: infer K) => any } ? K : never>
+          | undefined
+      },
+      Options
+    >
     | NoExcessProperties<{
       readonly layers: Record<string, Layer.Layer<any, any, any>>
-      readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>> | undefined
-      readonly idleTimeToLive?: IdleTimeToLiveInput<any> | undefined
-      readonly preload?: boolean | undefined
+      readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>>
+      readonly idleTimeToLive?: Duration.DurationInput | undefined
+      readonly preload?: boolean
     }, Options>
 >(
   id: Id,
@@ -333,12 +350,11 @@ export const Service = <Self>() =>
     : never,
   Service.Success<Options>,
   Options extends { readonly preload: true } ? never : Service.Error<Options>,
-  Service.Services<Options>,
+  Service.Context<Options>,
   Options extends { readonly preload: true } ? Service.Error<Options>
-    : Options extends { readonly preloadKeys: Iterable<any> } ? Service.Error<Options>
+    : Options extends { readonly preloadKey: Iterable<any> } ? Service.Error<Options>
     : never,
-  Options extends { readonly dependencies: ReadonlyArray<Layer.Layer<any, any, any>> } ? Options["dependencies"][number]
-    : never
+  Options extends { readonly dependencies: ReadonlyArray<any> } ? Options["dependencies"][number] : never
 > => {
   const Err = globalThis.Error as any
   const limit = Err.stackTraceLimit
@@ -348,7 +364,7 @@ export const Service = <Self>() =>
 
   function TagClass() {}
   const TagClass_ = TagClass as any as Mutable<TagClass<Self, Id, string, any, any, any, any, any>>
-  Object.setPrototypeOf(TagClass, Object.getPrototypeOf(Context.Service<Self, any>(id)))
+  Object.setPrototypeOf(TagClass, Object.getPrototypeOf(Context.GenericTag<Self, any>(id)))
   TagClass.key = id
   Object.defineProperty(TagClass, "stack", {
     get() {
@@ -356,19 +372,19 @@ export const Service = <Self>() =>
     }
   })
 
-  TagClass_.layerNoDeps = Layer.effect(TagClass_)(
+  TagClass_.DefaultWithoutDependencies = Layer.scoped(
+    TagClass_,
     "lookup" in options
       ? make(options.lookup, options)
-      : fromRecord(options.layers as any, options) as any
+      : fromRecord(options.layers as any, options)
   )
-  TagClass_.layer = options.dependencies && options.dependencies.length > 0 ?
-    Layer.provide(TagClass_.layerNoDeps, options.dependencies as any) :
-    TagClass_.layerNoDeps
+  TagClass_.Default = options.dependencies && options.dependencies.length > 0 ?
+    Layer.provide(TagClass_.DefaultWithoutDependencies, options.dependencies as any) :
+    TagClass_.DefaultWithoutDependencies
 
-  TagClass_.get = (key: string) => Layer.unwrap(Effect.map(TagClass_.asEffect(), (layerMap) => layerMap.get(key)))
-  TagClass_.contextEffect = (key: string) =>
-    Effect.flatMap(TagClass_.asEffect(), (layerMap) => layerMap.contextEffect(key))
-  TagClass_.invalidate = (key: string) => Effect.flatMap(TagClass_.asEffect(), (layerMap) => layerMap.invalidate(key))
+  TagClass_.get = (key: string) => Layer.unwrapScoped(Effect.map(TagClass_, (layerMap) => layerMap.get(key)))
+  TagClass_.runtime = (key: string) => Effect.flatMap(TagClass_, (layerMap) => layerMap.runtime(key))
+  TagClass_.invalidate = (key: string) => Effect.flatMap(TagClass_, (layerMap) => layerMap.invalidate(key))
 
   return TagClass as any
 }
@@ -376,11 +392,13 @@ export const Service = <Self>() =>
 /**
  * @since 3.14.0
  * @category Service
+ * @experimental
  */
 export declare namespace Service {
   /**
    * @since 3.14.0
    * @category Service
+   * @experimental
    */
   export type Key<Options> = Options extends { readonly lookup: (key: infer K) => any } ? K
     : Options extends { readonly layers: infer Layers } ? keyof Layers
@@ -389,6 +407,7 @@ export declare namespace Service {
   /**
    * @since 3.14.0
    * @category Service
+   * @experimental
    */
   export type Layers<Options> = Options extends { readonly lookup: (key: infer _K) => infer Layers } ? Layers
     : Options extends { readonly layers: infer Layers } ? Layers[keyof Layers]
@@ -397,18 +416,21 @@ export declare namespace Service {
   /**
    * @since 3.14.0
    * @category Service
+   * @experimental
    */
   export type Success<Options> = Layers<Options> extends Layer.Layer<infer _A, infer _E, infer _R> ? _A : never
 
   /**
    * @since 3.14.0
    * @category Service
+   * @experimental
    */
   export type Error<Options> = Layers<Options> extends Layer.Layer<infer _A, infer _E, infer _R> ? _E : never
 
   /**
    * @since 3.14.0
    * @category Service
+   * @experimental
    */
-  export type Services<Options> = Layers<Options> extends Layer.Layer<infer _A, infer _E, infer _R> ? _R : never
+  export type Context<Options> = Layers<Options> extends Layer.Layer<infer _A, infer _E, infer _R> ? _R : never
 }

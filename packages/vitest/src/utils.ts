@@ -1,12 +1,12 @@
 /**
- * @since 4.0.0
+ * @since 0.21.0
  */
 import type * as Cause from "effect/Cause"
+import * as Either from "effect/Either"
 import * as Equal from "effect/Equal"
 import * as Exit from "effect/Exit"
 import * as Option from "effect/Option"
 import * as Predicate from "effect/Predicate"
-import * as Result from "effect/Result"
 import * as assert from "node:assert"
 import { assert as vassert } from "vitest"
 
@@ -17,7 +17,7 @@ import { assert as vassert } from "vitest"
 /**
  * Throws an `AssertionError` with the provided error message.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function fail(message: string) {
   assert.fail(message)
@@ -26,7 +26,7 @@ export function fail(message: string) {
 /**
  * Asserts that `actual` is equal to `expected` using the `Equal.equals` trait.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function deepStrictEqual<A>(actual: A, expected: A, message?: string, ..._: Array<never>) {
   assert.deepStrictEqual(actual, expected, message)
@@ -35,7 +35,7 @@ export function deepStrictEqual<A>(actual: A, expected: A, message?: string, ...
 /**
  * Asserts that `actual` is not equal to `expected` using the `Equal.equals` trait.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function notDeepStrictEqual<A>(actual: A, expected: A, message?: string, ..._: Array<never>) {
   assert.notDeepStrictEqual(actual, expected, message)
@@ -44,7 +44,7 @@ export function notDeepStrictEqual<A>(actual: A, expected: A, message?: string, 
 /**
  * Asserts that `actual` is equal to `expected` using the `Equal.equals` trait.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function strictEqual<A>(actual: A, expected: A, message?: string, ..._: Array<never>) {
   assert.strictEqual(actual, expected, message)
@@ -53,7 +53,7 @@ export function strictEqual<A>(actual: A, expected: A, message?: string, ..._: A
 /**
  * Asserts that `actual` is equal to `expected` using the `Equal.equals` trait.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertEquals<A>(actual: A, expected: A, message?: string, ..._: Array<never>) {
   if (!Equal.equals(actual, expected)) {
@@ -65,7 +65,7 @@ export function assertEquals<A>(actual: A, expected: A, message?: string, ..._: 
 /**
  * Asserts that `thunk` does not throw an error.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function doesNotThrow(thunk: () => void, message?: string, ..._: Array<never>) {
   assert.doesNotThrow(thunk, message)
@@ -78,7 +78,7 @@ export function doesNotThrow(thunk: () => void, message?: string, ..._: Array<ne
 /**
  * Asserts that `value` is an instance of `constructor`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertInstanceOf<C extends abstract new(...args: any) => any>(
   value: unknown,
@@ -86,13 +86,14 @@ export function assertInstanceOf<C extends abstract new(...args: any) => any>(
   message?: string,
   ..._: Array<never>
 ): asserts value is InstanceType<C> {
-  vassert.instanceOf(value, constructor as any, message)
+  // @ts-ignore
+  vassert.instanceOf(value, constructor, message)
 }
 
 /**
  * Asserts that `self` is `true`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertTrue(self: unknown, message?: string, ..._: Array<never>): asserts self {
   strictEqual(self, true, message)
@@ -101,7 +102,7 @@ export function assertTrue(self: unknown, message?: string, ..._: Array<never>):
 /**
  * Asserts that `self` is `false`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertFalse(self: boolean, message?: string, ..._: Array<never>) {
   strictEqual(self, false, message)
@@ -110,10 +111,10 @@ export function assertFalse(self: boolean, message?: string, ..._: Array<never>)
 /**
  * Asserts that `actual` includes `expected`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertInclude(actual: string | undefined, expected: string, ..._: Array<never>) {
-  if (typeof expected === "string") {
+  if (Predicate.isString(expected)) {
     if (!actual?.includes(expected)) {
       fail(`Expected\n\n${actual}\n\nto include\n\n${expected}`)
     }
@@ -121,20 +122,20 @@ export function assertInclude(actual: string | undefined, expected: string, ..._
 }
 
 /**
- * Asserts that `actual` matches `regExp`.
+ * Asserts that `actual` matches `regexp`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
-export function assertMatch(actual: string, regExp: RegExp, ..._: Array<never>) {
-  if (!regExp.test(actual)) {
-    fail(`Expected\n\n${actual}\n\nto match\n\n${regExp}`)
+export function assertMatch(actual: string, regexp: RegExp, ..._: Array<never>) {
+  if (!regexp.test(actual)) {
+    fail(`Expected\n\n${actual}\n\nto match\n\n${regexp}`)
   }
 }
 
 /**
  * Asserts that `thunk` throws an error.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function throws(thunk: () => void, error?: Error | ((u: unknown) => undefined), ..._: Array<never>) {
   try {
@@ -144,10 +145,8 @@ export function throws(thunk: () => void, error?: Error | ((u: unknown) => undef
     if (error !== undefined) {
       if (Predicate.isFunction(error)) {
         error(e)
-      } else if (error) {
-        deepStrictEqual(e, error)
       } else {
-        throw e
+        deepStrictEqual(e, error)
       }
     }
   }
@@ -156,7 +155,7 @@ export function throws(thunk: () => void, error?: Error | ((u: unknown) => undef
 /**
  * Asserts that `thunk` throws an error.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export async function throwsAsync(
   thunk: () => Promise<void>,
@@ -184,44 +183,16 @@ export async function throwsAsync(
 /**
  * Asserts that `option` is `None`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertNone<A>(option: Option.Option<A>, ..._: Array<never>): asserts option is Option.None<never> {
   deepStrictEqual(option, Option.none())
 }
 
 /**
- * Asserts that `a` is not `undefined`.
- *
- * @since 4.0.0
- */
-export function assertDefined<A>(
-  a: A | undefined,
-  ..._: Array<never>
-): asserts a is Exclude<A, undefined> {
-  if (a === undefined) {
-    fail("Expected value to be defined")
-  }
-}
-
-/**
- * Asserts that `a` is `undefined`.
- *
- * @since 4.0.0
- */
-export function assertUndefined<A>(
-  a: A | undefined,
-  ..._: Array<never>
-): asserts a is undefined {
-  if (a !== undefined) {
-    fail("Expected value to be undefined")
-  }
-}
-
-/**
  * Asserts that `option` is `Some`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
 export function assertSome<A>(
   option: Option.Option<A>,
@@ -232,33 +203,33 @@ export function assertSome<A>(
 }
 
 // ----------------------------
-// Result
+// Either
 // ----------------------------
 
 /**
- * Asserts that `result` is `Success`.
+ * Asserts that `either` is `Left`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
-export function assertSuccess<A, E>(
-  result: Result.Result<A, E>,
-  expected: A,
+export function assertLeft<R, L>(
+  either: Either.Either<R, L>,
+  expected: L,
   ..._: Array<never>
-): asserts result is Result.Success<A, never> {
-  deepStrictEqual(result, Result.succeed(expected))
+): asserts either is Either.Left<L, never> {
+  deepStrictEqual(either, Either.left(expected))
 }
 
 /**
- * Asserts that `result` is `Failure`.
+ * Asserts that `either` is `Right`.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
-export function assertFailure<A, E>(
-  result: Result.Result<A, E>,
-  expected: E,
+export function assertRight<R, L>(
+  either: Either.Either<R, L>,
+  expected: R,
   ..._: Array<never>
-): asserts result is Result.Failure<never, E> {
-  deepStrictEqual(result, Result.fail(expected))
+): asserts either is Either.Right<never, R> {
+  deepStrictEqual(either, Either.right(expected))
 }
 
 // ----------------------------
@@ -268,9 +239,9 @@ export function assertFailure<A, E>(
 /**
  * Asserts that `exit` is a failure.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
-export function assertExitFailure<A, E>(
+export function assertFailure<A, E>(
   exit: Exit.Exit<A, E>,
   expected: Cause.Cause<E>,
   ..._: Array<never>
@@ -281,9 +252,9 @@ export function assertExitFailure<A, E>(
 /**
  * Asserts that `exit` is a success.
  *
- * @since 4.0.0
+ * @since 0.21.0
  */
-export function assertExitSuccess<A, E>(
+export function assertSuccess<A, E>(
   exit: Exit.Exit<A, E>,
   expected: A,
   ..._: Array<never>

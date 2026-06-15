@@ -35,11 +35,6 @@ function value(c: number, d: number): Value {
 }
 
 describe("MutableHashMap", () => {
-  it("isMutableHashMap", () => {
-    assertTrue(HM.isMutableHashMap(HM.make([0, "a"], [1, "b"])))
-    assertFalse(HM.isMutableHashMap(new Map([[0, "a"]])))
-  })
-
   it("toString", () => {
     const map = HM.make(
       [0, "a"],
@@ -48,7 +43,19 @@ describe("MutableHashMap", () => {
 
     strictEqual(
       String(map),
-      `MutableHashMap([[0,"a"],[1,"b"]])`
+      `{
+  "_id": "MutableHashMap",
+  "values": [
+    [
+      0,
+      "a"
+    ],
+    [
+      1,
+      "b"
+    ]
+  ]
+}`
     )
   })
 
@@ -65,7 +72,7 @@ describe("MutableHashMap", () => {
     if (typeof window !== "undefined") {
       return
     }
-    // oxlint-disable-next-line @typescript-eslint/no-require-imports
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { inspect } = require("node:util")
 
     const map = HM.make(
@@ -170,7 +177,7 @@ describe("MutableHashMap", () => {
       HM.set(key(1, 1), value(1, 1))
     )
 
-    deepStrictEqual(Array.from(HM.keys(map)), [
+    deepStrictEqual(HM.keys(map), [
       key(0, 0),
       key(1, 1)
     ])

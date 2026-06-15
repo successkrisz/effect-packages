@@ -2,43 +2,33 @@
  * @since 1.0.0
  */
 
-import * as Stream from "effect/Stream"
+import type * as Stream from "effect/Stream"
+import * as internal from "./internal/stream.js"
 
 /**
- * Creates a `Stream` from `window.addEventListener`.
- *
- * By default, the underlying buffer is unbounded in size. You can customize the
- * buffer size an object as the second argument with the `bufferSize` field.
- *
+ * Creates a `Stream` from window.addEventListener.
  * @since 1.0.0
- * @category Streams
  */
-export const fromEventListenerWindow = <K extends keyof WindowEventMap>(
+export const fromEventListenerWindow: <K extends keyof WindowEventMap>(
   type: K,
   options?: boolean | {
     readonly capture?: boolean
     readonly passive?: boolean
     readonly once?: boolean
-    readonly bufferSize?: number | undefined
+    readonly bufferSize?: number | "unbounded" | undefined
   } | undefined
-): Stream.Stream<WindowEventMap[K], never, never> => Stream.fromEventListener<WindowEventMap[K]>(window, type, options)
+) => Stream.Stream<WindowEventMap[K], never, never> = internal.fromEventListenerWindow
 
 /**
- * Creates a `Stream` from `document.addEventListener`.
- *
- * By default, the underlying buffer is unbounded in size. You can customize the
- * buffer size an object as the second argument with the `bufferSize` field.
- *
+ * Creates a `Stream` from document.addEventListener.
  * @since 1.0.0
- * @category Streams
  */
-export const fromEventListenerDocument = <K extends keyof DocumentEventMap>(
+export const fromEventListenerDocument: <K extends keyof DocumentEventMap>(
   type: K,
   options?: boolean | {
     readonly capture?: boolean
     readonly passive?: boolean
     readonly once?: boolean
-    readonly bufferSize?: number | undefined
+    readonly bufferSize?: number | "unbounded" | undefined
   } | undefined
-): Stream.Stream<DocumentEventMap[K], never, never> =>
-  Stream.fromEventListener<DocumentEventMap[K]>(document, type, options)
+) => Stream.Stream<DocumentEventMap[K], never, never> = internal.fromEventListenerDocument

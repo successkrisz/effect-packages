@@ -1,85 +1,49 @@
 /**
  * @since 1.0.0
  */
-
-// @barrel: Auto-generated exports. Do not edit manually.
-
-/**
- * @since 1.0.0
- */
-export * as BrowserHttpClient from "./BrowserHttpClient.ts"
+export * as BrowserHttpClient from "./BrowserHttpClient.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserKeyValueStore from "./BrowserKeyValueStore.ts"
+export * as BrowserKeyValueStore from "./BrowserKeyValueStore.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserPersistence from "./BrowserPersistence.ts"
+export * as BrowserRuntime from "./BrowserRuntime.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserRuntime from "./BrowserRuntime.ts"
+export * as BrowserSocket from "./BrowserSocket.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserSocket from "./BrowserSocket.ts"
+export * as BrowserStream from "./BrowserStream.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserStream from "./BrowserStream.ts"
+export * as BrowserWorker from "./BrowserWorker.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserWorker from "./BrowserWorker.ts"
+export * as BrowserWorkerRunner from "./BrowserWorkerRunner.js"
 
 /**
  * @since 1.0.0
  */
-export * as BrowserWorkerRunner from "./BrowserWorkerRunner.ts"
+export * as Clipboard from "./Clipboard.js"
 
 /**
  * @since 1.0.0
  */
-export * as Clipboard from "./Clipboard.ts"
+export * as Geolocation from "./Geolocation.js"
 
 /**
  * @since 1.0.0
  */
-export * as Geolocation from "./Geolocation.ts"
-
-/**
- * @since 4.0.0
- */
-export * as IndexedDb from "./IndexedDb.ts"
-
-/**
- * @since 4.0.0
- */
-export * as IndexedDbDatabase from "./IndexedDbDatabase.ts"
-
-/**
- * @since 4.0.0
- */
-export * as IndexedDbQueryBuilder from "./IndexedDbQueryBuilder.ts"
-
-/**
- * @since 4.0.0
- */
-export * as IndexedDbTable from "./IndexedDbTable.ts"
-
-/**
- * @since 4.0.0
- */
-export * as IndexedDbVersion from "./IndexedDbVersion.ts"
-
-/**
- * @since 1.0.0
- */
-export * as Permissions from "./Permissions.ts"
+export * as Permissions from "./Permissions.js"
