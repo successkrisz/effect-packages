@@ -1,36 +1,25 @@
 /**
  * @since 1.0.0
  */
+import type * as FileSystem from "@effect/platform/FileSystem"
+import type * as Multipart from "@effect/platform/Multipart"
+import type * as Path from "@effect/platform/Path"
 import type * as Effect from "effect/Effect"
-import type { FileSystem } from "effect/FileSystem"
-import type { Path } from "effect/Path"
 import type * as Scope from "effect/Scope"
-import * as Stream from "effect/Stream"
-import * as Multipart from "effect/unstable/http/Multipart"
-import * as BunStream from "./BunStream.ts"
+import type * as Stream from "effect/Stream"
+import * as internal from "./internal/multipart.js"
 
 /**
  * @since 1.0.0
- * @category Constructors
+ * @category constructors
  */
-export const stream = (source: Request): Stream.Stream<Multipart.Part, Multipart.MultipartError> =>
-  BunStream.fromReadableStream({
-    evaluate: () => source.body!,
-    onError: (cause) => Multipart.MultipartError.fromReason("InternalError", cause)
-  }).pipe(
-    Stream.pipeThroughChannel(Multipart.makeChannel(Object.fromEntries(source.headers)))
-  )
+export const stream: (source: Request) => Stream.Stream<Multipart.Part, Multipart.MultipartError> = internal.stream
 
 /**
  * @since 1.0.0
- * @category Constructors
+ * @category constructors
  */
-export const persisted = (
+export const persisted: (
   source: Request
-): Effect.Effect<
-  Multipart.Persisted,
-  Multipart.MultipartError,
-  | FileSystem
-  | Path
-  | Scope.Scope
-> => Multipart.toPersisted(stream(source))
+) => Effect.Effect<Multipart.Persisted, Multipart.MultipartError, FileSystem.FileSystem | Path.Path | Scope.Scope> =
+  internal.persisted

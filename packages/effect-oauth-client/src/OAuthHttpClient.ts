@@ -92,7 +92,7 @@ export const make = ({
 		const tokenSchema = Schema.Struct({
 			access_token: Schema.String,
 			token_type: Schema.String,
-			expires_in: Schema.Number,
+			expires_in: Schema.Finite,
 		})
 
 		const isTransientStatus = (status: number) => status === 429 || status >= 500

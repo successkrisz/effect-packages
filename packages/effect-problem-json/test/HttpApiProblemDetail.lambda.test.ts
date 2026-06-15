@@ -65,7 +65,7 @@ function createApiGwV2Event(
 			routeKey: `${method} ${path}`,
 			stage: '$default',
 			time: '01/Jan/2025:00:00:00 +0000',
-			timeEpoch: Date.now(),
+			timeEpoch: 1_735_689_600_000,
 		},
 		body: bodyStr,
 		isBase64Encoded: false,
@@ -85,7 +85,7 @@ function parseResult(result: APIGatewayProxyResultV2): ParsedResult {
 	const rawBody = result.body ?? ''
 	let body: Record<string, unknown> | null = null
 	try {
-		if (rawBody) body = JSON.parse(rawBody) as Record<string, unknown>
+		if (rawBody.length > 0) body = JSON.parse(rawBody) as Record<string, unknown>
 	} catch {}
 	return {
 		statusCode: result.statusCode ?? 200,
@@ -101,13 +101,13 @@ function parseResult(result: APIGatewayProxyResultV2): ParsedResult {
 // ---------------------------------------------------------------------------
 
 class Item extends Schema.Class<Item>('Item')({
-	id: Schema.Number,
+	id: Schema.Finite,
 	name: Schema.String,
 }) {}
 
 class CreateItem extends Schema.Class<CreateItem>('CreateItem')({
 	name: Schema.String,
-	quantity: Schema.Number,
+	quantity: Schema.Finite,
 }) {}
 
 class JsonConflictPayload extends Schema.Class<JsonConflictPayload>('JsonConflictPayload')({
@@ -117,7 +117,7 @@ class JsonConflictPayload extends Schema.Class<JsonConflictPayload>('JsonConflic
 const itemsGroup = HttpApiGroup.make('items')
 	.add(
 		HttpApiEndpoint.get('getItem', '/items/:id', {
-			params: { id: Schema.NumberFromString },
+			params: { id: Schema.FiniteFromString },
 			success: Item,
 			error: HttpApiProblemDetail.NotFound,
 		}),
@@ -175,193 +175,222 @@ const handlerWithoutMiddleware = LambdaHandler.fromHttpApi(ApiLive)
 // Tests
 // ---------------------------------------------------------------------------
 
-async function invoke(
+function invoke(
 	handler: ReturnType<typeof LambdaHandler.fromHttpApi>,
 	method: string,
 	path: string,
 	body?: unknown,
-): Promise<ParsedResult> {
+): Effect.Effect<ParsedResult> {
 	const event = createApiGwV2Event(method, path, body)
-	const raw = (await handler(event, mockLambdaContext)) as APIGatewayProxyResultV2
-	return parseResult(raw)
+	return Effect.promise(
+		() => handler(event, mockLambdaContext) as Promise<APIGatewayProxyResultV2>,
+	).pipe(Effect.map(parseResult))
 }
 
 describe('@effect-aws/lambda integration', () => {
 	describe('with HttpApiProblemDetail middleware', () => {
-		it('returns normal JSON for a successful POST', async () => {
-			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {
-				name: 'Widget',
-				quantity: 5,
-			})
+		it.effect('returns normal JSON for a successful POST', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'POST', '/items', {
+					name: 'Widget',
+					quantity: 5,
+				})
 
-			expect(result.statusCode).toBe(201)
-			expect(result.body).toMatchObject({ id: 1, name: 'Widget' })
-		})
+				expect(result.statusCode).toBe(201)
+				expect(result.body).toMatchObject({ id: 1, name: 'Widget' })
+			}),
+		)
 
-		it('returns problem+json for a declared NotFound error', async () => {
-			const result = await invoke(handlerWithMiddleware, 'GET', '/items/999')
+		it.effect('returns problem+json for a declared NotFound error', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'GET', '/items/999')
 
-			expect(result.statusCode).toBe(404)
-			expect(result.contentType).toContain('application/problem+json')
-			expect(result.body).toMatchObject({
-				status: 404,
-				title: 'Not Found',
-				detail: 'Item with id 999 was not found',
-			})
-		})
+				expect(result.statusCode).toBe(404)
+				expect(result.contentType).toContain('application/problem+json')
+				expect(result.body).toMatchObject({
+					status: 404,
+					title: 'Not Found',
+					detail: 'Item with id 999 was not found',
+				})
+			}),
+		)
 
-		it('returns problem+json with RFC 9457 fields for declared errors', async () => {
-			const result = await invoke(handlerWithMiddleware, 'GET', '/items/42')
+		it.effect('returns problem+json with RFC 9457 fields for declared errors', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'GET', '/items/42')
 
-			expect(result.statusCode).toBe(404)
-			expect(result.body).toHaveProperty('type')
-			expect(result.body).toHaveProperty('title')
-			expect(result.body).toHaveProperty('status')
-			expect(result.body).toHaveProperty('detail')
-		})
+				expect(result.statusCode).toBe(404)
+				expect(result.body).toHaveProperty('type')
+				expect(result.body).toHaveProperty('title')
+				expect(result.body).toHaveProperty('status')
+				expect(result.body).toHaveProperty('detail')
+			}),
+		)
 
-		it('catches unhandled defects and returns 500 problem+json', async () => {
-			const result = await invoke(handlerWithMiddleware, 'GET', '/items/crash')
+		it.effect('catches unhandled defects and returns 500 problem+json', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'GET', '/items/crash')
 
-			expect(result.statusCode).toBe(500)
-			expect(result.contentType).toContain('application/problem+json')
-			expect(result.body).toMatchObject({
-				status: 500,
-				title: 'Internal Server Error',
-				detail: 'An unexpected error occurred',
-			})
-			expect(result.rawBody).not.toContain('Unexpected failure')
-			expect(result.rawBody).not.toContain('stack')
-		})
+				expect(result.statusCode).toBe(500)
+				expect(result.contentType).toContain('application/problem+json')
+				expect(result.body).toMatchObject({
+					status: 500,
+					title: 'Internal Server Error',
+					detail: 'An unexpected error occurred',
+				})
+				expect(result.rawBody).not.toContain('Unexpected failure')
+				expect(result.rawBody).not.toContain('stack')
+			}),
+		)
 
-		it('rewrites schema validation failures to 400 problem+json', async () => {
-			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {
-				bad: 'payload',
-			})
+		it.effect('rewrites schema validation failures to 400 problem+json', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'POST', '/items', {
+					bad: 'payload',
+				})
 
-			expect(result.statusCode).toBe(400)
-			expect(result.contentType).toContain('application/problem+json')
-			expect(result.body).toMatchObject({
-				type: '/problems/schema-error',
-				title: 'Bad Request',
-				status: 400,
-				detail: 'The request did not match the expected schema',
-			})
-		})
+				expect(result.statusCode).toBe(400)
+				expect(result.contentType).toContain('application/problem+json')
+				expect(result.body).toMatchObject({
+					type: '/problems/schema-error',
+					title: 'Bad Request',
+					status: 400,
+					detail: 'The request did not match the expected schema',
+				})
+			}),
+		)
 
-		it('rewrites missing required fields to 400 problem+json', async () => {
-			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {})
+		it.effect('rewrites missing required fields to 400 problem+json', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'POST', '/items', {})
 
-			expect(result.statusCode).toBe(400)
-			expect(result.contentType).toContain('application/problem+json')
-			expect(result.body).toMatchObject({
-				status: 400,
-				title: 'Bad Request',
-			})
-		})
+				expect(result.statusCode).toBe(400)
+				expect(result.contentType).toContain('application/problem+json')
+				expect(result.body).toMatchObject({
+					status: 400,
+					title: 'Bad Request',
+				})
+			}),
+		)
 
-		it('uses custom typePrefix when configured', async () => {
-			const customHandler = LambdaHandler.fromHttpApi(
-				Layer.mergeAll(ApiLive, HttpApiProblemDetail.middleware({ typePrefix: '/api/errors/' })),
-			)
-			const result = await invoke(customHandler, 'GET', '/items/crash')
+		it.effect('uses custom typePrefix when configured', () =>
+			Effect.gen(function* () {
+				const customHandler = LambdaHandler.fromHttpApi(
+					Layer.mergeAll(ApiLive, HttpApiProblemDetail.middleware({ typePrefix: '/api/errors/' })),
+				)
+				const result = yield* invoke(customHandler, 'GET', '/items/crash')
 
-			expect(result.statusCode).toBe(500)
-			expect(result.body).toMatchObject({
-				type: '/api/errors/internal-server-error',
-			})
-		})
+				expect(result.statusCode).toBe(500)
+				expect(result.body).toMatchObject({
+					type: '/api/errors/internal-server-error',
+				})
+			}),
+		)
 
-		it('does not alter successful responses', async () => {
-			const result = await invoke(handlerWithMiddleware, 'POST', '/items', {
-				name: 'Test',
-				quantity: 1,
-			})
+		it.effect('does not alter successful responses', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'POST', '/items', {
+					name: 'Test',
+					quantity: 1,
+				})
 
-			expect(result.statusCode).toBe(201)
-			expect(result.contentType).not.toContain('application/problem+json')
-		})
+				expect(result.statusCode).toBe(201)
+				expect(result.contentType).not.toContain('application/problem+json')
+			}),
+		)
 
-		it('does not relabel non-problem JSON errors as problem+json', async () => {
-			const result = await invoke(handlerWithMiddleware, 'GET', '/items/json-conflict')
+		it.effect('does not relabel non-problem JSON errors as problem+json', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithMiddleware, 'GET', '/items/json-conflict')
 
-			expect(result.statusCode).toBe(409)
-			expect(result.contentType ?? '').toContain('application/json')
-			expect(result.contentType ?? '').not.toContain('application/problem+json')
-			expect(result.body).toMatchObject({
-				message: 'Version conflict',
-			})
-		})
+				expect(result.statusCode).toBe(409)
+				expect(result.contentType ?? '').toContain('application/json')
+				expect(result.contentType ?? '').not.toContain('application/problem+json')
+				expect(result.body).toMatchObject({
+					message: 'Version conflict',
+				})
+			}),
+		)
 	})
 
 	describe('without HttpApiProblemDetail middleware (baseline)', () => {
-		it('returns normal JSON for a successful POST', async () => {
-			const result = await invoke(handlerWithoutMiddleware, 'POST', '/items', {
-				name: 'Widget',
-				quantity: 5,
-			})
+		it.effect('returns normal JSON for a successful POST', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithoutMiddleware, 'POST', '/items', {
+					name: 'Widget',
+					quantity: 5,
+				})
 
-			expect(result.statusCode).toBe(201)
-			expect(result.body).toMatchObject({ id: 1, name: 'Widget' })
-		})
+				expect(result.statusCode).toBe(201)
+				expect(result.body).toMatchObject({ id: 1, name: 'Widget' })
+			}),
+		)
 
-		it('still returns the RFC 9457 body for declared errors without middleware', async () => {
-			const result = await invoke(handlerWithoutMiddleware, 'GET', '/items/999')
+		it.effect('still returns the RFC 9457 body for declared errors without middleware', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithoutMiddleware, 'GET', '/items/999')
 
-			expect(result.statusCode).toBe(404)
-			expect(result.contentType ?? '').toContain('application/json')
-			expect(result.body).toMatchObject({
-				type: 'about:blank',
-				title: 'Not Found',
-				status: 404,
-				detail: 'Item with id 999 was not found',
-			})
-		})
+				expect(result.statusCode).toBe(404)
+				expect(result.contentType ?? '').toContain('application/json')
+				expect(result.body).toMatchObject({
+					type: 'about:blank',
+					title: 'Not Found',
+					status: 404,
+					detail: 'Item with id 999 was not found',
+				})
+			}),
+		)
 
-		it('does NOT catch defects as problem+json (no middleware safety net)', async () => {
-			const result = await invoke(handlerWithoutMiddleware, 'GET', '/items/crash')
+		it.effect('does NOT catch defects as problem+json (no middleware safety net)', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithoutMiddleware, 'GET', '/items/crash')
 
-			expect(result.statusCode).toBe(500)
-			expect(result.contentType ?? '').not.toContain('application/problem+json')
-		})
+				expect(result.statusCode).toBe(500)
+				expect(result.contentType ?? '').not.toContain('application/problem+json')
+			}),
+		)
 
-		it('leaves validation failures in the framework default 400 form', async () => {
-			const result = await invoke(handlerWithoutMiddleware, 'POST', '/items', {
-				bad: 'payload',
-			})
+		it.effect('leaves validation failures in the framework default 400 form', () =>
+			Effect.gen(function* () {
+				const result = yield* invoke(handlerWithoutMiddleware, 'POST', '/items', {
+					bad: 'payload',
+				})
 
-			expect(result.statusCode).toBe(400)
-			expect(result.contentType ?? '').not.toContain('application/problem+json')
-		})
+				expect(result.statusCode).toBe(400)
+				expect(result.contentType ?? '').not.toContain('application/problem+json')
+			}),
+		)
 	})
 
 	describe('middleware value comparison (with vs without)', () => {
-		it('middleware adds structured defect handling and validation rewriting', async () => {
-			const withMw = await invoke(handlerWithMiddleware, 'GET', '/items/crash')
-			const withoutMw = await invoke(handlerWithoutMiddleware, 'GET', '/items/crash')
-			const withValidation = await invoke(handlerWithMiddleware, 'POST', '/items', {
-				bad: 'payload',
-			})
-			const withoutValidation = await invoke(handlerWithoutMiddleware, 'POST', '/items', {
-				bad: 'payload',
-			})
+		it.effect('middleware adds structured defect handling and validation rewriting', () =>
+			Effect.gen(function* () {
+				const withMw = yield* invoke(handlerWithMiddleware, 'GET', '/items/crash')
+				const withoutMw = yield* invoke(handlerWithoutMiddleware, 'GET', '/items/crash')
+				const withValidation = yield* invoke(handlerWithMiddleware, 'POST', '/items', {
+					bad: 'payload',
+				})
+				const withoutValidation = yield* invoke(handlerWithoutMiddleware, 'POST', '/items', {
+					bad: 'payload',
+				})
 
-			expect(withMw.statusCode).toBe(500)
-			expect(withoutMw.statusCode).toBe(500)
-			expect(withValidation.statusCode).toBe(400)
-			expect(withoutValidation.statusCode).toBe(400)
+				expect(withMw.statusCode).toBe(500)
+				expect(withoutMw.statusCode).toBe(500)
+				expect(withValidation.statusCode).toBe(400)
+				expect(withoutValidation.statusCode).toBe(400)
 
-			expect(withMw.body).toMatchObject({
-				type: expect.any(String),
-				title: 'Internal Server Error',
-				status: 500,
-				detail: 'An unexpected error occurred',
-			})
-			expect(withValidation.contentType).toContain('application/problem+json')
-			if (withoutMw.body) {
-				expect(withoutMw.body).not.toHaveProperty('title')
-			}
-			expect(withoutValidation.contentType ?? '').not.toContain('application/problem+json')
-		})
+				expect(withMw.body).toMatchObject({
+					type: expect.any(String),
+					title: 'Internal Server Error',
+					status: 500,
+					detail: 'An unexpected error occurred',
+				})
+				expect(withValidation.contentType).toContain('application/problem+json')
+				if (withoutMw.body !== null) {
+					expect(withoutMw.body).not.toHaveProperty('title')
+				}
+				expect(withoutValidation.contentType ?? '').not.toContain('application/problem+json')
+			}),
+		)
 	})
 })

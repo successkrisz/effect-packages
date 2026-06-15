@@ -299,18 +299,13 @@ const serverError = (options?: ServerErrorOptions): Effect.Effect<HttpResponse> 
 	problemJsonResponse(options?.statusCode ?? 500, options?.headers, options)
 
 export {
-	// -- 2xx Success responses --
-	ok,
-	created,
-	noContent,
-	// -- 3xx Redirection responses --
-	redirect,
-	// -- 4xx Client Error responses --
 	badRequestFromSchemaError,
-	problem,
 	clientError,
-	// -- 5xx Server Error responses --
-	serverError,
-	// -- Common --
+	created,
 	jsonResponse,
+	noContent,
+	ok,
+	problem,
+	redirect,
+	serverError,
 }

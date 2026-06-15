@@ -6,7 +6,7 @@
  */
 import { Effect, ErrorReporter, Option, Schema, SchemaIssue } from 'effect'
 import { HttpRouter, HttpServerRespondable, HttpServerResponse } from 'effect/unstable/http'
-import { HttpApiSchema } from 'effect/unstable/httpapi'
+import { HttpApiError, HttpApiSchema } from 'effect/unstable/httpapi'
 
 export const statusTitles = {
 	400: 'Bad Request',
@@ -84,7 +84,7 @@ const ValidationIssue = Schema.Struct({
 const ProblemDetailWireShape = Schema.Struct({
 	type: Schema.String,
 	title: Schema.String,
-	status: Schema.Number,
+	status: Schema.Finite,
 	detail: Schema.String,
 })
 
@@ -224,9 +224,31 @@ function normalizeValidationDescription(description: unknown): string {
 	return cleaned.length > 0 ? cleaned.join(' | ') : 'Bad Request'
 }
 
+function hasRequestValidation(operation: Record<string, unknown>): boolean {
+	if (operation.requestBody !== undefined) {
+		return true
+	}
+	const parameters = operation.parameters
+	return Array.isArray(parameters) && parameters.length > 0
+}
+
 function isProblemDetailJsonBody(status: number, body: Uint8Array): boolean {
 	const decoded = decodeProblemDetailWireShape(textDecoder.decode(body))
 	return Option.isSome(decoded) && decoded.value.status === status
+}
+
+function isValidationProblemError(
+	error: unknown,
+): error is Schema.SchemaError | HttpApiError.HttpApiSchemaError {
+	return Schema.isSchemaError(error) || HttpApiError.HttpApiSchemaError.is(error)
+}
+
+function validationResponseFromError(
+	error: Schema.SchemaError | HttpApiError.HttpApiSchemaError,
+	typePrefix: string,
+): HttpServerResponse.HttpServerResponse {
+	const schemaError = Schema.isSchemaError(error) ? error : error.cause
+	return ValidationProblem.toResponse(schemaError, { typePrefix })
 }
 
 export function ProblemError<Tag extends string, Status extends StatusCode>(
@@ -352,11 +374,14 @@ export function middleware(options?: { readonly typePrefix?: string }) {
 	const prefix = options?.typePrefix ?? '/problems/'
 	const safeServerError = makeFallbackResponse(500, prefix)
 
-	return HttpRouter.middleware<{ provides: never; handles: Schema.SchemaError }>()(
+	return HttpRouter.middleware<{
+		provides: never
+		handles: Schema.SchemaError | HttpApiError.HttpApiSchemaError
+	}>()(
 		(httpEffect) =>
 			httpEffect.pipe(
-				Effect.catchIf(Schema.isSchemaError, (error) =>
-					Effect.succeed(ValidationProblem.toResponse(error, { typePrefix: prefix })),
+				Effect.catchIf(isValidationProblemError, (error) =>
+					Effect.succeed(validationResponseFromError(error, prefix)),
 				),
 				Effect.map((response) => {
 					if (
@@ -394,8 +419,8 @@ export function middleware(options?: { readonly typePrefix?: string }) {
 					return response
 				}),
 				Effect.catchDefect((defect) => {
-					if (Schema.isSchemaError(defect)) {
-						return Effect.succeed(ValidationProblem.toResponse(defect, { typePrefix: prefix }))
+					if (isValidationProblemError(defect)) {
+						return Effect.succeed(validationResponseFromError(defect, prefix))
 					}
 
 					return Effect.flatMap(Effect.logError(defect), () => Effect.succeed(safeServerError))
@@ -446,7 +471,16 @@ export function openApiTransform(spec: OpenApiSpec): OpenApiSpec {
 		for (const operation of Object.values(path)) {
 			const responses = operation.responses as Record<string, Record<string, unknown>> | undefined
 			const response = responses?.['400']
-			if (response === undefined) continue
+			if (response === undefined) {
+				if (!hasRequestValidation(operation)) continue
+				const nextResponses = responses ?? {}
+				operation.responses = nextResponses
+				nextResponses['400'] = {
+					description: 'Bad Request',
+					content: rewriteValidationProblemContent(undefined),
+				}
+				continue
+			}
 
 			const content = response.content as Record<string, unknown> | undefined
 			response.content = rewriteValidationProblemContent(content)

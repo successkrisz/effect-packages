@@ -1,31 +1,29 @@
 import { describe, it } from "@effect/vitest"
 import { assertTrue, deepStrictEqual } from "@effect/vitest/utils"
-import { Array, Context, Effect, ExecutionPlan, Exit, Layer, Stream } from "effect"
+import { Array, Effect, ExecutionPlan, Exit, Layer, Stream } from "effect"
 
 describe("ExecutionPlan", () => {
-  class Service extends Context.Service<Service>()("Service", {
-    make: Effect.succeed({
+  class Service extends Effect.Service<Service>()("Service", {
+    succeed: {
       stream: Stream.fail("A") as Stream.Stream<number, string>
-    })
+    }
   }) {
-    static A = Layer.effect(this, this.make)
-
     static B = Layer.succeed(
       Service,
-      Service.of({
+      new Service({
         stream: Stream.fail("B")
       })
     )
     static C = Layer.succeed(
       Service,
-      Service.of({
+      new Service({
         stream: Stream.make(1, 2, 3)
       })
     )
   }
 
   const Plan = ExecutionPlan.make({
-    provide: Service.A
+    provide: Service.Default
   }, {
     provide: Service.B
   }, {
@@ -35,7 +33,7 @@ describe("ExecutionPlan", () => {
   const PlanPartial = ExecutionPlan.make({
     provide: Layer.succeed(
       Service,
-      Service.of({
+      new Service({
         stream: Stream.make(1, 2, 3).pipe(
           Stream.concat(Stream.fail("Partial"))
         )
@@ -48,14 +46,9 @@ describe("ExecutionPlan", () => {
   describe("Stream.withExecutionPlan", () => {
     it.effect("fallback", () =>
       Effect.gen(function*() {
-        const stream = Stream.unwrap(Effect.map(Service.asEffect(), (_) => _.stream))
+        const stream = Stream.unwrap(Effect.map(Service, (_) => _.stream))
         const items = Array.empty<number>()
-        const metadata = Array.empty<ExecutionPlan.Metadata>()
         const result = yield* stream.pipe(
-          Stream.onStart(ExecutionPlan.CurrentMetadata.use((meta) => {
-            metadata.push(meta)
-            return Effect.void
-          })),
           Stream.withExecutionPlan(Plan),
           Stream.runForEach((n) =>
             Effect.sync(() => {
@@ -65,22 +58,12 @@ describe("ExecutionPlan", () => {
           Effect.exit
         )
         deepStrictEqual(items, [1, 2, 3])
-        deepStrictEqual(metadata, [{
-          attempt: 1,
-          stepIndex: 0
-        }, {
-          attempt: 2,
-          stepIndex: 1
-        }, {
-          attempt: 3,
-          stepIndex: 2
-        }])
         assertTrue(Exit.isSuccess(result))
       }))
 
     it.effect("fallback from partial stream", () =>
       Effect.gen(function*() {
-        const stream = Stream.unwrap(Effect.map(Service.asEffect(), (_) => _.stream))
+        const stream = Stream.unwrap(Effect.map(Service, (_) => _.stream))
         const items = Array.empty<number>()
         const result = yield* stream.pipe(
           Stream.withExecutionPlan(PlanPartial),
@@ -97,7 +80,7 @@ describe("ExecutionPlan", () => {
 
     it.effect("preventFallbackOnPartialStream", () =>
       Effect.gen(function*() {
-        const stream = Stream.unwrap(Effect.map(Service.asEffect(), (_) => _.stream))
+        const stream = Stream.unwrap(Effect.map(Service, (_) => _.stream))
         const items = Array.empty<number>()
         const result = yield* stream.pipe(
           Stream.withExecutionPlan(PlanPartial, {

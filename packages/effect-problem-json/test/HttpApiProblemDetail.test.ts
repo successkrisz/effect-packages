@@ -12,7 +12,7 @@ function decodeBody(response: HttpServerResponse.HttpServerResponse): Record<str
 
 const TestSchema = Schema.Struct({
 	name: Schema.String,
-	age: Schema.Number,
+	age: Schema.Finite,
 })
 
 function getSchemaError(input: unknown): Schema.SchemaError {
@@ -25,7 +25,7 @@ describe('ProblemError', () => {
 			'TodoNotFound',
 			404,
 		)({
-			todoId: Schema.Number,
+			todoId: Schema.Finite,
 		})
 		const error = new TodoNotFound({
 			detail: 'Todo 42 was not found',
@@ -54,7 +54,7 @@ describe('ProblemError', () => {
 			'TodoNotFound',
 			404,
 		)({
-			todoId: Schema.Number,
+			todoId: Schema.Finite,
 		})
 		const error = new TodoNotFound({
 			detail: 'Todo 42 was not found',
@@ -163,13 +163,13 @@ describe('middleware', () => {
 
 describe('openApiTransform', () => {
 	class Item extends Schema.Class<Item>('Item')({
-		id: Schema.Number,
+		id: Schema.Finite,
 		name: Schema.String,
 	}) {}
 
 	class CreateItem extends Schema.Class<CreateItem>('CreateItem')({
 		name: Schema.String,
-		quantity: Schema.Number,
+		quantity: Schema.Finite,
 	}) {}
 
 	const api = HttpApi.make('OpenApiTestApi')
@@ -199,6 +199,29 @@ describe('openApiTransform', () => {
 		)
 		expect(schemas.HttpApiProblemDetailValidationError).toBeDefined()
 		expect(schemas.effect_HttpApiSchemaError).toBeUndefined()
+	})
+
+	it('generated OpenAPI adds problem+json for parameter validation errors', () => {
+		const paramApi = HttpApi.make('OpenApiParamTestApi')
+			.add(
+				HttpApiGroup.make('items').add(
+					HttpApiEndpoint.get('getItem', '/items/:id', {
+						params: { id: Schema.FiniteFromString },
+						success: Item,
+					}),
+				),
+			)
+			.annotate(OpenApi.Transform, HttpApiProblemDetail.openApiTransform)
+		const spec = OpenApi.fromApi(paramApi)
+		const paths = spec.paths as Record<string, Record<string, Record<string, unknown>>>
+		const responses = paths['/items/{id}'].get.responses as Record<string, Record<string, unknown>>
+		const response400 = responses['400']
+		const content = response400.content as Record<string, Record<string, unknown>>
+
+		expect(content['application/problem+json']).toBeDefined()
+		expect((content['application/problem+json'].schema as Record<string, string>).$ref).toBe(
+			'#/components/schemas/HttpApiProblemDetailValidationError',
+		)
 	})
 
 	it('preserves user-declared 400 schemas when rewriting validation responses', () => {

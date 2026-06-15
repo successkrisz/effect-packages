@@ -1,25 +1,25 @@
 /**
  * @since 1.0.0
  */
+import type { HttpClient } from "@effect/platform/HttpClient"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { dual } from "effect/Function"
-import type { HttpClient } from "effect/unstable/http/HttpClient"
 
 /**
  * @since 1.0.0
- * @category services
+ * @category Context
  */
-export class OpenRouterConfig extends Context.Service<
+export class OpenRouterConfig extends Context.Tag("@effect/ai-openrouter/OpenRouterConfig")<
   OpenRouterConfig,
   OpenRouterConfig.Service
->()("@effect/ai-openrouter/OpenRouterConfig") {
+>() {
   /**
    * @since 1.0.0
    */
   static readonly getOrUndefined: Effect.Effect<typeof OpenRouterConfig.Service | undefined> = Effect.map(
     Effect.context<never>(),
-    (services) => services.mapUnsafe.get(OpenRouterConfig.key)
+    (context) => context.unsafeMap.get(OpenRouterConfig.key)
   )
 }
 
@@ -29,16 +29,16 @@ export class OpenRouterConfig extends Context.Service<
 export declare namespace OpenRouterConfig {
   /**
    * @since 1.0.0
-   * @category models
+   * @category Models
    */
   export interface Service {
-    readonly transformClient?: ((client: HttpClient) => HttpClient) | undefined
+    readonly transformClient?: (client: HttpClient) => HttpClient
   }
 }
 
 /**
  * @since 1.0.0
- * @category configuration
+ * @category Configuration
  */
 export const withClientTransform: {
   (transform: (client: HttpClient) => HttpClient): <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>

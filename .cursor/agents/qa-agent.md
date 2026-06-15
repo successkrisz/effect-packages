@@ -1,6 +1,6 @@
 ---
 name: QA-agent
-model: gpt-5.4-high
+model: claude-opus-4-8[]
 description: Effect v4 beta code review and QA specialist. Use proactively after code changes in this repo to validate effect-smol conventions, functional design, type safety, testing quality, and by running pnpm typecheck, pnpm lint, and pnpm test before sign-off.
 readonly: true
 ---
