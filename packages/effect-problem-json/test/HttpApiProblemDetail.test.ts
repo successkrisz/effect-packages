@@ -12,7 +12,7 @@ function decodeBody(response: HttpServerResponse.HttpServerResponse): Record<str
 
 const TestSchema = Schema.Struct({
 	name: Schema.String,
-	age: Schema.Number,
+	age: Schema.Finite,
 })
 
 function getSchemaError(input: unknown): Schema.SchemaError {
@@ -25,7 +25,7 @@ describe('ProblemError', () => {
 			'TodoNotFound',
 			404,
 		)({
-			todoId: Schema.Number,
+			todoId: Schema.Finite,
 		})
 		const error = new TodoNotFound({
 			detail: 'Todo 42 was not found',
@@ -54,7 +54,7 @@ describe('ProblemError', () => {
 			'TodoNotFound',
 			404,
 		)({
-			todoId: Schema.Number,
+			todoId: Schema.Finite,
 		})
 		const error = new TodoNotFound({
 			detail: 'Todo 42 was not found',
@@ -163,13 +163,13 @@ describe('middleware', () => {
 
 describe('openApiTransform', () => {
 	class Item extends Schema.Class<Item>('Item')({
-		id: Schema.Number,
+		id: Schema.Finite,
 		name: Schema.String,
 	}) {}
 
 	class CreateItem extends Schema.Class<CreateItem>('CreateItem')({
 		name: Schema.String,
-		quantity: Schema.Number,
+		quantity: Schema.Finite,
 	}) {}
 
 	const api = HttpApi.make('OpenApiTestApi')
@@ -206,7 +206,7 @@ describe('openApiTransform', () => {
 			.add(
 				HttpApiGroup.make('items').add(
 					HttpApiEndpoint.get('getItem', '/items/:id', {
-						params: { id: Schema.NumberFromString },
+						params: { id: Schema.FiniteFromString },
 						success: Item,
 					}),
 				),

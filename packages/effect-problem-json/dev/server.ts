@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- NodeHttpServer.layer needs the Node createServer constructor for this dev entrypoint
 import { createServer } from 'node:http'
 import { NodeRuntime } from '@effect/platform-node'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
@@ -19,7 +20,7 @@ import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
 // ---------------------------------------------------------------------------
 
 class Todo extends Schema.Class<Todo>('Todo')({
-	id: Schema.Number,
+	id: Schema.Finite,
 	title: Schema.String,
 	completed: Schema.Boolean,
 }) {}
@@ -41,7 +42,7 @@ const DuplicateTodoTitle = HttpApiProblemDetail.ProblemError(
 	'DuplicateTodoTitle',
 	422,
 )({
-	existingTodoId: Schema.Number,
+	existingTodoId: Schema.Finite,
 })
 
 // ---------------------------------------------------------------------------
@@ -66,7 +67,7 @@ class TodoRepo extends Context.Service<
 			id: number,
 		) => Effect.Effect<void, InstanceType<typeof HttpApiProblemDetail.NotFound>>
 	}
->()('TodoRepo') {}
+>()('@ballatech/effect-problem-json/dev/server/TodoRepo') {}
 
 const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 	let nextId = 1
@@ -80,17 +81,17 @@ const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 		getById: (id: number) =>
 			Effect.suspend(() => {
 				const todo = todos.get(id)
-				return todo
+				return todo !== undefined
 					? Effect.succeed(todo)
 					: Effect.fail(
 							new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
 						)
 			}),
 
-		create: (input: typeof CreateTodo.Type) =>
+		create: (input: CreateTodo) =>
 			Effect.suspend(() => {
 				const duplicate = [...todos.values()].find((t) => t.title === input.title)
-				if (duplicate)
+				if (duplicate !== undefined)
 					return Effect.fail(
 						new DuplicateTodoTitle({
 							detail: `A todo with the title '${input.title}' already exists`,
@@ -103,10 +104,10 @@ const TodoRepoLive = Layer.sync(TodoRepo)(() => {
 				return Effect.succeed(todo)
 			}),
 
-		update: (id: number, input: typeof UpdateTodo.Type) =>
+		update: (id: number, input: UpdateTodo) =>
 			Effect.suspend(() => {
 				const existing = todos.get(id)
-				if (!existing)
+				if (existing === undefined)
 					return Effect.fail(
 						new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
 					)
@@ -143,7 +144,7 @@ const todosGroup = HttpApiGroup.make('todos')
 	)
 	.add(
 		HttpApiEndpoint.get('getTodo', '/todos/:id', {
-			params: { id: Schema.NumberFromString },
+			params: { id: Schema.FiniteFromString },
 			success: Todo,
 			error: HttpApiProblemDetail.NotFound,
 		}),
@@ -157,7 +158,7 @@ const todosGroup = HttpApiGroup.make('todos')
 	)
 	.add(
 		HttpApiEndpoint.put('updateTodo', '/todos/:id', {
-			params: { id: Schema.NumberFromString },
+			params: { id: Schema.FiniteFromString },
 			payload: UpdateTodo,
 			success: Todo,
 			error: HttpApiProblemDetail.NotFound,
@@ -165,7 +166,7 @@ const todosGroup = HttpApiGroup.make('todos')
 	)
 	.add(
 		HttpApiEndpoint.delete('deleteTodo', '/todos/:id', {
-			params: { id: Schema.NumberFromString },
+			params: { id: Schema.FiniteFromString },
 			error: HttpApiProblemDetail.NotFound,
 		}),
 	)
@@ -197,7 +198,7 @@ const TodosLive = HttpApiBuilder.group(api, 'todos', (handlers) =>
 
 const ContactForm = Schema.Struct({
 	email: Schema.String.check(Schema.isIncludes('@')),
-	age: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+	age: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
 	name: Schema.String.check(Schema.isMinLength(1)),
 })
 
@@ -235,8 +236,7 @@ const AppLive = HttpRouter.serve(
 		SwaggerLive,
 		ManualValidateRoute,
 		MiddlewareValidateRoute,
-		HttpApiProblemDetail.middleware(),
-	),
+	).pipe(Layer.provideMerge(HttpApiProblemDetail.middleware())),
 ).pipe(Layer.provide(ServerLive))
 
 const logStartup = Effect.gen(function* () {

@@ -14,9 +14,9 @@ import { makeToHandler } from './makeToHandler.ts'
  * Export types from aws-lambda for HTTP API (payload format v2)
  */
 export type {
+	APIGatewayProxyHandlerV2 as Handler,
 	AwsAPIGatewayProxyEventV2,
 	AwsAPIGatewayProxyResultV2,
-	APIGatewayProxyHandlerV2 as Handler,
 }
 
 /**

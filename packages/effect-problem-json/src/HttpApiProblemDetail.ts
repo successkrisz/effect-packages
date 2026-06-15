@@ -84,7 +84,7 @@ const ValidationIssue = Schema.Struct({
 const ProblemDetailWireShape = Schema.Struct({
 	type: Schema.String,
 	title: Schema.String,
-	status: Schema.Number,
+	status: Schema.Finite,
 	detail: Schema.String,
 })
 
