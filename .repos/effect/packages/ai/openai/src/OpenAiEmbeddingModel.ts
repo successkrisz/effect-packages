@@ -1,178 +1,227 @@
 /**
- * OpenAI Embedding Model implementation.
- *
- * Provides an EmbeddingModel implementation for OpenAI's embeddings API.
- *
  * @since 1.0.0
  */
+import * as EmbeddingModel from "@effect/ai/EmbeddingModel"
+import * as AiModel from "@effect/ai/Model"
 import * as Context from "effect/Context"
+import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import { dual } from "effect/Function"
 import * as Layer from "effect/Layer"
 import type { Simplify } from "effect/Types"
-import * as AiError from "effect/unstable/ai/AiError"
-import * as EmbeddingModel from "effect/unstable/ai/EmbeddingModel"
-import * as AiModel from "effect/unstable/ai/Model"
-import type * as Generated from "./Generated.ts"
-import { OpenAiClient } from "./OpenAiClient.ts"
+import type * as Generated from "./Generated.js"
+import * as OpenAiClient from "./OpenAiClient.js"
 
 /**
  * @since 1.0.0
- * @category models
+ * @category Models
  */
-export type Model = "text-embedding-ada-002" | "text-embedding-3-small" | "text-embedding-3-large"
+export type Model = typeof Generated.CreateEmbeddingRequestModelEnum.Encoded
+
+// =============================================================================
+// Configuration
+// =============================================================================
 
 /**
- * Service definition for OpenAI embedding model configuration.
- *
  * @since 1.0.0
- * @category services
+ * @category Context
  */
-export class Config extends Context.Service<
+export class Config extends Context.Tag("@effect/ai-openai/OpenAiEmbeddingModel/Config")<
   Config,
-  Simplify<
-    & Partial<
-      Omit<
-        typeof Generated.CreateEmbeddingRequest.Encoded,
-        "input"
+  Config.Service
+>() {
+  /**
+   * @since 1.0.0
+   */
+  static readonly getOrUndefined: Effect.Effect<Config.Service | undefined> = Effect.map(
+    Effect.context<never>(),
+    (context) => context.unsafeMap.get(Config.key)
+  )
+}
+
+/**
+ * @since 1.0.0
+ */
+export declare namespace Config {
+  /**
+   * @since 1.0.
+   * @category Configuration
+   */
+  export interface Service extends
+    Simplify<
+      Partial<
+        Omit<
+          typeof Generated.CreateEmbeddingRequest.Encoded,
+          "input"
+        >
       >
     >
-    & {
-      readonly [x: string]: unknown
+  {}
+
+  /**
+   * @since 1.0.
+   * @category Configuration
+   */
+  export interface Batched extends Omit<Config.Service, "model"> {
+    readonly maxBatchSize?: number
+    readonly cache?: {
+      readonly capacity: number
+      readonly timeToLive: Duration.DurationInput
     }
-  >
->()("@effect/ai-openai/OpenAiEmbeddingModel/Config") {}
+  }
+
+  /**
+   * @since 1.0.
+   * @category Configuration
+   */
+  export interface DataLoader extends Omit<Config.Service, "model"> {
+    readonly window: Duration.DurationInput
+    readonly maxBatchSize?: number
+  }
+}
+
+// =============================================================================
+// OpenAi Embedding Model
+// =============================================================================
 
 /**
  * @since 1.0.0
- * @category constructors
+ * @category Models
  */
 export const model = (
   model: (string & {}) | Model,
-  options: {
-    readonly dimensions: number
-    readonly config?: Omit<typeof Config.Service, "model" | "dimensions">
-  }
-): AiModel.Model<"openai", EmbeddingModel.EmbeddingModel | EmbeddingModel.Dimensions, OpenAiClient> =>
-  AiModel.make(
-    "openai",
-    model,
-    Layer.merge(
-      layer({
-        model,
-        config: {
-          ...options.config,
-          dimensions: options.dimensions
-        }
-      }),
-      Layer.succeed(EmbeddingModel.Dimensions, options.dimensions)
+  { mode, ...config }: Simplify<
+    (
+      | ({ readonly mode: "batched" } & Config.Batched)
+      | ({ readonly mode: "data-loader" } & Config.DataLoader)
     )
+  >
+): AiModel.Model<"openai", EmbeddingModel.EmbeddingModel, OpenAiClient.OpenAiClient> => {
+  return AiModel.make(
+    "openai",
+    mode === "batched"
+      ? layerBatched({ model, config: config as Config.Batched })
+      : layerDataLoader({ model, config: config as Config.DataLoader })
   )
+}
 
 /**
- * Creates an OpenAI embedding model service.
- *
  * @since 1.0.0
- * @category constructors
+ * @category Constructors
  */
-export const make = Effect.fnUntraced(function*({ model, config: providerConfig }: {
+const makeBatched = Effect.fnUntraced(function*(options: {
   readonly model: (string & {}) | Model
-  readonly config?: Omit<typeof Config.Service, "model"> | undefined
-}): Effect.fn.Return<EmbeddingModel.Service, never, OpenAiClient> {
-  const client = yield* OpenAiClient
+  readonly config?: Config.Batched
+}) {
+  const client = yield* OpenAiClient.OpenAiClient
 
-  const makeConfig = Effect.gen(function*() {
-    const services = yield* Effect.context<never>()
-    return { model, ...providerConfig, ...services.mapUnsafe.get(Config.key) }
-  })
+  const { config = {}, model } = options
+  const { cache, maxBatchSize = 2048, ...globalConfig } = config
+
+  const makeRequest = Effect.fnUntraced(
+    function*(input: ReadonlyArray<string>) {
+      const context = yield* Effect.context<never>()
+      const requestConfig = context.unsafeMap.get(Config.key)
+      const request: typeof Generated.CreateEmbeddingRequest.Encoded = {
+        model,
+        ...globalConfig,
+        ...requestConfig,
+        input
+      }
+      return request
+    }
+  )
 
   return yield* EmbeddingModel.make({
-    embedMany: Effect.fnUntraced(function*({ inputs }) {
-      const config = yield* makeConfig
-      const response = yield* client.createEmbedding({ ...config, input: inputs })
-      return yield* mapProviderResponse(inputs.length, response)
+    cache,
+    maxBatchSize,
+    embedMany: Effect.fnUntraced(function*(input) {
+      const request = yield* makeRequest(input)
+      const response = yield* client.createEmbedding(request)
+      return makeResults(response)
     })
   })
 })
 
 /**
- * Creates a layer for the OpenAI embedding model.
- *
  * @since 1.0.0
- * @category layers
+ * @category Constructors
  */
-export const layer = (options: {
+export const makeDataLoader = Effect.fnUntraced(function*(options: {
   readonly model: (string & {}) | Model
-  readonly config?: Omit<typeof Config.Service, "model"> | undefined
-}): Layer.Layer<EmbeddingModel.EmbeddingModel, never, OpenAiClient> =>
-  Layer.effect(EmbeddingModel.EmbeddingModel, make(options))
+  readonly config: Config.DataLoader
+}) {
+  const client = yield* OpenAiClient.OpenAiClient
+  const { config, model } = options
+  const { maxBatchSize = 2048, window, ...globalConfig } = config
+
+  const makeRequest = Effect.fnUntraced(
+    function*(input: ReadonlyArray<string>) {
+      const context = yield* Effect.context<never>()
+      const requestConfig = context.unsafeMap.get(Config.key)
+      const request: typeof Generated.CreateEmbeddingRequest.Encoded = {
+        model,
+        ...globalConfig,
+        ...requestConfig,
+        input
+      }
+      return request
+    }
+  )
+
+  return yield* EmbeddingModel.makeDataLoader({
+    window,
+    maxBatchSize,
+    embedMany: Effect.fnUntraced(function*(input) {
+      const request = yield* makeRequest(input)
+      const response = yield* client.createEmbedding(request)
+      return makeResults(response)
+    })
+  })
+})
 
 /**
- * Provides config overrides for OpenAI embedding model operations.
- *
  * @since 1.0.0
- * @category configuration
+ * @category Layers
+ */
+export const layerBatched = (options: {
+  readonly model: (string & {}) | Model
+  readonly config?: Config.Batched
+}): Layer.Layer<EmbeddingModel.EmbeddingModel, never, OpenAiClient.OpenAiClient> =>
+  Layer.effect(EmbeddingModel.EmbeddingModel, makeBatched(options))
+
+/**
+ * @since 1.0.0
+ * @category Layers
+ */
+export const layerDataLoader = (options: {
+  readonly model: (string & {}) | Model
+  readonly config: Config.DataLoader
+}): Layer.Layer<EmbeddingModel.EmbeddingModel, never, OpenAiClient.OpenAiClient> =>
+  Layer.scoped(EmbeddingModel.EmbeddingModel, makeDataLoader(options))
+
+/**
+ * @since 1.0.0
+ * @category Configuration
  */
 export const withConfigOverride: {
-  (overrides: typeof Config.Service): <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, Exclude<R, Config>>
-  <A, E, R>(self: Effect.Effect<A, E, R>, overrides: typeof Config.Service): Effect.Effect<A, E, Exclude<R, Config>>
+  (config: Config.Service): <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  <A, E, R>(self: Effect.Effect<A, E, R>, config: Config.Service): Effect.Effect<A, E, R>
 } = dual<
-  (
-    overrides: typeof Config.Service
-  ) => <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, Exclude<R, Config>>,
-  <A, E, R>(self: Effect.Effect<A, E, R>, overrides: typeof Config.Service) => Effect.Effect<A, E, Exclude<R, Config>>
+  (config: Config.Service) => <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
+  <A, E, R>(self: Effect.Effect<A, E, R>, config: Config.Service) => Effect.Effect<A, E, R>
 >(2, (self, overrides) =>
   Effect.flatMap(
-    Effect.serviceOption(Config),
-    (config) =>
-      Effect.provideService(self, Config, {
-        ...(config._tag === "Some" ? config.value : {}),
-        ...overrides
-      })
+    Config.getOrUndefined,
+    (config) => Effect.provideService(self, Config, { ...config, ...overrides })
   ))
 
-const mapProviderResponse = (
-  inputLength: number,
-  response: typeof Generated.CreateEmbeddingResponse.Type
-): Effect.Effect<EmbeddingModel.ProviderResponse, AiError.AiError> => {
-  if (response.data.length !== inputLength) {
-    return Effect.fail(
-      invalidOutput("Provider returned " + response.data.length + " embeddings but expected " + inputLength)
-    )
-  }
+// =============================================================================
+// Response Conversion
+// =============================================================================
 
-  const results = new Array<Array<number>>(inputLength)
-  const seen = new Set<number>()
-
-  for (const entry of response.data) {
-    if (!Number.isInteger(entry.index) || entry.index < 0 || entry.index >= inputLength) {
-      return Effect.fail(invalidOutput("Provider returned invalid embedding index: " + entry.index))
-    }
-    if (seen.has(entry.index)) {
-      return Effect.fail(invalidOutput("Provider returned duplicate embedding index: " + entry.index))
-    }
-
-    seen.add(entry.index)
-    results[entry.index] = [...entry.embedding]
-  }
-
-  if (seen.size !== inputLength) {
-    return Effect.fail(
-      invalidOutput("Provider returned embeddings for " + seen.size + " inputs but expected " + inputLength)
-    )
-  }
-
-  return Effect.succeed({
-    results,
-    usage: {
-      inputTokens: response.usage?.prompt_tokens
-    }
-  })
-}
-
-const invalidOutput = (description: string): AiError.AiError =>
-  AiError.make({
-    module: "OpenAiEmbeddingModel",
-    method: "embedMany",
-    reason: new AiError.InvalidOutputError({ description })
-  })
+const makeResults = (response: Generated.CreateEmbeddingResponse): Array<EmbeddingModel.Result> =>
+  response.data.map(({ embedding, index }) => ({
+    embeddings: embedding as Array<number>,
+    index
+  }))

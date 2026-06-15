@@ -1,11 +1,11 @@
 /**
  * @since 1.0.0
  */
-import type { HttpServerRequest } from "effect/unstable/http/HttpServerRequest"
+import type * as ServerRequest from "@effect/platform/HttpServerRequest"
+import * as internal from "./internal/httpServer.js"
 
 /**
+ * @category conversions
  * @since 1.0.0
- * @category Accessors
  */
-export const toBunServerRequest = <T extends string = string>(self: HttpServerRequest): Bun.BunRequest<T> =>
-  (self as any).source
+export const toRequest: (self: ServerRequest.HttpServerRequest) => Request = internal.requestSource
