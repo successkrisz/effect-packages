@@ -1,6 +1,6 @@
 {
 	"name": "@ballatech/effect-oauth-client",
-	"version": "1.0.0-beta.5",
+	"version": "1.0.0-beta.6",
 	"private": false,
 	"license": "MIT",
 	"sideEffects": false,
