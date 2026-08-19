@@ -1,5 +1,11 @@
 # effect-lambda
 
+## 1.0.0-beta.6
+
+### Patch Changes
+
+- [`740724c`](https://github.com/successkrisz/effect-packages/commit/740724c0d2fe2f18438e0b071a8890993bee60f0) Thanks [@successkrisz](https://github.com/successkrisz)! - fix broken HttpApi.schemaQueryParams
+
 ## 1.0.0-beta.5
 
 ### Patch Changes
