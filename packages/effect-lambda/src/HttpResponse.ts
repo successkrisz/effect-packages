@@ -1,4 +1,4 @@
-import { Effect, Schema, SchemaIssue } from 'effect'
+import { Data, Effect, Schema, SchemaIssue } from 'effect'
 import {
 	type ClientErrorStatusCode,
 	type HttpStatusCode,
@@ -33,13 +33,20 @@ type JsonResponseBaseOptions = {
 	headers?: CommonHeaders
 }
 
+type JsonResponseSchema = Schema.Constraint & { readonly EncodingServices: never }
+
+class JsonResponseEncodeError extends Data.TaggedError('JsonResponseEncodeError')<{
+	readonly message: string
+	readonly cause: unknown
+}> {}
+
 /**
  * JSON HTTP Response with schema-based encoding.
  *
- * When a schema is provided, encodes the body via `Schema.encodeEffect(Schema.fromJsonString(schema))`.
+ * When a schema is provided, encodes the body via `Schema.encodeUnknownEffect(Schema.fromJsonString(schema))`.
  * Otherwise falls back to `JSON.stringify`.
  */
-function jsonResponse<S extends Schema.Top>(opts: {
+function jsonResponse<S extends JsonResponseSchema>(opts: {
 	statusCode: HttpStatusCode
 	body: S['Type']
 	schema: S
@@ -51,10 +58,11 @@ function jsonResponse({
 	body,
 	schema,
 	headers = {},
-}: JsonResponseBaseOptions & { schema?: Schema.Any }): Effect.Effect<HttpResponse> {
-	return Schema.encodeEffect(
-		schema !== undefined ? Schema.fromJsonString(schema) : Schema.UnknownFromJsonString,
-	)(body).pipe(
+}: JsonResponseBaseOptions & { schema?: JsonResponseSchema }): Effect.Effect<HttpResponse> {
+	const jsonSchema: Schema.ConstraintEncoder<string, never> =
+		schema !== undefined ? Schema.fromJsonString(schema) : Schema.fromJsonString(Schema.Unknown)
+
+	return Schema.encodeUnknownEffect(jsonSchema)(body).pipe(
 		Effect.map((encodedBody) => ({
 			statusCode,
 			body: encodedBody,
@@ -68,7 +76,11 @@ function jsonResponse({
 			},
 		})),
 		Effect.mapError(
-			(error) => new Error(`[jsonResponse]: Failed to encode body: ${error}`, { cause: error }),
+			(error) =>
+				new JsonResponseEncodeError({
+					message: `[jsonResponse]: Failed to encode body: ${error}`,
+					cause: error,
+				}),
 		),
 		Effect.orDie,
 	)

@@ -22,7 +22,7 @@ export const isJsonContentType = (contentType: string | undefined): boolean => {
 
 export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent | AwsAPIGatewayProxyEventV2>(
 	event: T,
-): Effect.Effect<T & { rawBody?: T['body'] }, Schema.SchemaError> => {
+): Effect.Effect<Omit<T, 'body'> & { body?: unknown; rawBody?: T['body'] }, Schema.SchemaError> => {
 	if (
 		// v1 has null when absent, v2 is undefined when absent
 		event.body != null &&
@@ -31,7 +31,7 @@ export const jsonBodyParser = <T extends AwsAPIGatewayProxyEvent | AwsAPIGateway
 		const { body } = event
 		const decodedBody =
 			event.isBase64Encoded === true ? Buffer.from(body, 'base64').toString() : body
-		return Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(decodedBody).pipe(
+		return Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(decodedBody).pipe(
 			Effect.map((jsonBody) => ({
 				...event,
 				body: jsonBody,

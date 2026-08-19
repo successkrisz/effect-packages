@@ -52,7 +52,7 @@ export const toLambdaHandler = makeToHandler<
 /**
  * Adapt a single-record effect into a batch SQS program that returns a `BatchResponse`.
  *
- * Control concurrency via `Effect.withConcurrency` around the returned effect (defaults to `unbounded`).
+ * Records are processed sequentially by default, matching SQS batch failure semantics.
  *
  * @param effect Effect that processes a single `SQSRecord`.
  * @returns Effect producing a `BatchResponse` compatible with SQS batch handlers.
@@ -68,7 +68,6 @@ export const toLambdaHandler = makeToHandler<
  *
  * export const handler = processRecord.pipe(
  *    recordProcessorAdapter<never>,
- *    Effect.withConcurrency(1),
  *    toLambdaHandler,
  * )();
  * ```
@@ -81,7 +80,6 @@ export const recordProcessorAdapter = <R = SQSRecord, E = never>(
 
 		const effects = Records.map((record) => effect.pipe(Effect.provideService(SQSRecord, record)))
 		const results = yield* Effect.all(effects, {
-			concurrency: 'inherit',
 			mode: 'result',
 		})
 

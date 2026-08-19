@@ -56,7 +56,7 @@ export const schemaPathParams = <S extends Schema.Top>(
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
 	APIGatewayProxyEvent.useSync((e) => e.pathParameters || {}).pipe(
-		Effect.flatMap((pathParameters) => Schema.decodeUnknownEffect(schema)(pathParameters, options)),
+		Effect.flatMap((pathParameters) => Schema.decodeEffect(schema)(pathParameters, options)),
 	)
 
 /**
@@ -68,7 +68,7 @@ export const schemaQueryParams = <S extends Schema.Top>(
 ) =>
 	APIGatewayProxyEvent.useSync((e) => e.queryStringParameters || {}).pipe(
 		Effect.flatMap((queryStringParameters) =>
-			Schema.decodeUnknownEffect(schema)(queryStringParameters, options),
+			Schema.decodeEffect(schema)(queryStringParameters, options),
 		),
 	)
 

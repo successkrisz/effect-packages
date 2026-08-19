@@ -18,8 +18,8 @@
 		"LICENSE"
 	],
 	"scripts": {
-		"typecheck": "tsgo -p tsconfig.json --noEmit",
-		"build": "tsgo -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"build": "tsc -p tsconfig.json",
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {

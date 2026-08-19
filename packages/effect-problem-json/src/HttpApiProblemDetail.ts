@@ -262,27 +262,27 @@ export function ProblemError<Tag extends string, Status extends StatusCode>(
 		}
 		type ProblemShape = Schema.Schema.Type<typeof schema> & ProblemBrand
 
-		const ProblemHttpError = Schema.ErrorClass<ProblemShape, ProblemBrand>(
+		const ProblemHttpError = Schema.Error<ProblemShape, ProblemBrand>(
 			`@ballatech/effect-problem-json/${tag}`,
 		)(schema, {
 			description: tag,
 			httpApiStatus: status,
 		})
-		// biome-ignore lint/suspicious/noExplicitAny: generic schema encoding services stay precise on the returned class, but encodeUnknownSync needs a concrete encoder here
-		const encode = Schema.encodeUnknownSync(schema as any)
-		// This patches the generated ErrorClass constructor with the runtime pieces
+		const encode = Schema.encodeUnknownEffect(schema)
+		// This patches the generated Error constructor with the runtime pieces
 		// Effect HttpApi does not expose declaratively yet.
 		const Prototype = ProblemHttpError as unknown as { prototype: ProblemShape }
 		const descriptors: PropertyDescriptorMap = {
 			[HttpServerRespondable.symbol]: {
 				value(this: ProblemShape) {
-					return Effect.map(
-						Effect.sync(() => encode(this)),
-						(encoded) =>
+					return encode(this).pipe(
+						Effect.map((encoded) =>
 							HttpServerResponse.jsonUnsafe(encoded, {
 								status,
 								contentType: problemJsonContentType,
 							}),
+						),
+						Effect.orDie,
 					)
 				},
 			},
@@ -423,7 +423,7 @@ export function middleware(options?: { readonly typePrefix?: string }) {
 						return Effect.succeed(validationResponseFromError(defect, prefix))
 					}
 
-					return Effect.flatMap(Effect.logError(defect), () => Effect.succeed(safeServerError))
+					return Effect.map(Effect.logError(defect), () => safeServerError)
 				}),
 			),
 		{ global: true },

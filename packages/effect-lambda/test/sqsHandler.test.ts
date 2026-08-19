@@ -106,4 +106,39 @@ describe('sqsHandler', () => {
 			batchItemFailures: [{ itemIdentifier: 'fail-id' }],
 		})
 	})
+
+	it('processes records sequentially by default', async () => {
+		const modifiedEvent = {
+			...event,
+			Records: [
+				{ ...event.Records[0], messageId: 'first-id' },
+				{ ...event.Records[0], messageId: 'second-id' },
+				{ ...event.Records[0], messageId: 'third-id' },
+			],
+		}
+		const lifecycle: Array<string> = []
+		const processRecord = SQSRecord.use((record) =>
+			Effect.gen(function* () {
+				lifecycle.push(`start:${record.messageId}`)
+				yield* Effect.sleep('10 millis')
+				lifecycle.push(`end:${record.messageId}`)
+			}),
+		)
+
+		const result = await Effect.runPromise(
+			processRecord.pipe(recordProcessorAdapter, Effect.provideService(SQSEvent, modifiedEvent)),
+		)
+
+		expect(result).toEqual({
+			batchItemFailures: [],
+		})
+		expect(lifecycle).toEqual([
+			'start:first-id',
+			'end:first-id',
+			'start:second-id',
+			'end:second-id',
+			'start:third-id',
+			'end:third-id',
+		])
+	})
 })

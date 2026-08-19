@@ -2,12 +2,30 @@ packages:
   - packages/*
 
 catalog:
-  '@effect/platform-node': 4.0.0-beta.83
-  '@effect/vitest': 4.0.0-beta.83
+  '@effect/platform-node': 4.0.0-rc.110
+  '@effect/platform-node-shared': 4.0.0-rc.110
+  '@effect/vitest': 4.0.0-rc.110
   '@types/aws-lambda': ^8.10.152
   '@types/node': ^24.0.4
-  effect: 4.0.0-beta.83
+  effect: 4.0.0-rc.110
 
-onlyBuiltDependencies:
-  - esbuild
-  - msgpackr-extract
+peerDependencyRules:
+  allowedVersions:
+    '@effect-aws/lambda@2.0.0-beta.5>@effect/platform-node-shared': 4.0.0-rc.110
+    '@effect-aws/lambda@2.0.0-beta.5>effect': 4.0.0-rc.110
+
+minimumReleaseAgeExclude:
+  - '@changesets/cli@3.0.1'
+  - '@changesets/write@1.0.1'
+  - '@vitest/expect@4.1.11'
+  - '@vitest/mocker@4.1.11'
+  - '@vitest/pretty-format@4.1.11'
+  - '@vitest/runner@4.1.11'
+  - '@vitest/snapshot@4.1.11'
+  - '@vitest/spy@4.1.11'
+  - '@vitest/utils@4.1.11'
+  - vitest@4.1.11
+
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: false

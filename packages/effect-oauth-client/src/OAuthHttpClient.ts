@@ -122,7 +122,8 @@ export const make = ({
 				Effect.scoped,
 				Effect.retry({
 					while: (error) => !Schema.isSchemaError(error),
-					schedule: Schedule.exponential('200 millis').pipe(Schedule.both(Schedule.recurs(2))),
+					schedule: Schedule.exponential('200 millis'),
+					times: 2,
 				}),
 				Effect.mapError(
 					(error) =>

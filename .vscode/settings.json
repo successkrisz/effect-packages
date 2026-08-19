@@ -9,7 +9,7 @@
 	"editor.formatOnSave": true,
 
 	"typescript.experimental.useTsgo": true,
-	"typescript.tsdk": "node_modules/@typescript/native-preview/lib",
+	"typescript.tsdk": "node_modules/typescript/lib",
 	"typescript.enablePromptUseWorkspaceTsdk": true,
 	"typescript.tsserver.experimental.enableProjectDiagnostics": true,
 	"typescript.tsserver.useSyntaxServer": "never",

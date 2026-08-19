@@ -31,4 +31,4 @@ import { Effect } from "effect"
 export const check = () => { Effect.succeed(1); return undefined }
 ```
 
-Running `npx tsgo -p <leaf>` on a file containing the above should fail with `TS377001 effect(floatingEffect)`. If it passes, the plugin isn't being loaded.
+Running `pnpm exec tsc -p <leaf>` on a file containing the above should fail with `TS377001 effect(floatingEffect)`. If it passes, the plugin isn't being loaded.
