@@ -1,5 +1,27 @@
 # @ballatech/effect-problem-json
 
+## 1.0.0-beta.6
+
+### Major Changes
+
+- Fix type inference issues and ensure that it works well with @effect-aws/lambda
+
+- Refactor internals and rename ProblemJson to HttpApiProblemDetail
+
+- Update to work with effect beta.49
+
+### Minor Changes
+
+- Initial release of effect-problem-json
+
+### Patch Changes
+
+- Fix ci actions
+
+- [#30](https://github.com/successkrisz/effect-packages/pull/30) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@github-actions](https://github.com/apps/github-actions)! - update dev deps to effect@rc
+
+- effect@4.0.0-beta.83 support
+
 ## 1.0.0-beta.5
 
 ### Patch Changes

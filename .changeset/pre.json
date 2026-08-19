@@ -1,25 +1,4 @@
 {
 	"mode": "pre",
-	"tag": "beta",
-	"initialVersions": {
-		"effect-lambda": "0.5.2",
-		"@ballatech/effect-oauth-client": "0.3.2",
-		"@ballatech/effect-problem-json": "0.1.0"
-	},
-	"changesets": [
-		"bumpy-weeks-clean",
-		"busy-ideas-sleep",
-		"cruel-nights-sit",
-		"curly-lies-send",
-		"deep-lines-yell",
-		"effect-tsgo-deterministic-keys",
-		"effect-tsgo-strict-boolean",
-		"slick-sloths-jam",
-		"soft-points-see",
-		"stupid-hairs-occur",
-		"thirty-women-dig",
-		"violet-colts-wear",
-		"wet-cloths-argue",
-		"young-schools-melt"
-	]
+	"tag": "beta"
 }
