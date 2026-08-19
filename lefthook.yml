@@ -1,0 +1,14 @@
+pre-commit:
+  piped: true
+  jobs:
+    - name: format staged files
+      glob: '*.{js,jsx,ts,tsx,css,md,json}'
+      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+    - name: test related files
+      glob: '*.{js,jsx,ts,tsx,css,md,json}'
+      run: pnpm exec vitest related --run {staged_files}
+    - name: typecheck
+      run: pnpm typecheck
+    - name: verify packages
+      run: pnpm pack:check

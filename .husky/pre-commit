@@ -1,4 +1,0 @@
-#!/usr/bin/env sh
-pnpm lint-staged
-pnpm typecheck
-pnpm pack:check

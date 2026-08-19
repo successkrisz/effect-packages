@@ -28,4 +28,5 @@ minimumReleaseAgeExclude:
 
 allowBuilds:
   esbuild: true
+  lefthook: true
   msgpackr-extract: false

@@ -4,7 +4,7 @@ Configure this repository to use stable **TypeScript 7** patched with **`@effect
 
 **Execute this plan step-by-step. Do NOT skip verification. Stop and report if any step fails.**
 
-This command reflects the current configuration used by `@ballatech/effect-packages`: pnpm `11.22.0`, TypeScript `7.0.2`, `@effect/tsgo` `0.36.5`, and Effect `4.0.0-rc.110`. It is a pnpm monorepo whose library packages extend a shared `tsconfigs/` directory at the repo root. Resolve newer compatible versions when available; never mix unaligned Effect RC package versions.
+This command reflects the current configuration used by `@ballatech/effect-packages`: pnpm `11.22.0`, TypeScript `7.0.2`, `@effect/tsgo` `0.36.5`, Effect `4.0.0-rc.110`, and Lefthook `2.1.10`. It is a pnpm monorepo whose library packages extend a shared `tsconfigs/` directory at the repo root. Resolve newer compatible versions when available; never mix unaligned Effect RC package versions.
 
 ---
 
@@ -144,12 +144,55 @@ pnpm 11 removed `onlyBuiltDependencies` and enables strict dependency-build hand
 ```yaml
 allowBuilds:
   esbuild: true
+  lefthook: true
   msgpackr-extract: false
 ```
 
-Allow `esbuild` because Vitest relies on its platform binary. Keep `msgpackr-extract` disabled: its native acceleration is optional and the package has a JavaScript fallback. Never allow all build scripts globally.
+Allow `esbuild` because Vitest relies on its platform binary. Allow `lefthook` because its postinstall selects the platform binary and installs Git hooks. Keep `msgpackr-extract` disabled: its native acceleration is optional and the package has a JavaScript fallback. Never allow all build scripts globally.
 
 pnpm 11 also defaults to a one-day minimum release age. If an explicitly requested release is newer, add only the exact package versions needed under `minimumReleaseAgeExclude`; do not disable the policy repository-wide.
+
+### Replace Husky and lint-staged with Lefthook
+
+Use one pinned native hook manager:
+
+```bash
+pnpm remove -D -w husky lint-staged
+pnpm add -D -w -E lefthook@2.1.10
+```
+
+Remove the root `lint-staged` config, its script, and the tracked `.husky/pre-commit`. Add this root lifecycle script so existing clones with Husky's `core.hooksPath=.husky/_` are migrated as well as clean clones:
+
+```jsonc
+{
+  "scripts": {
+    "prepare": "lefthook install --force"
+  }
+}
+```
+
+Create `lefthook.yml`:
+
+```yaml
+pre-commit:
+  piped: true
+  jobs:
+    - name: format staged files
+      glob: '*.{js,jsx,ts,tsx,css,md,json}'
+      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+    - name: test related files
+      glob: '*.{js,jsx,ts,tsx,css,md,json}'
+      run: pnpm exec vitest related --run {staged_files}
+    - name: typecheck
+      run: pnpm typecheck
+    - name: verify packages
+      run: pnpm pack:check
+```
+
+`piped: true` preserves fail-fast sequential execution. `stage_fixed: true` preserves auto-format-and-stage behavior, but Lefthook does not hide unstaged hunks like lint-staged: do not partially stage files that the formatter may rewrite.
+
+Run `pnpm exec lefthook validate` and `pnpm exec lefthook install --force`. Confirm the active `core.hooksPath` contains Lefthook's `pre-commit` shim.
 
 ---
 
@@ -502,6 +545,7 @@ Append a short section to the repo's `AGENTS.md` (or `CLAUDE.md`, whichever exis
 - Every Effect language-service rule is set to `error`, with `ignoreEffectSuggestionsInTscExitCode: false` — there is no soft/warning tier, the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit.
 - The plugin block lives in `tsconfigs/tsconfig.lib.json`, NOT in `tsconfig.base.json`, because `compilerOptions.plugins` may not propagate through a two-level `extends` chain. When adding a new variant in `tsconfigs/`, either extend `tsconfig.lib.json` from it or duplicate the plugin block — see `tsconfigs/README.md` for the smoke test.
 - Effect v4 RC packages are pinned to one exact aligned RC in the pnpm catalog. pnpm 11 build-script and prerelease-peer exceptions are explicit and narrowly scoped in `pnpm-workspace.yaml`.
+- Lefthook owns pre-commit hooks via `lefthook.yml`; do not reintroduce Husky or lint-staged. Its install script is explicitly allowed in pnpm 11.
 ```
 
 Update the version numbers if the pinned combination drifts.
@@ -515,6 +559,7 @@ Produce a concise summary for the user covering:
 - Installed versions of stable `typescript` and `@effect/tsgo`, plus confirmation that the exact TypeScript build appears in the installed tsgo compatibility table.
 - Exact Effect RC used by `effect` and each `@effect/*` catalog dependency; confirm they are aligned.
 - pnpm version and any `peerDependencyRules`, `minimumReleaseAgeExclude`, or `allowBuilds` exceptions added, including why each exception is necessary.
+- Lefthook version, removal of Husky/lint-staged, installed hook path, and confirmation that format/tests/typecheck/package checks run sequentially and fail fast.
 - Tsconfig handling:
   - Topology detected (leaf-only / local-shared / workspace-shared / external)
   - Whether Phase 3.5 ran; if so, which external packages were localized and which configs were created under `tsconfigs/`
