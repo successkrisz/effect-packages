@@ -1,5 +1,37 @@
 # @ballatech/effect-oauth-client
 
+## 1.0.0-beta.7
+
+### Major Changes
+
+- Update to work with effect beta.49
+
+- Support Effect v4
+
+### Minor Changes
+
+- Add `baseUrl` option, `makeFromConfig` constructor, `layer`/`layerFromConfig` helpers, `OAuthHttpClient` service tag, and `Client` type alias.
+
+- Rename module export from `OAuthClient` to `OAuthHttpClient` to better communicate that this package provides an OAuth-authenticated HttpClient, not a generic OAuth client. The source file is also renamed to `OAuthHttpClient.ts` to align with Effect v4's convention of matching file names to their primary export. This is a breaking change — update imports from `{ OAuthClient }` to `{ OAuthHttpClient }`.
+
+- Retry on 401 and transient token endpoint failures
+  
+  - Downstream 401 responses now invalidate the cached token and retry the request once with a fresh token. If the retry also returns 401, the error propagates as `AuthorizationError` with code `unauthorized`.
+  - Token endpoint transient errors (429 rate limiting, 5xx server errors, network failures) are now retried up to 2 times with exponential backoff (200ms, 400ms). Permanent errors (4xx bad credentials/scope) still fail immediately.
+  - Error classification now uses `Schema.isSchemaError` instead of a brittle `_tag` string check.
+
+### Patch Changes
+
+- Tighten boolean-expression handling in `make` and `makeFromConfig`: empty-string credentials (`scope: ""`, `audience: ""`, `baseUrl: ""`) are now treated identically to `undefined` and omitted from the outgoing token request / base-URL rewrite. Previously the ternary `scope ? ... : undefined` happened to do the same thing via JS truthiness; the new check (`x !== undefined && x.length > 0`) makes the intent explicit and satisfies the Effect language service `strictBooleanExpressions` rule.
+
+- Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
+- [#30](https://github.com/successkrisz/effect-packages/pull/30) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@github-actions](https://github.com/apps/github-actions)! - update dev deps to effect@rc
+
+- effect@4.0.0-beta.83 support
+
+- Preserve the original error on AuthorizationError as cause
+
 ## 1.0.0-beta.6
 
 ### Patch Changes

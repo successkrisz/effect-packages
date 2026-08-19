@@ -1,5 +1,35 @@
 # effect-lambda
 
+## 1.0.0-beta.4
+
+### Major Changes
+
+- Update to work with effect beta.49
+
+- Support Effect v4
+
+### Patch Changes
+
+- Rename internal Context tag identifier strings to the deterministic format `effect-lambda/<file>/<ClassName>` (enforced by the Effect language service `deterministicKeys` rule). Affected tags:
+  
+  - `APIGatewayAuthorizerEvent` → `effect-lambda/CustomAuthorizer/APIGatewayAuthorizerEvent`
+  - `DynamoDBStreamEvent` → `effect-lambda/DynamoDb/DynamoDBStreamEvent`
+  - `DynamoDBRecord` → `effect-lambda/DynamoDb/DynamoDBRecord`
+  - `APIGatewayProxyEventV2` → `effect-lambda/HttpApi/APIGatewayProxyEventV2`
+  - `APIGatewayProxyEvent` → `effect-lambda/RestApi/APIGatewayProxyEvent`
+  - `SNSEvent` → `effect-lambda/Sns/SNSEvent`
+  - `SQSEvent` → `effect-lambda/Sqs/SQSEvent`
+  - `SQSRecord` → `effect-lambda/Sqs/SQSRecord`
+  - `HandlerContext` → `effect-lambda/common/HandlerContext`
+  
+  The exported class symbols are unchanged — consumers importing the tags (e.g. `import { SQSEvent } from 'effect-lambda/Sqs'`) are unaffected. Only code that constructed tags by the raw identifier string, or cross-module code that compared stringified tag ids, will need to update.
+
+- Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
+- [#30](https://github.com/successkrisz/effect-packages/pull/30) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@github-actions](https://github.com/apps/github-actions)! - update dev deps to effect@rc
+
+- effect@4.0.0-beta.83 support
+
 ## 1.0.0-beta.3
 
 ### Patch Changes
