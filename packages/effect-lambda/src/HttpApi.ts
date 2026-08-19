@@ -70,8 +70,9 @@ export const schemaQueryParams = <S extends Schema.Top>(
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
 	APIGatewayProxyEventV2.useSync((e) => e.queryStringParameters || {}).pipe(
-		Effect.map((e) => e.queryStringParameters || {}),
-		Effect.flatMap((q) => Schema.decodeEffect(schema)(q, options)),
+		Effect.flatMap((queryStringParameters) =>
+			Schema.decodeEffect(schema)(queryStringParameters, options),
+		),
 	)
 
 /**
