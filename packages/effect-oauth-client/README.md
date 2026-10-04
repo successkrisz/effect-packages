@@ -5,9 +5,9 @@
 Effect-first OAuth 2.0 Client Credentials helper for Effect v4 HTTP `HttpClient`.
 
 > [!WARNING]
-> **This version targets [Effect v4 beta](https://github.com/Effect-TS/effect-smol) (`effect@4.0.0-beta.*`).** The APIs use v4 constructs such as `ServiceMap.Service`, `ManagedRuntime`, and `effect/unstable/http`. If you are on Effect v3, use an earlier version of this package.
+> **This version targets [Effect v4](https://github.com/Effect-TS/effect) (`effect@4.x`).** The APIs use v4 constructs such as `Context.Service`, `ManagedRuntime`, and `effect/http`. If you are on Effect v3, use an earlier version of this package.
 >
-> See the [Effect v4 Beta announcement](https://effect.website/blog/releases/effect/40-beta/) for details.
+> See the [Effect 4.0 announcement](https://effect.website/blog/releases/effect/40/) for details.
 
 - Fetches access tokens using the client credentials grant
 - Caches tokens and auto-refreshes near expiry
@@ -18,10 +18,10 @@ Effect-first OAuth 2.0 Client Credentials helper for Effect v4 HTTP `HttpClient`
 ## Installation
 
 ```bash
-pnpm add @ballatech/effect-oauth-client@beta effect@beta
+pnpm add @ballatech/effect-oauth-client effect
 ```
 
-> This package expects `effect` v4 beta as a peer. Since `pnpm add effect` installs v3 by default, you must specify the beta tag explicitly.
+> This package expects `effect` v4 as a peer.
 
 ## API
 
@@ -95,7 +95,7 @@ type CredentialsConfig = {
 ```ts
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { Effect, Redacted, Schema } from "effect"
-import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClientResponse } from "effect/http"
 
 const FooSchema = Schema.Struct({ foo: Schema.String })
 
@@ -125,9 +125,9 @@ Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
 ### With Layer and service composition
 
 ```ts
-import { Effect, Layer, Redacted, ServiceMap } from "effect"
+import { Context, Effect, Layer, Redacted } from "effect"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClientResponse } from "effect/http"
 
 const makeService = Effect.gen(function* () {
   const client = yield* OAuthHttpClient.make({
@@ -142,7 +142,7 @@ const makeService = Effect.gen(function* () {
 })
 
 type MyServiceShape = Effect.Success<typeof makeService>
-class MyService extends ServiceMap.Service<MyService, MyServiceShape>()("MyService") {}
+class MyService extends Context.Service<MyService, MyServiceShape>()("MyService") {}
 
 export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
   Layer.provide(FetchHttpClient.layer)
@@ -154,7 +154,7 @@ export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
 ```ts
 import { Effect, Layer, Redacted } from "effect"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClientResponse } from "effect/http"
 
 const AppLayer = OAuthHttpClient.layer({
   clientId: "id123",
@@ -177,14 +177,14 @@ Using `layerFromConfig` for the simplest case:
 ```ts
 import { Config, Effect, Layer } from "effect"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 
 const AppLayer = OAuthHttpClient.layerFromConfig({
-  clientId: Config.string("OAUTH_CLIENT_ID"),
-  clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
-  tokenUrl: Config.string("OAUTH_TOKEN_URL"),
-  baseUrl: Config.string("API_BASE_URL"),
-  scope: Config.string("OAUTH_SCOPE"),
+  clientId: Config.String("OAUTH_CLIENT_ID"),
+  clientSecret: Config.Redacted("OAUTH_CLIENT_SECRET"),
+  tokenUrl: Config.String("OAUTH_TOKEN_URL"),
+  baseUrl: Config.String("API_BASE_URL"),
+  scope: Config.String("OAUTH_SCOPE"),
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
 const program = OAuthHttpClient.OAuthHttpClient.use((client) =>
@@ -197,16 +197,16 @@ Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
 Or with `makeFromConfig` when wrapping in a custom service:
 
 ```ts
-import { Config, Effect, Layer, ServiceMap } from "effect"
+import { Config, Context, Effect, Layer } from "effect"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 
 const makeService = Effect.gen(function* () {
   const client = yield* OAuthHttpClient.makeFromConfig({
-    clientId: Config.string("OAUTH_CLIENT_ID"),
-    clientSecret: Config.redacted("OAUTH_CLIENT_SECRET"),
-    tokenUrl: Config.string("OAUTH_TOKEN_URL"),
-    baseUrl: Config.string("API_BASE_URL"),
+    clientId: Config.String("OAUTH_CLIENT_ID"),
+    clientSecret: Config.Redacted("OAUTH_CLIENT_SECRET"),
+    tokenUrl: Config.String("OAUTH_TOKEN_URL"),
+    baseUrl: Config.String("API_BASE_URL"),
   })
   const getFoo = () =>
     client.get("/secret-foo").pipe(Effect.scoped)
@@ -214,7 +214,7 @@ const makeService = Effect.gen(function* () {
 })
 
 type MyServiceShape = Effect.Success<typeof makeService>
-class MyService extends ServiceMap.Service<MyService, MyServiceShape>()("MyService") {}
+class MyService extends Context.Service<MyService, MyServiceShape>()("MyService") {}
 
 export const MyServiceLayer = Layer.effect(MyService)(makeService).pipe(
   Layer.provide(FetchHttpClient.layer)
@@ -228,11 +228,11 @@ connects to multiple OAuth-protected APIs, create a dedicated tag for each one u
 `OAuthHttpClient.Client` as the shape:
 
 ```ts
-import { Effect, Layer, Redacted, ServiceMap } from "effect"
+import { Context, Effect, Layer, Redacted } from "effect"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 
-class AzureClient extends ServiceMap.Service<AzureClient, OAuthHttpClient.Client>()("AzureClient") {
+class AzureClient extends Context.Service<AzureClient, OAuthHttpClient.Client>()("AzureClient") {
   static live = Layer.effect(this)(OAuthHttpClient.make({
     clientId: "azure-id",
     clientSecret: Redacted.make("azure-secret"),
@@ -241,7 +241,7 @@ class AzureClient extends ServiceMap.Service<AzureClient, OAuthHttpClient.Client
   }))
 }
 
-class GoogleClient extends ServiceMap.Service<GoogleClient, OAuthHttpClient.Client>()("GoogleClient") {
+class GoogleClient extends Context.Service<GoogleClient, OAuthHttpClient.Client>()("GoogleClient") {
   static live = Layer.effect(this)(OAuthHttpClient.make({
     clientId: "google-id",
     clientSecret: Redacted.make("google-secret"),
@@ -270,11 +270,11 @@ Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
 ```ts
 import { beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import { Duration, Effect, Layer, ManagedRuntime, Redacted } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient, type HttpClient } from "effect/http"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 
 describe("OAuthHttpClient", () => {
-  let rt: ManagedRuntime.ManagedRuntime<never, never>
+  let rt: ManagedRuntime.ManagedRuntime<HttpClient.HttpClient, never>
   const fetch = vi.fn()
 
   beforeEach(() => {
@@ -310,7 +310,7 @@ describe("OAuthHttpClient", () => {
 ## Requirements
 
 - Provide an `HttpClient` layer, e.g. `FetchHttpClient.layer`
-- `effect@4.0.0-beta.*` must be installed (peer dependency) — install with `pnpm add effect@beta`
+- `effect` v4 must be installed (peer dependency) — install with `pnpm add effect`
 
 ## Build
 

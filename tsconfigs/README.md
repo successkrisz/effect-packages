@@ -13,7 +13,7 @@ Packages extend these via a relative path from their own `tsconfig.json`, e.g.:
 | File | Use for |
 | --- | --- |
 | `tsconfig.base.json` | Root settings shared by every variant (`strict`, `noUnusedLocals`, `isolatedModules`, …). Deliberately does **not** define `compilerOptions.plugins` — see gotcha below. |
-| `tsconfig.lib.json` | Publishable libraries — emits declarations, `outDir: dist`, and **owns** the full `@effect/language-service` plugin block (all 68 rules at `error`, `ignoreEffectSuggestionsInTscExitCode: false` for maximum strictness). |
+| `tsconfig.lib.json` | Publishable libraries — emits declarations, `outDir: dist`, and **owns** the full `@effect/language-service` plugin block (all 118 rules listed, every one at `error` except three documented `off` exceptions, `ignoreEffectSuggestionsInTscExitCode: false` for maximum strictness). |
 | `tsconfig.node22.json` | Node-only apps/scripts (no emit) |
 | `tsconfig.lambda22.json` | AWS Lambda handlers (no emit, Node runtime) |
 | `tsconfig.react.json` | React apps / components (DOM lib, JSX) |

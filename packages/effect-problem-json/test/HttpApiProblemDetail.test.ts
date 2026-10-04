@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Schema } from 'effect'
-import type { HttpServerResponse } from 'effect/unstable/http'
-import { HttpServerRespondable } from 'effect/unstable/http'
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from 'effect/unstable/httpapi'
+import type { HttpServerResponse } from 'effect/http'
+import { HttpServerRespondable } from 'effect/http'
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from 'effect/http-api'
 import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
 
 function decodeBody(response: HttpServerResponse.HttpServerResponse): Record<string, unknown> {
@@ -31,7 +31,7 @@ describe('ProblemError', () => {
 			detail: 'Todo 42 was not found',
 			todoId: 42,
 		})
-		const encoded = Schema.encodeUnknownSync(TodoNotFound)(error)
+		const encoded = Effect.runSync(Schema.encodeUnknownEffect(TodoNotFound)(error))
 		const response = Effect.runSync(HttpServerRespondable.toResponse(error))
 
 		expect(error._tag).toBe('TodoNotFound')
@@ -60,7 +60,7 @@ describe('ProblemError', () => {
 			detail: 'Todo 42 was not found',
 			todoId: 42,
 		})
-		const encoded = Schema.encodeUnknownSync(TodoNotFound)(error)
+		const encoded = Effect.runSync(Schema.encodeUnknownEffect(TodoNotFound)(error))
 		const handled = Effect.runSync(
 			Effect.fail(error).pipe(Effect.catchTag('TodoNotFound', () => Effect.succeed('caught'))),
 		)
@@ -100,7 +100,9 @@ describe('ValidationProblem', () => {
 	it('builds a structured problem from a SchemaError', () => {
 		const error = getSchemaError({ name: 42, age: 'not-a-number' })
 		const problem = HttpApiProblemDetail.ValidationProblem.fromSchemaError(error)
-		const encoded = Schema.encodeUnknownSync(HttpApiProblemDetail.ValidationProblem)(problem)
+		const encoded = Effect.runSync(
+			Schema.encodeUnknownEffect(HttpApiProblemDetail.ValidationProblem)(problem),
+		)
 
 		expect(problem.status).toBe(400)
 		expect(problem.title).toBe('Bad Request')

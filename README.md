@@ -23,9 +23,9 @@ export const handler = toLambdaHandler(
 ### effect-oauth-client quickstart
 
 ```ts
-import { OAuthHttpClient } from "effect-oauth-client"
+import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { Effect, Redacted } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 
 const program = Effect.gen(function* () {
   const client = yield* OAuthHttpClient.make({

@@ -5,9 +5,9 @@
 Effect friendly wrapper for AWS Lambda functions.
 
 > [!WARNING]
-> **This version targets [Effect v4 beta](https://github.com/Effect-TS/effect-smol) (`effect@4.0.0-beta.*`).** The APIs use v4 constructs such as `ServiceMap.Service`, `Schema.SchemaError`, and `effect/unstable/http`. If you are on Effect v3, use an earlier version of this package.
+> **This version targets [Effect v4](https://github.com/Effect-TS/effect) (`effect@4.x`).** The APIs use v4 constructs such as `Context.Service`, `Schema.SchemaError`, and `ManagedRuntime`. If you are on Effect v3, use an earlier version of this package.
 >
-> See the [Effect v4 Beta announcement](https://effect.website/blog/releases/effect/40-beta/) for details.
+> See the [Effect 4.0 announcement](https://effect.website/blog/releases/effect/40/) for details.
 
 ## Motivation
 
@@ -91,13 +91,13 @@ export const handlerWithPreMiddleware = RestApi.toLambdaHandler(
 
 ## Installation
 
-This library has a peer dependency on `effect` v4 beta. Since `pnpm add effect` installs v3 by default, you must specify the beta tag explicitly:
+This library has a peer dependency on `effect` v4:
 
 ```bash
 # pnpm
-pnpm add effect-lambda effect@beta
+pnpm add effect-lambda effect
 # npm
-npm install effect-lambda effect@beta
+npm install effect-lambda effect
 ```
 
 ## Usage
@@ -131,7 +131,7 @@ const PayloadSchema = Schema.Struct({
 const PathParamsSchema = Schema.Struct({
   name: Schema.String,
 })
-export const handler = RestApi.toLambdaHandler(
+export const greetingHandler = RestApi.toLambdaHandler(
   RestApi.schemaPathParams(PathParamsSchema).pipe(
     Effect.map(({ name }) => name),
     Effect.bindTo("name"),
@@ -266,16 +266,18 @@ You can use [helmet](https://www.npmjs.com/package/helmet) to secure your applic
 ```typescript
 import { applyMiddleware, RestApi } from "effect-lambda"
 import helmet from "helmet"
-import { Effect, Layer, pipe } from "effect"
+import { Effect, Layer } from "effect"
 
-const toHandler = (effect: Parameters<typeof RestApi.toLambdaHandler>[0]) =>
-  RestApi.toLambdaHandler(pipe(effect, Effect.map(applyMiddleware(helmet()))))
+const withHelmet = <R>(effect: RestApi.HandlerEffect<R>) =>
+  effect.pipe(Effect.map(applyMiddleware(helmet())))
 
-export const handler = toHandler(
-  Effect.succeed({
-    statusCode: 200,
-    body: JSON.stringify({ message: "Hello, World!" }),
-  }),
+export const handler = RestApi.toLambdaHandler(
+  withHelmet(
+    Effect.succeed({
+      statusCode: 200,
+      body: JSON.stringify({ message: "Hello, World!" }),
+    }),
+  ),
 )({ layer: Layer.empty })
 ```
 
@@ -336,8 +338,10 @@ import { Effect, Layer } from "effect"
 
 export const handler = DynamoDb.toLambdaHandler(
   DynamoDb.DynamoDBStreamEvent.use((event) =>
-    Effect.forEach(event.Records, (record) =>
-      Effect.log(`DynamoDB Record: ${record.eventID}`),
+    Effect.forEach(
+      event.Records,
+      (record) => Effect.log(`DynamoDB Record: ${record.eventID}`),
+      { discard: true },
     ),
   ),
 )({ layer: Layer.empty })
@@ -381,10 +385,10 @@ Helper utility to create a handler from an effect, for other event types.
 
 ```typescript
 import { makeToHandler } from "effect-lambda"
-import { Effect, ServiceMap } from "effect"
+import { Context, Effect, Layer } from "effect"
 import type { CloudWatchAlarmEvent } from "aws-lambda"
 
-class Event extends ServiceMap.Service<Event, CloudWatchAlarmEvent>()("@app/CloudWatchAlarmEvent") {}
+class Event extends Context.Service<Event, CloudWatchAlarmEvent>()("@app/CloudWatchAlarmEvent") {}
 
 export const toHandler = makeToHandler<typeof Event, void>(Event)
 

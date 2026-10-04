@@ -5,8 +5,8 @@
  * @see https://www.rfc-editor.org/rfc/rfc9457.html
  */
 import { Effect, ErrorReporter, Option, Schema, SchemaIssue } from 'effect'
-import { HttpRouter, HttpServerRespondable, HttpServerResponse } from 'effect/unstable/http'
-import { HttpApiError, HttpApiSchema } from 'effect/unstable/httpapi'
+import { HttpRouter, HttpServerRespondable, HttpServerResponse } from 'effect/http'
+import { HttpApiError, HttpApiSchema } from 'effect/http-api'
 
 export const statusTitles = {
 	400: 'Bad Request',
@@ -260,7 +260,7 @@ export function ProblemError<Tag extends string, Status extends StatusCode>(
 		type ProblemBrand = {
 			[HttpServerRespondable.symbol](): Effect.Effect<HttpServerResponse.HttpServerResponse>
 		}
-		type ProblemShape = Schema.Schema.Type<typeof schema> & ProblemBrand
+		type ProblemShape = typeof schema.Type & ProblemBrand
 
 		const ProblemHttpError = Schema.Error<ProblemShape, ProblemBrand>(
 			`@ballatech/effect-problem-json/${tag}`,

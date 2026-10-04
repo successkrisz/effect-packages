@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { NodeRuntime } from '@effect/platform-node'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { Context, Effect, Layer, Schema } from 'effect'
-import { HttpRouter, HttpServerResponse } from 'effect/unstable/http'
+import { HttpRouter, HttpServerResponse } from 'effect/http'
 import {
 	HttpApi,
 	HttpApiBuilder,
@@ -12,7 +12,7 @@ import {
 	HttpApiSchema,
 	HttpApiSwagger,
 	OpenApi,
-} from 'effect/unstable/httpapi'
+} from 'effect/http-api'
 import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
 
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ const TodosLive = HttpApiBuilder.group(api, 'todos', (handlers) =>
 // ---------------------------------------------------------------------------
 
 const ContactForm = Schema.Struct({
-	email: Schema.String.check(Schema.isIncludes('@')),
+	email: Schema.String.check(Schema.isIncluding('@')),
 	age: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
 	name: Schema.String.check(Schema.isMinLength(1)),
 })

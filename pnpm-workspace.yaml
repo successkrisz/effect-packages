@@ -2,17 +2,12 @@ packages:
   - packages/*
 
 catalog:
-  '@effect/platform-node': 4.0.0-rc.110
-  '@effect/platform-node-shared': 4.0.0-rc.110
-  '@effect/vitest': 4.0.0-rc.110
+  '@effect/platform-node': 4.0.0
+  '@effect/platform-node-shared': 4.0.0
+  '@effect/vitest': 4.0.0
   '@types/aws-lambda': ^8.10.152
   '@types/node': ^24.0.4
-  effect: 4.0.0-rc.110
-
-peerDependencyRules:
-  allowedVersions:
-    '@effect-aws/lambda@2.0.0-beta.5>@effect/platform-node-shared': 4.0.0-rc.110
-    '@effect-aws/lambda@2.0.0-beta.5>effect': 4.0.0-rc.110
+  effect: 4.0.0
 
 minimumReleaseAgeExclude:
   - '@changesets/cli@3.0.1'
@@ -25,6 +20,15 @@ minimumReleaseAgeExclude:
   - '@vitest/spy@4.1.11'
   - '@vitest/utils@4.1.11'
   - vitest@4.1.11
+  - '@effect-aws/lambda@2.0.0'
+  - '@effect/tsgo-darwin-arm64@0.48.0'
+  - '@effect/tsgo-darwin-x64@0.48.0'
+  - '@effect/tsgo-linux-arm64@0.48.0'
+  - '@effect/tsgo-linux-arm@0.48.0'
+  - '@effect/tsgo-linux-x64@0.48.0'
+  - '@effect/tsgo-win32-arm64@0.48.0'
+  - '@effect/tsgo-win32-x64@0.48.0'
+  - '@effect/tsgo@0.48.0'
 
 allowBuilds:
   esbuild: true

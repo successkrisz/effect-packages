@@ -39,7 +39,8 @@ Available pre-builts: `BadRequest`, `Unauthorized`, `PaymentRequired`, `Forbidde
 Use `ProblemError(tag, status)` to create a constructor with RFC 9457 defaults and `application/problem+json` encoding:
 
 ```ts
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
+import { HttpApiEndpoint } from "effect/http-api"
 import { HttpApiProblemDetail as ProblemDetail } from "@ballatech/effect-problem-json"
 
 const DuplicateTitle = ProblemDetail.ProblemError("DuplicateTitle", 422)({
@@ -98,7 +99,7 @@ const AppLive = HttpRouter.serve(
 Effect `HttpApi` also hardcodes its default validation error into every endpoint's error set, so OpenAPI needs a small transform as well:
 
 ```ts
-import { HttpApi, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, OpenApi } from "effect/http-api"
 import { HttpApiProblemDetail as ProblemDetail } from "@ballatech/effect-problem-json"
 
 const api = HttpApi.make("MyApi")

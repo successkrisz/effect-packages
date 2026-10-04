@@ -11,8 +11,8 @@ import {
 	Redacted,
 	Schema,
 } from 'effect'
+import { FetchHttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
-import { FetchHttpClient, HttpClientResponse } from 'effect/unstable/http'
 import * as OAuthClient from '../src/OAuthHttpClient'
 
 const FooSchema = Schema.Struct({ foo: Schema.String })

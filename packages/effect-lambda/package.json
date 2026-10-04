@@ -42,7 +42,7 @@
 	"peerDependencies": {
 		"@types/aws-lambda": "catalog:",
 		"@types/node": "catalog:",
-		"effect": "catalog:"
+		"effect": "^4.0.0"
 	},
 	"peerDependenciesMeta": {
 		"@types/node": {

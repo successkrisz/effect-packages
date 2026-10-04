@@ -2,14 +2,14 @@ import { describe, expect, it } from '@effect/vitest'
 import { LambdaHandler } from '@effect-aws/lambda'
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda'
 import { Effect, Layer, Schema } from 'effect'
-import { HttpServer } from 'effect/unstable/http'
+import { HttpServer } from 'effect/http'
 import {
 	HttpApi,
 	HttpApiBuilder,
 	HttpApiEndpoint,
 	HttpApiGroup,
 	HttpApiSchema,
-} from 'effect/unstable/httpapi'
+} from 'effect/http-api'
 import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
 
 // ---------------------------------------------------------------------------
