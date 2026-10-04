@@ -1,5 +1,41 @@
 # effect-lambda
 
+## 1.0.0
+
+### Major Changes
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`2ea4f38`](https://github.com/successkrisz/effect-packages/commit/2ea4f382a138ff389fa54c19cf4554c598186a15) Thanks [@successkrisz](https://github.com/successkrisz)! - Support stable Effect 4.0: the `effect` peer dependency is now `^4.0.0`, and HTTP modules are imported from `effect/http` and `effect/http-api` instead of the removed `effect/unstable/*` paths.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`0347319`](https://github.com/successkrisz/effect-packages/commit/0347319102d29b7b6eece5ef80cf68ffeb976363) Thanks [@successkrisz](https://github.com/successkrisz)! - Update to work with effect beta.49
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`1de2850`](https://github.com/successkrisz/effect-packages/commit/1de2850126fc0be581254d486c685e9b2fc66778) Thanks [@successkrisz](https://github.com/successkrisz)! - Support Effect v4
+
+### Patch Changes
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`740724c`](https://github.com/successkrisz/effect-packages/commit/740724c0d2fe2f18438e0b071a8890993bee60f0) Thanks [@successkrisz](https://github.com/successkrisz)! - fix broken HttpApi.schemaQueryParams
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`7923d56`](https://github.com/successkrisz/effect-packages/commit/7923d56a3962259e012d23b273f48e5bace95a38) Thanks [@successkrisz](https://github.com/successkrisz)! - Rename internal Context tag identifier strings to the deterministic format `effect-lambda/<file>/<ClassName>` (enforced by the Effect language service `deterministicKeys` rule). Affected tags:
+  
+  - `APIGatewayAuthorizerEvent` → `effect-lambda/CustomAuthorizer/APIGatewayAuthorizerEvent`
+  - `DynamoDBStreamEvent` → `effect-lambda/DynamoDb/DynamoDBStreamEvent`
+  - `DynamoDBRecord` → `effect-lambda/DynamoDb/DynamoDBRecord`
+  - `APIGatewayProxyEventV2` → `effect-lambda/HttpApi/APIGatewayProxyEventV2`
+  - `APIGatewayProxyEvent` → `effect-lambda/RestApi/APIGatewayProxyEvent`
+  - `SNSEvent` → `effect-lambda/Sns/SNSEvent`
+  - `SQSEvent` → `effect-lambda/Sqs/SQSEvent`
+  - `SQSRecord` → `effect-lambda/Sqs/SQSRecord`
+  - `HandlerContext` → `effect-lambda/common/HandlerContext`
+  
+  The exported class symbols are unchanged — consumers importing the tags (e.g. `import { SQSEvent } from 'effect-lambda/Sqs'`) are unaffected. Only code that constructed tags by the raw identifier string, or cross-module code that compared stringified tag ids, will need to update.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: fix release pipeline
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`ded75cc`](https://github.com/successkrisz/effect-packages/commit/ded75cc22292d94558955c39a83e23220ad8c330) Thanks [@successkrisz](https://github.com/successkrisz)! - Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - update dev deps to effect@rc
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - effect@4.0.0-beta.83 support
+
 ## 1.0.0-beta.5
 
 ### Patch Changes
