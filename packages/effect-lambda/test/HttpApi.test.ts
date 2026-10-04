@@ -8,6 +8,7 @@ import {
 	NormalizedHeaders,
 	schemaBodyJson,
 	schemaPathParams,
+	schemaQueryParams,
 	toLambdaHandler,
 } from '../src/HttpApi'
 
@@ -121,5 +122,33 @@ describe('HttpApi', () => {
 		const result = await handler(event, mockContext, () => {})
 
 		expect(result).toEqual({ statusCode: 200, body: '123' })
+	})
+
+	it('should read empty query params', async () => {
+		const QueryParams = Schema.Struct({})
+		const handler = schemaQueryParams(QueryParams).pipe(
+			Effect.map((params) => ({ statusCode: 200, body: JSON.stringify(params) })),
+			Effect.orDie,
+			(eff) => toLambdaHandler(eff),
+		)({ layer: Layer.empty })
+
+		const event = createEvent()
+		const result = await handler(event, mockContext, () => {})
+
+		expect(result).toEqual({ statusCode: 200, body: JSON.stringify({}) })
+	})
+
+	it('should read query params', async () => {
+		const QueryParams = Schema.Struct({ q: Schema.String })
+		const handler = schemaQueryParams(QueryParams).pipe(
+			Effect.map(({ q }) => ({ statusCode: 200, body: q })),
+			Effect.orDie,
+			(eff) => toLambdaHandler(eff),
+		)({ layer: Layer.empty })
+
+		const event = { ...createEvent(), queryStringParameters: { q: 'search' } }
+		const result = await handler(event, mockContext, () => {})
+
+		expect(result).toEqual({ statusCode: 200, body: 'search' })
 	})
 })

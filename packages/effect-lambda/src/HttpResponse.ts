@@ -1,6 +1,4 @@
-import { Effect, ParseResult } from 'effect'
-import type { ParseError } from 'effect/ParseResult'
-import * as S from 'effect/Schema'
+import { Data, Effect, Schema, SchemaIssue } from 'effect'
 import {
 	type ClientErrorStatusCode,
 	type HttpStatusCode,
@@ -8,9 +6,9 @@ import {
 	type RedirectionStatusCode,
 	type ServerErrorStatusCode,
 	type SuccessStatusCode,
-} from './internal/http-status-codes'
-import { isJsonContentType } from './internal/jsonBodyParser'
-import { type ForbidKeysWithValues, lowercaseKeys } from './utils'
+} from './internal/http-status-codes.ts'
+import { isJsonContentType } from './internal/jsonBodyParser.ts'
+import { type ForbidKeysWithValues, lowercaseKeys } from './utils.ts'
 
 export type CommonHeaders = { [header: string]: boolean | number | string }
 
@@ -20,21 +18,51 @@ const getContentTypeHeader = (contentType: string | undefined | boolean | number
 		: 'application/json'
 
 /**
- * JSON HTTP Response with schema-based encoding
+ * Narrow AWS Gateway v2-style result (works with HTTP API and REST API)
  */
-const jsonResponse = <T = unknown>({
+export type HttpResponse = Readonly<{
+	statusCode: HttpStatusCode
+	headers?: CommonHeaders
+	body: string
+	isBase64Encoded?: false
+}>
+
+type JsonResponseBaseOptions = {
+	statusCode: HttpStatusCode
+	body: unknown
+	headers?: CommonHeaders
+}
+
+type JsonResponseSchema = Schema.Constraint & { readonly EncodingServices: never }
+
+class JsonResponseEncodeError extends Data.TaggedError('JsonResponseEncodeError')<{
+	readonly message: string
+	readonly cause: unknown
+}> {}
+
+/**
+ * JSON HTTP Response with schema-based encoding.
+ *
+ * When a schema is provided, encodes the body via `Schema.encodeUnknownEffect(Schema.fromJsonString(schema))`.
+ * Otherwise falls back to `JSON.stringify`.
+ */
+function jsonResponse<S extends JsonResponseSchema>(opts: {
+	statusCode: HttpStatusCode
+	body: S['Type']
+	schema: S
+	headers?: CommonHeaders
+}): Effect.Effect<HttpResponse>
+function jsonResponse(opts: JsonResponseBaseOptions): Effect.Effect<HttpResponse>
+function jsonResponse({
 	statusCode,
 	body,
-	schema = S.Any,
+	schema,
 	headers = {},
-}: {
-	statusCode: HttpStatusCode
-	body: T
-	// biome-ignore lint/suspicious/noExplicitAny: accept arbitrary schema
-	schema?: S.Schema<T, any>
-	headers?: CommonHeaders
-}) =>
-	S.encode(S.parseJson(schema))(body).pipe(
+}: JsonResponseBaseOptions & { schema?: JsonResponseSchema }): Effect.Effect<HttpResponse> {
+	const jsonSchema: Schema.ConstraintEncoder<string, never> =
+		schema !== undefined ? Schema.fromJsonString(schema) : Schema.fromJsonString(Schema.Unknown)
+
+	return Schema.encodeUnknownEffect(jsonSchema)(body).pipe(
 		Effect.map((encodedBody) => ({
 			statusCode,
 			body: encodedBody,
@@ -47,20 +75,16 @@ const jsonResponse = <T = unknown>({
 				'content-type': getContentTypeHeader(response.headers['content-type']),
 			},
 		})),
-		Effect.orDieWith(
-			(error) => new Error(`[jsonResponse]: Failed to encode body: ${error}`, { cause: error }),
+		Effect.mapError(
+			(error) =>
+				new JsonResponseEncodeError({
+					message: `[jsonResponse]: Failed to encode body: ${error}`,
+					cause: error,
+				}),
 		),
+		Effect.orDie,
 	)
-
-/**
- * Narrow AWS Gateway v2-style result (works with HTTP API and REST API)
- */
-export type HttpResponse = Readonly<{
-	statusCode: HttpStatusCode
-	headers?: CommonHeaders
-	body: string
-	isBase64Encoded?: false
-}>
+}
 
 /**
  * RFC 7807 Problem Details (problem+json).
@@ -112,13 +136,13 @@ export type CreatedOptions = Omit<SuccessOptions, 'statusCode'> &
 	}>
 
 export type OkResponse = (
-	_: Omit<Parameters<typeof jsonResponse>[0], 'statusCode'> & {
+	_: Omit<JsonResponseBaseOptions, 'statusCode'> & {
 		statusCode: Exclude<SuccessStatusCode, 204>
 	},
 ) => Effect.Effect<HttpResponse>
 
 export type CreatedResponse = (
-	_: Omit<Parameters<typeof jsonResponse>[0], 'statusCode'> & {
+	_: Omit<JsonResponseBaseOptions, 'statusCode'> & {
 		location?: string
 	},
 ) => Effect.Effect<HttpResponse>
@@ -144,7 +168,7 @@ const ok: OkResponse = ({ statusCode = 200, ...props }) => jsonResponse({ status
 const created: CreatedResponse = ({ location, headers, ...props }) =>
 	jsonResponse({
 		statusCode: 201,
-		headers: location ? { ...headers, location } : headers,
+		headers: location !== undefined && location.length > 0 ? { ...headers, location } : headers,
 		...props,
 	})
 
@@ -192,7 +216,7 @@ export type ClientErrorOptions = Readonly<{
 	extensions?: Readonly<Record<string, unknown>>
 }>
 
-export type BadRequestFromParseOptions = Readonly<{
+export type BadRequestFromSchemaOptions = Readonly<{
 	/**
 	 * Defaults to "https://example.com/problems/validation-error".
 	 */
@@ -212,37 +236,33 @@ export type BadRequestFromParseOptions = Readonly<{
 	detail?: string
 }>
 
-const badRequestErrorFormatter = (error: ParseResult.ParseError) =>
-	ParseResult.ArrayFormatter.formatError(error).pipe(
-		Effect.map((arr) =>
-			arr.map(({ _tag: _, path, message }) => (path.length ? { path, message } : { message })),
-		),
+const standardSchemaV1Formatter = SchemaIssue.makeFormatterStandardSchemaV1()
+
+const badRequestErrorFormatter = (error: Schema.SchemaError) =>
+	standardSchemaV1Formatter(error.issue).issues.map(({ path, message }) =>
+		path !== undefined && path.length > 0 ? { path, message } : { message },
 	)
 
 /**
- * 400 Bad Request response from ParseError
+ * 400 Bad Request response from SchemaError
  *
  * @example
  * ```ts
- * const badRequest = HttpResponse.badRequestFromParseError(parseError, {
+ * const badRequest = HttpResponse.badRequestFromSchemaError(schemaError, {
  *   statusCode: 400,
  *   type: "https://example.com/problems/validation-error",
  * })
  * // => { statusCode: 400, headers: { 'content-type': 'application/problem+json' }, body: '{"status":400,"title":"Bad Request","errors":[{"message":"Invalid value"}]}' }
  * ```
  */
-const badRequestFromParseError = (
-	parseError: ParseError,
-	options?: BadRequestFromParseOptions,
+const badRequestFromSchemaError = (
+	schemaError: Schema.SchemaError,
+	options?: BadRequestFromSchemaOptions,
 ): Effect.Effect<HttpResponse> =>
-	badRequestErrorFormatter(parseError).pipe(
-		Effect.flatMap((errors) =>
-			problemJsonResponse(options?.statusCode ?? 400, options?.headers, {
-				...options,
-				extensions: { errors },
-			}),
-		),
-	)
+	problemJsonResponse(options?.statusCode ?? 400, options?.headers, {
+		...options,
+		extensions: { errors: badRequestErrorFormatter(schemaError) },
+	})
 
 /**
  * 4xx client error response
@@ -291,18 +311,13 @@ const serverError = (options?: ServerErrorOptions): Effect.Effect<HttpResponse> 
 	problemJsonResponse(options?.statusCode ?? 500, options?.headers, options)
 
 export {
-	// -- 2xx Success responses --
-	ok,
-	created,
-	noContent,
-	// -- 3xx Redirection responses --
-	redirect,
-	// -- 4xx Client Error responses --
-	badRequestFromParseError,
-	problem,
+	badRequestFromSchemaError,
 	clientError,
-	// -- 5xx Server Error responses --
-	serverError,
-	// -- Common --
+	created,
 	jsonResponse,
+	noContent,
+	ok,
+	problem,
+	redirect,
+	serverError,
 }

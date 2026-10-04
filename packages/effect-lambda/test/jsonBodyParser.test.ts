@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import type { APIGatewayProxyEvent } from 'aws-lambda'
-import { Effect, ParseResult } from 'effect'
+import { Effect, Schema } from 'effect'
 import { jsonBodyParser } from '../src/internal/jsonBodyParser'
 
 describe('jsonBodyParser', () => {
@@ -78,15 +78,15 @@ describe('jsonBodyParser', () => {
 		expect(result.rawBody).toEqual(base64Body)
 	})
 
-	it('should fail with ParseError if JSON is invalid', async () => {
+	it('should fail with SchemaError if JSON is invalid', async () => {
 		const event = createEvent('invalid json', false, {
 			'content-type': 'application/json',
 		})
 		await expect(
 			jsonBodyParser(event).pipe(
-				Effect.catchTag('ParseError', (e) => Effect.succeed(e)),
+				Effect.catchTag('SchemaError', (e) => Effect.succeed(e)),
 				Effect.runPromise,
 			),
-		).resolves.toBeInstanceOf(ParseResult.ParseError)
+		).resolves.toBeInstanceOf(Schema.SchemaError)
 	})
 })

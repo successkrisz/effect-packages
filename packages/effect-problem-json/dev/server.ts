@@ -1,0 +1,261 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- NodeHttpServer.layer needs the Node createServer constructor for this dev entrypoint
+import { createServer } from 'node:http'
+import { NodeRuntime } from '@effect/platform-node'
+import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
+import { Context, Effect, Layer, Schema } from 'effect'
+import { HttpRouter, HttpServerResponse } from 'effect/http'
+import {
+	HttpApi,
+	HttpApiBuilder,
+	HttpApiEndpoint,
+	HttpApiGroup,
+	HttpApiSchema,
+	HttpApiSwagger,
+	OpenApi,
+} from 'effect/http-api'
+import * as HttpApiProblemDetail from '../src/HttpApiProblemDetail.ts'
+
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+class Todo extends Schema.Class<Todo>('Todo')({
+	id: Schema.Finite,
+	title: Schema.String,
+	completed: Schema.Boolean,
+}) {}
+
+class CreateTodo extends Schema.Class<CreateTodo>('CreateTodo')({
+	title: Schema.String,
+}) {}
+
+class UpdateTodo extends Schema.Class<UpdateTodo>('UpdateTodo')({
+	title: Schema.optional(Schema.String),
+	completed: Schema.optional(Schema.Boolean),
+}) {}
+
+// ---------------------------------------------------------------------------
+// Error definitions — pre-built and custom via ProblemError
+// ---------------------------------------------------------------------------
+
+const DuplicateTodoTitle = HttpApiProblemDetail.ProblemError(
+	'DuplicateTodoTitle',
+	422,
+)({
+	existingTodoId: Schema.Finite,
+})
+
+// ---------------------------------------------------------------------------
+// Todo Repository (in-memory)
+// ---------------------------------------------------------------------------
+
+class TodoRepo extends Context.Service<
+	TodoRepo,
+	{
+		readonly list: Effect.Effect<Array<Todo>>
+		readonly getById: (
+			id: number,
+		) => Effect.Effect<Todo, InstanceType<typeof HttpApiProblemDetail.NotFound>>
+		readonly create: (
+			input: CreateTodo,
+		) => Effect.Effect<Todo, InstanceType<typeof DuplicateTodoTitle>>
+		readonly update: (
+			id: number,
+			input: UpdateTodo,
+		) => Effect.Effect<Todo, InstanceType<typeof HttpApiProblemDetail.NotFound>>
+		readonly remove: (
+			id: number,
+		) => Effect.Effect<void, InstanceType<typeof HttpApiProblemDetail.NotFound>>
+	}
+>()('@ballatech/effect-problem-json/dev/server/TodoRepo') {}
+
+const TodoRepoLive = Layer.sync(TodoRepo)(() => {
+	let nextId = 1
+	const todos = new Map<number, Todo>()
+	const seed = new Todo({ id: nextId++, title: 'Learn Effect v4 HttpApi', completed: false })
+	todos.set(seed.id, seed)
+
+	return {
+		list: Effect.sync(() => [...todos.values()]),
+
+		getById: (id: number) =>
+			Effect.suspend(() => {
+				const todo = todos.get(id)
+				return todo !== undefined
+					? Effect.succeed(todo)
+					: Effect.fail(
+							new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
+						)
+			}),
+
+		create: (input: CreateTodo) =>
+			Effect.suspend(() => {
+				const duplicate = [...todos.values()].find((t) => t.title === input.title)
+				if (duplicate !== undefined)
+					return Effect.fail(
+						new DuplicateTodoTitle({
+							detail: `A todo with the title '${input.title}' already exists`,
+							existingTodoId: duplicate.id,
+						}),
+					)
+				const id = nextId++
+				const todo = new Todo({ id, title: input.title, completed: false })
+				todos.set(id, todo)
+				return Effect.succeed(todo)
+			}),
+
+		update: (id: number, input: UpdateTodo) =>
+			Effect.suspend(() => {
+				const existing = todos.get(id)
+				if (existing === undefined)
+					return Effect.fail(
+						new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
+					)
+				const updated = new Todo({
+					id: existing.id,
+					title: input.title ?? existing.title,
+					completed: input.completed ?? existing.completed,
+				})
+				todos.set(id, updated)
+				return Effect.succeed(updated)
+			}),
+
+		remove: (id: number) =>
+			Effect.suspend(() => {
+				if (!todos.has(id))
+					return Effect.fail(
+						new HttpApiProblemDetail.NotFound({ detail: `Todo with id ${id} was not found` }),
+					)
+				todos.delete(id)
+				return Effect.void
+			}),
+	}
+})
+
+// ---------------------------------------------------------------------------
+// API Definition
+// ---------------------------------------------------------------------------
+
+const todosGroup = HttpApiGroup.make('todos')
+	.add(
+		HttpApiEndpoint.get('listTodos', '/todos', {
+			success: Schema.Array(Todo),
+		}),
+	)
+	.add(
+		HttpApiEndpoint.get('getTodo', '/todos/:id', {
+			params: { id: Schema.FiniteFromString },
+			success: Todo,
+			error: HttpApiProblemDetail.NotFound,
+		}),
+	)
+	.add(
+		HttpApiEndpoint.post('createTodo', '/todos', {
+			payload: CreateTodo,
+			success: Todo.pipe(HttpApiSchema.status(201)),
+			error: DuplicateTodoTitle,
+		}),
+	)
+	.add(
+		HttpApiEndpoint.put('updateTodo', '/todos/:id', {
+			params: { id: Schema.FiniteFromString },
+			payload: UpdateTodo,
+			success: Todo,
+			error: HttpApiProblemDetail.NotFound,
+		}),
+	)
+	.add(
+		HttpApiEndpoint.delete('deleteTodo', '/todos/:id', {
+			params: { id: Schema.FiniteFromString },
+			error: HttpApiProblemDetail.NotFound,
+		}),
+	)
+
+const api = HttpApi.make('TodoApi')
+	.add(todosGroup)
+	.annotate(OpenApi.Transform, HttpApiProblemDetail.openApiTransform)
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+const TodosLive = HttpApiBuilder.group(api, 'todos', (handlers) =>
+	Effect.gen(function* () {
+		const repo = yield* TodoRepo
+
+		return handlers
+			.handle('listTodos', () => repo.list)
+			.handle('getTodo', ({ params }) => repo.getById(params.id))
+			.handle('createTodo', ({ payload }) => repo.create(payload))
+			.handle('updateTodo', ({ params, payload }) => repo.update(params.id, payload))
+			.handle('deleteTodo', ({ params }) => repo.remove(params.id))
+	}),
+).pipe(Layer.provide(TodoRepoLive))
+
+// ---------------------------------------------------------------------------
+// Manual validation route (demonstrates HttpApiProblemDetail.ValidationProblem.toResponse)
+// ---------------------------------------------------------------------------
+
+const ContactForm = Schema.Struct({
+	email: Schema.String.check(Schema.isIncluding('@')),
+	age: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+	name: Schema.String.check(Schema.isMinLength(1)),
+})
+
+const ManualValidateRoute = HttpRouter.add('POST', '/manual-validate', (request) =>
+	Effect.gen(function* () {
+		const body = yield* request.json
+		return yield* Schema.decodeUnknownEffect(ContactForm)(body).pipe(
+			Effect.map((data) => HttpServerResponse.jsonUnsafe({ ok: true, data })),
+			Effect.catchTag('SchemaError', (error) =>
+				Effect.succeed(HttpApiProblemDetail.ValidationProblem.toResponse(error)),
+			),
+		)
+	}),
+)
+
+// ---------------------------------------------------------------------------
+// Middleware-only validation route (SchemaError caught by global middleware)
+// ---------------------------------------------------------------------------
+
+const MiddlewareValidateRoute = HttpRouter.add('POST', '/middleware-validate', (request) =>
+	Effect.gen(function* () {
+		const body = yield* request.json
+		const data = yield* Schema.decodeUnknownEffect(ContactForm)(body)
+		return HttpServerResponse.jsonUnsafe({ ok: true, data })
+	}),
+)
+
+const SwaggerLive = HttpApiSwagger.layer(api, { path: '/docs' })
+
+const ServerLive = NodeHttpServer.layer(createServer, { port: 3000 })
+
+const AppLive = HttpRouter.serve(
+	Layer.mergeAll(
+		Layer.provide(HttpApiBuilder.layer(api, { openapiPath: '/openapi.json' }), [TodosLive]),
+		SwaggerLive,
+		ManualValidateRoute,
+		MiddlewareValidateRoute,
+	).pipe(Layer.provideMerge(HttpApiProblemDetail.middleware())),
+).pipe(Layer.provide(ServerLive))
+
+const logStartup = Effect.gen(function* () {
+	yield* Effect.log('Server running at http://localhost:3000')
+	yield* Effect.log('Swagger UI at http://localhost:3000/docs')
+	yield* Effect.log('OpenAPI spec at http://localhost:3000/openapi.json')
+	yield* Effect.log(`
+Try it out:
+  curl http://localhost:3000/todos
+  curl http://localhost:3000/todos/1
+  curl http://localhost:3000/todos/999
+  curl -X POST http://localhost:3000/todos -H 'Content-Type: application/json' -d '{"title":"Buy milk"}'
+  curl -X POST http://localhost:3000/todos -H 'Content-Type: application/json' -d '{"title":"Learn Effect v4 HttpApi"}'  # 422 duplicate with extension
+  curl -X POST http://localhost:3000/todos -H 'Content-Type: application/json' -d '{"bad":"field"}'
+  curl -X PUT http://localhost:3000/todos/1 -H 'Content-Type: application/json' -d '{"completed":true}'
+  curl -X DELETE http://localhost:3000/todos/1
+  curl -X POST http://localhost:3000/manual-validate -H 'Content-Type: application/json' -d '{"email":"bad","age":-1,"name":""}'
+  curl -X POST http://localhost:3000/manual-validate -H 'Content-Type: application/json' -d '{"email":"a@b.com","age":25,"name":"Alice"}'
+  curl -X POST http://localhost:3000/middleware-validate -H 'Content-Type: application/json' -d '{"email":"bad","age":-1,"name":""}'  # caught by global middleware`)
+})
+
+NodeRuntime.runMain(Layer.launch(Layer.mergeAll(AppLive, Layer.effectDiscard(logStartup))))

@@ -1,6 +1,6 @@
 import { Context } from 'effect'
-import type { AwsSNSEvent } from './aws'
-import { makeToHandler } from './makeToHandler'
+import type { AwsSNSEvent } from './aws.ts'
+import { makeToHandler } from './makeToHandler.ts'
 
 /**
  * Export types from aws-lambda
@@ -10,7 +10,9 @@ export type { AwsSNSEvent }
 /**
  * Context tag for an incoming SNS event.
  */
-export class SNSEvent extends Context.Tag('@effect-lambda/SNSEvent')<SNSEvent, AwsSNSEvent>() {}
+export class SNSEvent extends Context.Service<SNSEvent, AwsSNSEvent>()(
+	'effect-lambda/Sns/SNSEvent',
+) {}
 
 /**
  * Convert an effectful SNS program into an SNS Lambda handler.

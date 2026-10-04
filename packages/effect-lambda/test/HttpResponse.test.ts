@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Schema as S } from 'effect'
 import {
-	badRequestFromParseError,
+	badRequestFromSchemaError,
 	clientError,
 	created,
 	type HttpResponse,
@@ -68,7 +68,7 @@ describe('HttpResponse.jsonResponse', () => {
 				body: { n: 'not-a-number' as unknown as number },
 				schema: S.Struct({ n: S.NumberFromString }),
 			}).pipe(
-				Effect.catchAllDefect((e) => {
+				Effect.catchDefect((e) => {
 					expect(e instanceof Error && e.message).toContain('[jsonResponse]: Failed to encode body')
 					return Effect.void
 				}),
@@ -140,16 +140,16 @@ describe('HttpResponse.redirect', () => {
 	})
 })
 
-describe('HttpResponse.badRequestFromParseError', () => {
+describe('HttpResponse.badRequestFromSchemaError', () => {
 	const makeParseError = async () =>
-		await S.decode(S.Struct({ n: S.Number }))({ n: 'not-a-number' as unknown as number }).pipe(
+		await S.decodeUnknownEffect(S.Struct({ n: S.Number }))({ n: 'not-a-number' }).pipe(
 			Effect.flip,
 			Effect.runPromise,
 		)
 
 	it('returns 400 problem+json with formatted errors', async () => {
 		const error = await makeParseError()
-		const res = await badRequestFromParseError(error).pipe(Effect.runPromise)
+		const res = await badRequestFromSchemaError(error).pipe(Effect.runPromise)
 		expect(res.statusCode).toBe(400)
 		expect(res.headers?.['content-type']).toBe('application/problem+json')
 		const body = parseBody(res)
@@ -161,7 +161,7 @@ describe('HttpResponse.badRequestFromParseError', () => {
 
 	it('allows overriding status (e.g. 422) and adds optional fields', async () => {
 		const error = await makeParseError()
-		const res = await badRequestFromParseError(error, {
+		const res = await badRequestFromSchemaError(error, {
 			statusCode: 422,
 			type: 'https://example.com/problems/validation-error',
 			instance: '/request/123',

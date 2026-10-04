@@ -138,11 +138,11 @@ const httpStatus = {
 type HttpStatusCode = keyof typeof httpStatusMessages
 
 export {
-	type HttpStatusCode,
-	type SuccessStatusCode,
-	type RedirectionStatusCode,
 	type ClientErrorStatusCode,
-	type ServerErrorStatusCode,
-	httpStatusMessages,
+	type HttpStatusCode,
 	httpStatus,
+	httpStatusMessages,
+	type RedirectionStatusCode,
+	type ServerErrorStatusCode,
+	type SuccessStatusCode,
 }

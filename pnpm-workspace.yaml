@@ -2,13 +2,35 @@ packages:
   - packages/*
 
 catalog:
-  '@ballatech/tsconfig': '^1.2.0'
-  '@effect/language-service': '^0.36.0'
-  '@effect/platform': ^0.90.10
+  '@effect/platform-node': 4.0.0
+  '@effect/platform-node-shared': 4.0.0
+  '@effect/vitest': 4.0.0
   '@types/aws-lambda': ^8.10.152
-  '@types/node': ^22.18.6
-  effect: ^3.17.14
+  '@types/node': ^24.0.4
+  effect: 4.0.0
 
-onlyBuiltDependencies:
-  - esbuild
-  - msgpackr-extract
+minimumReleaseAgeExclude:
+  - '@changesets/cli@3.0.1'
+  - '@changesets/write@1.0.1'
+  - '@vitest/expect@4.1.11'
+  - '@vitest/mocker@4.1.11'
+  - '@vitest/pretty-format@4.1.11'
+  - '@vitest/runner@4.1.11'
+  - '@vitest/snapshot@4.1.11'
+  - '@vitest/spy@4.1.11'
+  - '@vitest/utils@4.1.11'
+  - vitest@4.1.11
+  - '@effect-aws/lambda@2.0.0'
+  - '@effect/tsgo-darwin-arm64@0.48.0'
+  - '@effect/tsgo-darwin-x64@0.48.0'
+  - '@effect/tsgo-linux-arm64@0.48.0'
+  - '@effect/tsgo-linux-arm@0.48.0'
+  - '@effect/tsgo-linux-x64@0.48.0'
+  - '@effect/tsgo-win32-arm64@0.48.0'
+  - '@effect/tsgo-win32-x64@0.48.0'
+  - '@effect/tsgo@0.48.0'
+
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  msgpackr-extract: false

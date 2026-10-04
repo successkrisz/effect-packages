@@ -1,43 +1,39 @@
 {
 	"name": "@ballatech/effect-oauth-client",
-	"version": "0.3.2",
+	"version": "1.0.0-beta.8",
 	"private": false,
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
-	"main": "./dist/index.cjs",
-	"module": "./dist/index.js",
-	"types": "./dist/index.d.ts",
 	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"require": "./dist/index.cjs"
-		}
+		".": "./src/index.ts"
 	},
 	"files": [
-		"dist/**",
+		"src/**/*.ts",
+		"dist/**/*.js",
+		"dist/**/*.js.map",
+		"dist/**/*.d.ts",
+		"dist/**/*.d.ts.map",
 		"README.md",
 		"LICENSE"
 	],
 	"scripts": {
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"build": "tsup",
+		"build": "tsc -p tsconfig.json",
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {
-		"@ballatech/tsconfig": "catalog:",
-		"@effect/language-service": "catalog:",
-		"@effect/platform": "catalog:",
 		"@types/node": "catalog:",
 		"effect": "catalog:"
 	},
 	"peerDependencies": {
-		"@effect/platform": "catalog:",
-		"effect": "catalog:"
+		"effect": "^4.0.0"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"exports": {
+			".": "./dist/index.js"
+		}
 	},
 	"repository": {
 		"type": "git",

@@ -1,0 +1,55 @@
+{
+	"name": "@ballatech/effect-problem-json",
+	"version": "1.0.0-beta.7",
+	"private": false,
+	"license": "MIT",
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./HttpApiProblemDetail": "./src/HttpApiProblemDetail.ts"
+	},
+	"files": [
+		"src/**/*.ts",
+		"dist/**/*.js",
+		"dist/**/*.js.map",
+		"dist/**/*.d.ts",
+		"dist/**/*.d.ts.map",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"typecheck": "tsc -p tsconfig.dev.json",
+		"dev": "npx tsx dev/server.ts",
+		"build": "tsc -p tsconfig.json",
+		"prepack": "pnpm run build"
+	},
+	"devDependencies": {
+		"@effect-aws/lambda": "2.0.0",
+		"@effect/platform-node": "catalog:",
+		"@effect/platform-node-shared": "catalog:",
+		"@types/aws-lambda": "catalog:",
+		"@types/node": "catalog:",
+		"effect": "catalog:",
+		"tsx": "^4.21.0"
+	},
+	"peerDependencies": {
+		"effect": "^4.0.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			".": "./dist/index.js",
+			"./HttpApiProblemDetail": "./dist/HttpApiProblemDetail.js"
+		}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/successkrisz/effect-packages.git",
+		"directory": "packages/effect-problem-json"
+	},
+	"bugs": {
+		"url": "https://github.com/successkrisz/effect-packages/issues"
+	},
+	"homepage": "https://github.com/successkrisz/effect-packages#readme"
+}

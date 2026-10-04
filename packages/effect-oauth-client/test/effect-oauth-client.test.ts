@@ -1,6 +1,7 @@
-import { FetchHttpClient, type HttpClient, HttpClientResponse } from '@effect/platform'
 import { beforeEach, describe, expect, it, vi } from '@effect/vitest'
 import {
+	Cause,
+	Config,
 	Context,
 	Duration,
 	Effect,
@@ -9,67 +10,56 @@ import {
 	ManagedRuntime,
 	Redacted,
 	Schema,
-	TestClock,
-	TestContext,
 } from 'effect'
-import type { ConfigError } from 'effect/ConfigError'
-import type { ParseError } from 'effect/ParseResult'
-import * as OAuthClient from '../src/effect-oauth-client'
+import { FetchHttpClient, HttpClientResponse } from 'effect/http'
+import { TestClock } from 'effect/testing'
+import * as OAuthClient from '../src/OAuthHttpClient'
 
-// ===== API Schemas =====
+const FooSchema = Schema.Struct({ foo: Schema.String })
 
-const FooSchema = Schema.Struct({
-	foo: Schema.String,
-})
+class OAuthHttpClient extends Context.Service<OAuthHttpClient, OAuthClient.Client>()(
+	'test/OAuthHttpClient',
+) {}
 
-// ===== Service =====
-
-const makeService1 = (creds: OAuthClient.Credentials) =>
+const createProgram = (credentials: OAuthClient.Credentials) =>
 	Effect.gen(function* () {
-		const client = yield* OAuthClient.make(creds)
-		const getSecretFoo = () =>
-			client
-				.get('https://api.example.com/secret-foo')
-				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
-
-		return {
-			getSecretFoo,
-		}
+		const client = yield* OAuthClient.make(credentials)
+		return yield* client
+			.get('https://api.example.com/secret-foo')
+			.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
 	})
 
-class SomeService1 extends Context.Tag('@ballatech/SomeService1')<
-	SomeService1,
-	Effect.Effect.Success<ReturnType<typeof makeService1>>
->() {}
+const provideFetch = <A, E, R>(
+	effect: Effect.Effect<A, E, R>,
+	fetchImpl: typeof globalThis.fetch,
+) =>
+	effect.pipe(
+		Effect.provide(
+			FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchImpl))),
+		),
+	)
 
-const SomeService1Layer = Layer.effect(
-	SomeService1,
-	makeService1({
+const makeFetchLayer = (fetchImpl: typeof globalThis.fetch) =>
+	FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchImpl)))
+
+const makeOAuthLayer = (credentials: OAuthClient.Credentials, fetchImpl: typeof globalThis.fetch) =>
+	Layer.effect(OAuthHttpClient)(OAuthClient.make(credentials)).pipe(
+		Layer.provide(makeFetchLayer(fetchImpl)),
+	)
+
+describe('OAuthClient', () => {
+	const fetch: ReturnType<typeof vi.fn> = vi.fn()
+
+	const baseCredentials: OAuthClient.Credentials = {
 		clientId: 'id123',
 		clientSecret: Redacted.make('secret'),
 		tokenUrl: 'https://api.example.com/token',
-	}),
-)
+	}
 
-describe('OAuthClient', () => {
-	let rt: ManagedRuntime.ManagedRuntime<
-		HttpClient.HttpClient | SomeService1,
-		ParseError | ConfigError
-	>
-	const fetch: ReturnType<typeof vi.fn> = vi.fn()
 	beforeEach(() => {
 		vi.clearAllMocks()
-		fetch.mockClear()
 		fetch.mockReset()
-		const FetchTest = Layer.succeed(FetchHttpClient.Fetch, fetch)
-		const TestLayer = FetchHttpClient.layer.pipe(Layer.provide(FetchTest))
-		rt = ManagedRuntime.make(
-			SomeService1Layer.pipe(Layer.provideMerge(TestLayer), Layer.provide(TestContext.TestContext)),
-		)
-	})
-
-	it('Should only call the token endpoint once', async () => {
-		fetch.mockImplementation(async (url) => {
+		fetch.mockImplementation(async (url: URL) => {
 			if (url.href.includes('token')) {
 				return new Response(
 					JSON.stringify({
@@ -80,35 +70,49 @@ describe('OAuthClient', () => {
 					{ status: 200 },
 				)
 			}
-			return new Response(JSON.stringify({ foo: 'secretFoo' }), {
-				status: 200,
-			})
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
 		})
+	})
 
-		const prog = Effect.gen(function* () {
-			const service = yield* SomeService1
-			const res = yield* service.getSecretFoo()
-			yield* Effect.logInfo(res)
-			return res
-		})
+	it('should only call the token endpoint once for repeated requests', async () => {
+		const runtime = ManagedRuntime.make(makeOAuthLayer(baseCredentials, fetch))
+		const request = OAuthHttpClient.use((client) =>
+			client
+				.get('https://api.example.com/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+		)
 
 		expect(fetch.mock.calls.length).toBe(0)
-		const res1 = await rt.runPromise(prog)
-		expect(res1.foo).toBe('secretFoo')
-		const res2 = await rt.runPromise(prog)
-		expect(res2.foo).toBe('secretFoo')
+		const res1 = await runtime.runPromise(request)
+		const res2 = await runtime.runPromise(request)
 
-		expect(fetch.mock.calls.length).toBe(3)
+		expect(res1.foo).toBe('secretFoo')
+		expect(res2.foo).toBe('secretFoo')
 		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(1)
 		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(2)
-		// console.log(
-		//   "HTTP calls:",
-		//   fetch.mock.calls.map((c) => c[0].href)
-		// )
+
+		await runtime.dispose()
 	})
 
-	it('Should refresh expired token', async () => {
-		fetch.mockImplementation(async (url) => {
+	it.effect('should refresh token when cache ttl elapses', () =>
+		Effect.gen(function* () {
+			const request = OAuthHttpClient.use((client) =>
+				client
+					.get('https://api.example.com/secret-foo')
+					.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+			)
+
+			yield* request
+			yield* TestClock.adjust(Duration.millis(2))
+			yield* request
+
+			expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(2)
+			expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(2)
+		}).pipe(Effect.provide(makeOAuthLayer({ ...baseCredentials, ttl: Duration.millis(1) }, fetch))),
+	)
+
+	it('should fail with AuthorizationError on 401', async () => {
+		fetch.mockImplementation(async (url: URL) => {
 			if (url.href.includes('token')) {
 				return new Response(
 					JSON.stringify({
@@ -119,62 +123,21 @@ describe('OAuthClient', () => {
 					{ status: 200 },
 				)
 			}
-			return new Response(JSON.stringify({ foo: 'secretFoo' }), {
-				status: 200,
-			})
+			return new Response('Unauthorized', { status: 401 })
 		})
 
-		const prog = Effect.gen(function* () {
-			const service = yield* SomeService1
-			yield* service.getSecretFoo()
-			yield* TestClock.adjust(Duration.seconds(1000)) // 1000 seconds = 16 minutes 40 seconds
-			yield* service.getSecretFoo()
-			yield* TestClock.adjust(Duration.seconds(2600)) // 2600 seconds = 43 minutes
-			yield* service.getSecretFoo()
-			const res = yield* service.getSecretFoo()
-			return res
-		})
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
 
-		const res1 = await rt.runPromise(prog.pipe(Effect.provide(TestContext.TestContext)))
-		expect(res1.foo).toBe('secretFoo')
-
-		expect(fetch.mock.calls.length).toBe(6)
-		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(2)
-		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(4)
-		// console.log(fetch.mock.calls.map((c) => c[0].href))
-	})
-
-	it('Should not retry http errors', async () => {
-		// Simulate a non-401 HTTP error (e.g., 403 Forbidden)
-		fetch.mockImplementation(async (url) => {
-			if (url.href.includes('token')) {
-				return new Response(
-					JSON.stringify({
-						access_token: 'test',
-						expires_in: 3600,
-						token_type: 'Bearer',
-					}),
-					{ status: 200 },
-				)
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('unauthorized')
 			}
-			return new Response('Not found', { status: 401 })
-		})
-
-		const prog = Effect.gen(function* () {
-			const service = yield* SomeService1
-			return yield* service.getSecretFoo()
-		})
-
-		const error = await rt.runPromiseExit(prog.pipe(Effect.provide(TestContext.TestContext)))
-
-		// Should only call token endpoint once and secret endpoint once
-		expect(fetch.mock.calls.filter((c) => c[0].href.includes('token')).length).toBe(1)
-		expect(fetch.mock.calls.filter((c) => c[0].href.includes('secret-foo')).length).toBe(1)
-
-		expect(error._tag).toBe('Failure')
-		expect(Exit.isFailure(error) && error.cause._tag === 'Fail' && error.cause.error._tag).toBe(
-			'@ballatech/effect-oauth-client/AuthorizationError',
-		)
+		}
 	})
 
 	it('isAuthorizationError should correctly identify AuthorizationError instances', () => {
@@ -191,18 +154,316 @@ describe('OAuthClient', () => {
 		expect(OAuthClient.isAuthorizationError(anotherError)).toBe(false)
 	})
 
-	it('should only send scope and audience if they are provided', async () => {
-		const prog = Effect.gen(function* () {
-			const service = yield* SomeService1
-			return yield* service.getSecretFoo()
+	it('should prepend baseUrl to outgoing requests', async () => {
+		const program = Effect.gen(function* () {
+			const client = yield* OAuthClient.make({
+				...baseCredentials,
+				baseUrl: 'https://api.example.com',
+			})
+			return yield* client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
 		})
 
-		await rt.runPromiseExit(prog)
-		const s = Object.fromEntries(
-			new URLSearchParams(new TextDecoder('utf-8').decode(fetch.mock.calls[0][1].body)),
+		const result = await Effect.runPromise(provideFetch(program, fetch))
+		expect(result.foo).toBe('secretFoo')
+
+		const apiCalls = fetch.mock.calls.filter((c) => !(c[0] as URL).href.includes('token'))
+		expect(apiCalls.length).toBe(1)
+		expect(apiCalls[0][0].href).toContain('https://api.example.com/secret-foo')
+	})
+
+	it('makeFromConfig should resolve Config values and create an authenticated client', async () => {
+		const program = Effect.gen(function* () {
+			const client = yield* OAuthClient.makeFromConfig({
+				clientId: Config.succeed('id123'),
+				clientSecret: Config.succeed(Redacted.make('secret')),
+				tokenUrl: Config.succeed('https://api.example.com/token'),
+				baseUrl: Config.succeed('https://api.example.com'),
+				scope: Config.succeed('read:foo'),
+			})
+			return yield* client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped)
+		})
+
+		const result = await Effect.runPromise(provideFetch(program, fetch))
+		expect(result.foo).toBe('secretFoo')
+
+		const tokenCalls = fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token'))
+		expect(tokenCalls.length).toBe(1)
+
+		const requestInit = tokenCalls[0]?.[1] as RequestInit | undefined
+		const body = requestInit?.body as Uint8Array | undefined
+		const params = Object.fromEntries(
+			new URLSearchParams(new TextDecoder('utf-8').decode(body ?? new Uint8Array())),
 		)
-		expect(s.grant_type).toBe('client_credentials')
-		expect(s.scope).toBeUndefined()
-		expect(s.audience).toBeUndefined()
+		expect(params.scope).toBe('read:foo')
+	})
+
+	it('layer should provide OAuthHttpClient from static credentials', async () => {
+		const oauthLayer = OAuthClient.layer({
+			...baseCredentials,
+			baseUrl: 'https://api.example.com',
+		}).pipe(Layer.provide(makeFetchLayer(fetch)))
+
+		const program = OAuthClient.OAuthHttpClient.use((client) =>
+			client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+		)
+
+		const result = await Effect.runPromise(program.pipe(Effect.provide(oauthLayer)))
+		expect(result.foo).toBe('secretFoo')
+		expect(fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token')).length).toBe(1)
+	})
+
+	it('layerFromConfig should provide OAuthHttpClient from Config values', async () => {
+		const oauthLayer = OAuthClient.layerFromConfig({
+			clientId: Config.succeed('id123'),
+			clientSecret: Config.succeed(Redacted.make('secret')),
+			tokenUrl: Config.succeed('https://api.example.com/token'),
+			baseUrl: Config.succeed('https://api.example.com'),
+		}).pipe(Layer.provide(makeFetchLayer(fetch)))
+
+		const program = OAuthClient.OAuthHttpClient.use((client) =>
+			client
+				.get('/secret-foo')
+				.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(FooSchema)), Effect.scoped),
+		)
+
+		const result = await Effect.runPromise(program.pipe(Effect.provide(oauthLayer)))
+		expect(result.foo).toBe('secretFoo')
+		expect(fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token')).length).toBe(1)
+	})
+
+	it('should only send scope and audience if they are provided', async () => {
+		await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+
+		const requestInit = fetch.mock.calls[0]?.[1] as RequestInit | undefined
+		const body = requestInit?.body as Uint8Array | undefined
+		const params = Object.fromEntries(
+			new URLSearchParams(new TextDecoder('utf-8').decode(body ?? new Uint8Array())),
+		)
+
+		expect(params.grant_type).toBe('client_credentials')
+		expect(params.scope).toBeUndefined()
+		expect(params.audience).toBeUndefined()
+	})
+
+	it('should invalidate token and retry once on 401, succeeding with a fresh token', async () => {
+		let apiCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			apiCallCount++
+			if (apiCallCount === 1) {
+				return new Response('Unauthorized', { status: 401 })
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(apiCallCount).toBe(2)
+	})
+
+	it('should not retry more than once on persistent 401', async () => {
+		let apiCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			apiCallCount++
+			return new Response('Unauthorized', { status: 401 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('unauthorized')
+			}
+		}
+
+		expect(apiCallCount).toBe(2)
+	})
+
+	it('should fail with credentials_error when token response is malformed and not retry', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				return new Response(JSON.stringify({ error: 'invalid_client' }), { status: 400 })
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('credentials_error')
+				expect(firstError.cause).toBeDefined()
+				expect(Schema.isSchemaError(firstError.cause)).toBe(true)
+			}
+		}
+
+		expect(tokenCallCount).toBe(1)
+	})
+
+	it('should fail with client_error after exhausting retries on persistent network failure', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				throw new Error('Network error')
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			expect(failReasons.length).toBeGreaterThan(0)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('client_error')
+				expect(firstError.cause).toBeDefined()
+			}
+		}
+
+		expect(tokenCallCount).toBe(3)
+	})
+
+	it('should recover from transient token endpoint failures', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				if (tokenCallCount <= 2) {
+					throw new Error('Connection refused')
+				}
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(tokenCallCount).toBe(3)
+	})
+
+	it('should retry on 429 rate limiting from token endpoint', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				if (tokenCallCount <= 2) {
+					return new Response(JSON.stringify({ error: 'rate_limit_exceeded' }), { status: 429 })
+				}
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(tokenCallCount).toBe(3)
+	})
+
+	it('should retry on 502 from token endpoint', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				if (tokenCallCount <= 1) {
+					return new Response('<html>Bad Gateway</html>', { status: 502 })
+				}
+				return new Response(
+					JSON.stringify({
+						access_token: 'test',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const result = await Effect.runPromise(provideFetch(createProgram(baseCredentials), fetch))
+		expect(result.foo).toBe('secretFoo')
+		expect(tokenCallCount).toBe(2)
+	})
+
+	it('should not retry on 400 from token endpoint', async () => {
+		let tokenCallCount = 0
+		fetch.mockImplementation(async (url: URL) => {
+			if (url.href.includes('token')) {
+				tokenCallCount++
+				return new Response(
+					JSON.stringify({ error: 'invalid_client', error_description: 'Bad credentials' }),
+					{ status: 400 },
+				)
+			}
+			return new Response(JSON.stringify({ foo: 'secretFoo' }), { status: 200 })
+		})
+
+		const exit = await Effect.runPromiseExit(provideFetch(createProgram(baseCredentials), fetch))
+		expect(Exit.isFailure(exit)).toBe(true)
+
+		if (Exit.isFailure(exit)) {
+			const failReasons = exit.cause.reasons.filter(Cause.isFailReason)
+			const firstError = failReasons[0]?.error
+			expect(OAuthClient.isAuthorizationError(firstError)).toBe(true)
+			if (OAuthClient.isAuthorizationError(firstError)) {
+				expect(firstError.code).toBe('credentials_error')
+			}
+		}
+
+		expect(tokenCallCount).toBe(1)
 	})
 })

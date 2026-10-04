@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- type-only import, no runtime dependency on Node
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 type ObjectWithOptionalHeaders = {
@@ -40,10 +41,9 @@ export type Middleware = (
  *    statusCode: 200,
  *    body: 'Woohoo',
  * });
- * export const handler = handlerEffect.pipe(
- *    Effect.map(applyMiddleware(middleware)),
- *    RestApi.toLambdaHandler,
- * )();
+ * export const handler = RestApi.toLambdaHandler(
+ *    handlerEffect.pipe(Effect.map(applyMiddleware(middleware)))
+ * )({ layer: Layer.empty });
  */
 /**
  * Apply an Express-style middleware to a response-like object to mutate headers.
@@ -51,7 +51,7 @@ export type Middleware = (
 export const applyMiddleware =
 	(middleware: Middleware) =>
 	<T extends ObjectWithOptionalHeaders>(response: T): T => {
-		const headers: Headers = response.headers ? { ...response.headers } : {}
+		const headers: Headers = response.headers !== undefined ? { ...response.headers } : {}
 		const req = {} as IncomingMessage
 		const res = {
 			setHeader: (key: string, value: string) => {

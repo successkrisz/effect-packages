@@ -5,7 +5,7 @@ export const lambdaRuntimeFromLayer = <R, E>(
 	layer: Layer.Layer<R, E>,
 	options?: { readonly memoMap?: Layer.MemoMap },
 ): ManagedRuntime.ManagedRuntime<R, E> => {
-	const runtime = ManagedRuntime.make(layer, options?.memoMap)
+	const runtime = ManagedRuntime.make(layer, options)
 
 	const signalHandler: NodeJS.SignalsListener = (signal) => {
 		Effect.runFork(
@@ -14,7 +14,7 @@ export const lambdaRuntimeFromLayer = <R, E>(
 				yield* Console.log('[runtime] cleaning up')
 				yield* runtime.disposeEffect
 				yield* Console.log('[runtime] exiting')
-				yield* Effect.sync(() => process.exit(0))
+				return yield* Effect.sync(() => process.exit(0))
 			}),
 		)
 	}

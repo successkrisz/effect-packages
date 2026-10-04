@@ -1,5 +1,65 @@
 # effect-lambda
 
+## 1.0.0-beta.5
+
+### Patch Changes
+
+- [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: fix release pipeline
+
+## 1.0.0-beta.4
+
+### Major Changes
+
+- Update to work with effect beta.49
+
+- Support Effect v4
+
+### Patch Changes
+
+- Rename internal Context tag identifier strings to the deterministic format `effect-lambda/<file>/<ClassName>` (enforced by the Effect language service `deterministicKeys` rule). Affected tags:
+  
+  - `APIGatewayAuthorizerEvent` → `effect-lambda/CustomAuthorizer/APIGatewayAuthorizerEvent`
+  - `DynamoDBStreamEvent` → `effect-lambda/DynamoDb/DynamoDBStreamEvent`
+  - `DynamoDBRecord` → `effect-lambda/DynamoDb/DynamoDBRecord`
+  - `APIGatewayProxyEventV2` → `effect-lambda/HttpApi/APIGatewayProxyEventV2`
+  - `APIGatewayProxyEvent` → `effect-lambda/RestApi/APIGatewayProxyEvent`
+  - `SNSEvent` → `effect-lambda/Sns/SNSEvent`
+  - `SQSEvent` → `effect-lambda/Sqs/SQSEvent`
+  - `SQSRecord` → `effect-lambda/Sqs/SQSRecord`
+  - `HandlerContext` → `effect-lambda/common/HandlerContext`
+  
+  The exported class symbols are unchanged — consumers importing the tags (e.g. `import { SQSEvent } from 'effect-lambda/Sqs'`) are unaffected. Only code that constructed tags by the raw identifier string, or cross-module code that compared stringified tag ids, will need to update.
+
+- Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
+- [#30](https://github.com/successkrisz/effect-packages/pull/30) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@github-actions](https://github.com/apps/github-actions)! - update dev deps to effect@rc
+
+- effect@4.0.0-beta.83 support
+
+## 1.0.0-beta.3
+
+### Patch Changes
+
+- [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - effect@4.0.0-beta.83 support
+
+## 1.0.0-beta.2
+
+### Major Changes
+
+- [`0347319`](https://github.com/successkrisz/effect-packages/commit/0347319102d29b7b6eece5ef80cf68ffeb976363) - Update to work with effect beta.49
+
+## 1.0.0-beta.1
+
+### Patch Changes
+
+- [#20](https://github.com/successkrisz/effect-packages/pull/20) [`ded75cc`](https://github.com/successkrisz/effect-packages/commit/ded75cc22292d94558955c39a83e23220ad8c330) Thanks [@github-actions](https://github.com/apps/github-actions)! - Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
+## 1.0.0-beta.0
+
+### Major Changes
+
+- [`1de2850`](https://github.com/successkrisz/effect-packages/commit/1de2850126fc0be581254d486c685e9b2fc66778) - Support Effect v4
+
 ## 0.5.2
 
 ### Patch Changes

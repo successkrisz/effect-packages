@@ -34,11 +34,10 @@ describe('sqsHandler', () => {
 
 	it('effect should have access to the event', async () => {
 		const actual = toLambdaHandler(
-			SQSEvent.pipe(
-				Effect.map((_event) => {
-					expect(_event).toEqual(event)
-				}),
-			),
+			SQSEvent.use((_event) => {
+				expect(_event).toEqual(event)
+				return Effect.void
+			}),
 		)({ layer: Layer.empty })(event, {} as Context, () => {})
 
 		await expect(actual).resolves.toBe(undefined)
@@ -47,11 +46,10 @@ describe('sqsHandler', () => {
 	it('effect should have access to the context', async () => {
 		const context = { functionName: 'foobar' } as Context
 		const actual = toLambdaHandler(
-			HandlerContext.pipe(
-				Effect.map((_context) => {
-					expect(_context).toEqual(context)
-				}),
-			),
+			HandlerContext.use((_context) => {
+				expect(_context).toEqual(context)
+				return Effect.void
+			}),
 		)({ layer: Layer.empty })(event, context, () => {
 			expect(context).toEqual(context)
 		})
@@ -72,12 +70,10 @@ describe('sqsHandler', () => {
 	})
 
 	it('should process each record and return a batch response', async () => {
-		const processRecord = SQSRecord.pipe(
-			Effect.tap((record) => {
-				expect(record.body).toBeDefined()
-			}),
-			Effect.asVoid,
-		)
+		const processRecord = SQSRecord.use((record) => {
+			expect(record.body).toBeDefined()
+			return Effect.void
+		})
 
 		const result = await processRecord.pipe(
 			recordProcessorAdapter,
@@ -91,10 +87,8 @@ describe('sqsHandler', () => {
 	})
 
 	it('should return batchItemFailures for failed records', async () => {
-		const processRecord = SQSRecord.pipe(
-			Effect.flatMap((record) =>
-				record.body === 'fail' ? Effect.fail('Processing failed') : Effect.succeed(undefined),
-			),
+		const processRecord = SQSRecord.use((record) =>
+			record.body === 'fail' ? Effect.fail('Processing failed') : Effect.succeed(undefined),
 		)
 
 		const modifiedEvent = {
@@ -111,5 +105,40 @@ describe('sqsHandler', () => {
 		expect(result).toEqual({
 			batchItemFailures: [{ itemIdentifier: 'fail-id' }],
 		})
+	})
+
+	it('processes records sequentially by default', async () => {
+		const modifiedEvent = {
+			...event,
+			Records: [
+				{ ...event.Records[0], messageId: 'first-id' },
+				{ ...event.Records[0], messageId: 'second-id' },
+				{ ...event.Records[0], messageId: 'third-id' },
+			],
+		}
+		const lifecycle: Array<string> = []
+		const processRecord = SQSRecord.use((record) =>
+			Effect.gen(function* () {
+				lifecycle.push(`start:${record.messageId}`)
+				yield* Effect.sleep('10 millis')
+				lifecycle.push(`end:${record.messageId}`)
+			}),
+		)
+
+		const result = await Effect.runPromise(
+			processRecord.pipe(recordProcessorAdapter, Effect.provideService(SQSEvent, modifiedEvent)),
+		)
+
+		expect(result).toEqual({
+			batchItemFailures: [],
+		})
+		expect(lifecycle).toEqual([
+			'start:first-id',
+			'end:first-id',
+			'start:second-id',
+			'end:second-id',
+			'start:third-id',
+			'end:third-id',
+		])
 	})
 })
