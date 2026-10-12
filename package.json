@@ -10,7 +10,7 @@
 		"test": "vitest --run",
 		"test:watch": "vitest --watch",
 		"test:compat": "vitest --run -c vitest.config.compat.ts",
-		"prepare": "lefthook install --force",
+		"prepare": "lefthook install --reset-hooks-path",
 		"postinstall": "effect-tsgo patch || npx @effect/tsgo patch",
 		"typecheck": "pnpm -r --filter './packages/**' run typecheck",
 		"build": "pnpm -r --filter './packages/**' run build",

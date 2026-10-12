@@ -162,12 +162,12 @@ pnpm remove -D -w husky lint-staged
 pnpm add -D -w -E lefthook@2.2.1
 ```
 
-Remove the root `lint-staged` config, its script, and the tracked `.husky/pre-commit`. Add this root lifecycle script so existing clones with Husky's `core.hooksPath=.husky/_` are migrated as well as clean clones:
+Remove the root `lint-staged` config, its script, and the `.husky/` directory. Add this root lifecycle script so Lefthook installs into `.git/hooks` and clears a leftover Husky `core.hooksPath`:
 
 ```jsonc
 {
   "scripts": {
-    "prepare": "lefthook install --force"
+    "prepare": "lefthook install --reset-hooks-path"
   }
 }
 ```
@@ -193,7 +193,7 @@ pre-commit:
 
 `piped: true` preserves fail-fast sequential execution. `stage_fixed: true` preserves auto-format-and-stage behavior, but Lefthook does not hide unstaged hunks like lint-staged: do not partially stage files that the formatter may rewrite.
 
-Run `pnpm exec lefthook validate` and `pnpm exec lefthook install --force`. Confirm the active `core.hooksPath` contains Lefthook's `pre-commit` shim.
+Run `pnpm exec lefthook validate` and `pnpm exec lefthook install --reset-hooks-path`. Confirm `core.hooksPath` is unset and `.git/hooks/pre-commit` is Lefthook's shim. Delete `.husky/` after that. Lefthook does not read it.
 
 ---
 
