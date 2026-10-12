@@ -26,7 +26,7 @@ You have access to the Effect repository at `./.repos/effect`.
 ## TypeScript toolchain
 
 - This repo compiles and typechecks exclusively via TypeScript 7 (`typescript`) patched by `@effect/tsgo` (config in `tsconfigs/`). If `pnpm exec tsc --version` does not end in `+effect-tsgo.*`, run `pnpm exec effect-tsgo patch`.
-- Every Effect language-service rule is set to `error`, with `ignoreEffectSuggestionsInTscExitCode: false` — there is no soft/warning tier, the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit. The only exceptions are `unstableApiUsage`, `newSchemaClass`, and `missingPipeableSignature`, which are `off` with their justification inline in `tsconfigs/tsconfig.lib.json`.
+- Every Effect language-service rule is set to `error`, with `ignoreEffectSuggestionsInTscExitCode: false` — there is no soft/warning tier, the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit. The only exceptions are `apiStabilityLeak`, `unstableApiUsage`, `newSchemaClass`, and `missingPipeableSignature`, which are `off` with their justification inline in `tsconfigs/tsconfig.lib.json`.
 - The plugin block lives in `tsconfigs/tsconfig.lib.json`, NOT in `tsconfig.base.json`, because `compilerOptions.plugins` does not propagate through a 2-level `extends` chain in this setup. When adding a new variant in `tsconfigs/`, either extend `tsconfig.lib.json` from it or duplicate the plugin block — see `tsconfigs/README.md` for the smoke test.
 
 <!-- gitnexus:start -->

@@ -24,6 +24,8 @@
 				"ignoreEffectSuggestionsInTscExitCode": false,
 				"diagnosticSeverity": {
 					"anyUnknownInErrorContext": "error",
+					// Off: public APIs intentionally expose `effect/http` and `effect/http-api` types, which Effect 4 marks `@stability unstable`.
+					"apiStabilityLeak": "off",
 					"classSelfMismatch": "error",
 					"duplicatePackage": "error",
 					"effectFnImplicitAny": "error",

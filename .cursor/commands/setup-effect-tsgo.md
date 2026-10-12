@@ -1,10 +1,10 @@
-# Setup Effect TSGo (TypeScript 7 + Effect v4 + pnpm 11)
+# Setup Effect TSGo (TypeScript 7 + Effect v4 + pnpm 12)
 
-Configure this repository to use stable **TypeScript 7** patched with **`@effect/tsgo`** as the exclusive TypeScript engine for both the editor (LSP) and CLI (`typecheck` / `build`). Align Effect packages on the exact current **stable Effect v4** release and use **pnpm 11** workspace settings. Wire every Effect language-service rule as an **`error`** so the entire ruleset blocks CI when idiomatic Effect v4 patterns drift.
+Configure this repository to use stable **TypeScript 7** patched with **`@effect/tsgo`** as the exclusive TypeScript engine for both the editor (LSP) and CLI (`typecheck` / `build`). Align Effect packages on the exact current **stable Effect v4** release and use **pnpm 12** workspace settings installed by Corepack. Wire every Effect language-service rule as an **`error`** so the entire ruleset blocks CI when idiomatic Effect v4 patterns drift.
 
 **Execute this plan step-by-step. Do NOT skip verification. Stop and report if any step fails.**
 
-This command reflects the current configuration used by `@ballatech/effect-packages`: pnpm `11.22.0`, TypeScript `7.0.2`, `@effect/tsgo` `0.48.0`, Effect `4.0.0`, Vitest `5.0.3`, and Lefthook `2.1.10`. It is a pnpm monorepo whose library packages extend a shared `tsconfigs/` directory at the repo root. Resolve newer compatible versions when available; never mix unaligned Effect package versions.
+This command reflects the current configuration used by `@ballatech/effect-packages`: pnpm `12.11.2` (Corepack `packageManager`), TypeScript `7.0.2`, `@effect/tsgo` `0.51.1`, Effect `4.0.3`, Vitest `5.0.3`, and Lefthook `2.2.1`. It is a pnpm monorepo whose library packages extend a shared `tsconfigs/` directory at the repo root. Resolve newer compatible versions when available; never mix unaligned Effect package versions.
 
 ---
 
@@ -25,13 +25,13 @@ Before touching anything, run these in parallel and report findings:
    - Current `typescript` devDependency version
    - Current `@effect/tsgo` version and its supported TypeScript versions
    - Scripts that invoke legacy `tsgo` instead of stable TypeScript 7's `tsc`
-   - The `packageManager` field — this repo uses pnpm 11
+   - The `packageManager` field — this repo pins pnpm 12 through Corepack (`corepack enable` / `corepack install` in CI)
    - `engines.node` — confirm Node ≥ 22 (this repo requires ≥ 24)
 6. Check whether `typescript`, `@effect/tsgo`, and `.vscode/settings.json` exist. Treat `@typescript/native-preview` as a legacy package to migrate away from.
 7. Read `pnpm-workspace.yaml` and check:
    - Effect catalog alignment
    - Any `peerDependencyRules` overrides (none are currently needed)
-   - pnpm 11 `allowBuilds` policy (the removed `onlyBuiltDependencies` setting is invalid)
+   - pnpm 12 `allowBuilds` policy (the removed `onlyBuiltDependencies` setting is invalid)
    - `minimumReleaseAgeExclude` entries added for intentionally adopted fresh releases
 
 Report a short summary like:
@@ -49,10 +49,10 @@ tsconfigs found: 4 leaf + 5 shared
   packages/effect-problem-json/tsconfig.dev.json → extends ./tsconfig.json                   (LOCAL, inherits plugin transitively via lib.json)
   packages/effect-oauth-client/tsconfig.json     → extends ../../tsconfigs/tsconfig.lib.json (LOCAL)
 Current TypeScript: 7.0.2
-Current @effect/tsgo: 0.48.0 (supports TypeScript 7.0.2)
+Current @effect/tsgo: 0.51.1 (supports TypeScript 7.0.2)
 Compiler scripts: all use tsc
-Effect catalog: effect/@effect packages aligned on 4.0.0
-pnpm: 11.22.0; allowBuilds configured
+Effect catalog: effect/@effect packages aligned on 4.0.3
+pnpm: 12.11.2 via Corepack; allowBuilds configured
 Legacy @typescript/native-preview installed: no
 Phase 3.5 needed: NO
 ```
@@ -67,25 +67,25 @@ Install stable TypeScript 7 and `@effect/tsgo` as root **dev dependencies**. Do 
 
 ```bash
 # pnpm
-pnpm add -D -w typescript@7.0.2 @effect/tsgo@0.48.0
+pnpm add -D -w typescript@7.0.2 @effect/tsgo@0.51.1
 
 # npm
-npm i -D typescript@7.0.2 @effect/tsgo@0.48.0
+npm i -D typescript@7.0.2 @effect/tsgo@0.51.1
 
 # yarn
-yarn add -D typescript@7.0.2 @effect/tsgo@0.48.0
+yarn add -D typescript@7.0.2 @effect/tsgo@0.51.1
 ```
 
 **Pinned working combination for this repo:**
 
 ```jsonc
 {
-  "@effect/tsgo": "^0.48.0",
+  "@effect/tsgo": "^0.51.1",
   "typescript": "7.0.2"
 }
 ```
 
-Pin TypeScript exactly. `@effect/tsgo` only patches explicitly supported compiler builds. Before upgrading either package, read the installed `@effect/tsgo/README.md` “Supported Package Versions” table. `@effect/tsgo@0.48.0` supports TypeScript `7.0.2`; `@typescript/native-preview@latest` does not match it. `@typescript/native` is mentioned as an alias in upstream docs but is not currently published, so use the `typescript` package.
+Pin TypeScript exactly. `@effect/tsgo` only patches explicitly supported compiler builds. Before upgrading either package, read the installed `@effect/tsgo/README.md` “Supported Package Versions” table. `@effect/tsgo@0.51.1` supports TypeScript `7.0.2`; `@typescript/native-preview@latest` does not match it. `@typescript/native` is mentioned as an alias in upstream docs but is not currently published, so use the `typescript` package.
 
 This repo does **not** use pnpm `catalog:` for these packages — they are pinned directly in the root `package.json` `devDependencies`. Keep it that way; catalog entries add a level of indirection that doesn't pay off for two packages.
 
@@ -110,29 +110,35 @@ Current repo catalog:
 
 ```yaml
 catalog:
-  '@effect/platform-node': 4.0.0
-  '@effect/platform-node-shared': 4.0.0
-  '@effect/vitest': 4.0.0
-  effect: 4.0.0
+  '@effect/platform-node': 4.0.3
+  '@effect/platform-node-shared': 4.0.3
+  '@effect/vitest': 4.0.3
+  effect: 4.0.3
 ```
 
 Do not install v4-consolidated umbrella packages separately (`@effect/schema`, `@effect/platform`, `@effect/rpc`, `@effect/cluster`, `@effect/sql`, `@effect/ai`).
 
+Published packages declare `"effect": "^4.0.0"`. Import HTTP from `effect/http` and `effect/http-api`. The Effect 3 paths under `effect/unstable/*` are gone. `unstableApiUsage` and `apiStabilityLeak` stay `"off"` because Effect 4 still marks `effect/http` and `effect/http-api` as `@stability unstable`, and these packages expose those types on purpose.
+
 `@effect/vitest@4` requires `vitest@5` as a peer; keep the root `vitest` devDependency on a matching major. `@effect-aws/lambda@2.0.0` accepts stable `effect@4` and `@effect/platform-node-shared@4`, so no `peerDependencyRules` overrides are needed. Keep `@effect/platform-node-shared: "catalog:"` as an explicit devDependency of the package that uses `@effect-aws/lambda` so its peer resolves to the catalog version.
 
-### Configure pnpm 11
+### Configure pnpm 12 with Corepack
 
-Pin pnpm in the root manifest:
+Pin pnpm through Corepack so local installs and CI use the same binary. Workflows run `corepack enable` and then `corepack install`, which reads the root `packageManager` field.
+
+```bash
+corepack use pnpm@12.11.2
+```
+
+That command writes the integrity hash. Preserve the full field; do not hand-edit the hash. To move the pin, run `corepack use pnpm@<version>` again.
 
 ```jsonc
 {
-  "packageManager": "pnpm@11.22.0"
+  "packageManager": "pnpm@12.11.2+sha512.25a51652a196785af5f28bda6dfe8dc582ebefa4ac1d180221ce1390231c5fb76637822ea4b6e4633ce74acdcb0a77f725af11bad38177fdeddaee818a955cb9"
 }
 ```
 
-Corepack may append a `+sha512...` integrity suffix; preserve it when present.
-
-pnpm 11 removed `onlyBuiltDependencies` and enables strict dependency-build handling by default. Replace it with an explicit `allowBuilds` map:
+pnpm 12 keeps the pnpm 11 supply-chain defaults. `onlyBuiltDependencies` is invalid, and build scripts need an explicit `allowBuilds` map:
 
 ```yaml
 allowBuilds:
@@ -143,7 +149,9 @@ allowBuilds:
 
 Allow `esbuild` because Vitest relies on its platform binary. Allow `lefthook` because its postinstall selects the platform binary and installs Git hooks. Keep `msgpackr-extract` disabled: its native acceleration is optional and the package has a JavaScript fallback. Never allow all build scripts globally.
 
-pnpm 11 also defaults to a one-day minimum release age. If an explicitly requested release is newer, add only the exact package versions needed under `minimumReleaseAgeExclude`; do not disable the policy repository-wide.
+pnpm still defaults to a one-day minimum release age. If an explicitly requested release is newer, add only the exact package versions needed under `minimumReleaseAgeExclude`; do not disable the policy repository-wide.
+
+pnpm 12 records the resolved package manager in a leading env document in `pnpm-lock.yaml` (a second YAML document, separated by `---`). Keep that document. Do not set `pmOnFail: ignore` to collapse the lockfile back to a single document.
 
 ### Replace Husky and lint-staged with Lefthook
 
@@ -151,15 +159,15 @@ Use one pinned native hook manager:
 
 ```bash
 pnpm remove -D -w husky lint-staged
-pnpm add -D -w -E lefthook@2.1.10
+pnpm add -D -w -E lefthook@2.2.1
 ```
 
-Remove the root `lint-staged` config, its script, and the tracked `.husky/pre-commit`. Add this root lifecycle script so existing clones with Husky's `core.hooksPath=.husky/_` are migrated as well as clean clones:
+Remove the root `lint-staged` config, its script, and the `.husky/` directory. Add this root lifecycle script so Lefthook installs into `.git/hooks` and clears a leftover Husky `core.hooksPath`:
 
 ```jsonc
 {
   "scripts": {
-    "prepare": "lefthook install --force"
+    "prepare": "lefthook install --reset-hooks-path"
   }
 }
 ```
@@ -185,7 +193,7 @@ pre-commit:
 
 `piped: true` preserves fail-fast sequential execution. `stage_fixed: true` preserves auto-format-and-stage behavior, but Lefthook does not hide unstaged hunks like lint-staged: do not partially stage files that the formatter may rewrite.
 
-Run `pnpm exec lefthook validate` and `pnpm exec lefthook install --force`. Confirm the active `core.hooksPath` contains Lefthook's `pre-commit` shim.
+Run `pnpm exec lefthook validate` and `pnpm exec lefthook install --reset-hooks-path`. Confirm `core.hooksPath` is unset and `.git/hooks/pre-commit` is Lefthook's shim. Delete `.husky/` after that. Lefthook does not read it.
 
 ---
 
@@ -295,7 +303,7 @@ If the `extends` target is an **unpublished workspace package** rather than an e
 
 ### Where the plugin goes — and why NOT in `tsconfig.base.json`
 
-**Critical gotcha, empirically verified in this repo:** `compilerOptions.plugins` may fail to propagate through a **two-level** `extends` chain. With TypeScript `7.0.2` patched by `@effect/tsgo 0.48.0`, keep the plugin in the direct shared parent of each leaf. A chain like:
+**Critical gotcha, empirically verified in this repo:** `compilerOptions.plugins` may fail to propagate through a **two-level** `extends` chain. With TypeScript `7.0.2` patched by `@effect/tsgo 0.51.1`, keep the plugin in the direct shared parent of each leaf. A chain like:
 
 ```
 leaf tsconfig.json
@@ -321,7 +329,7 @@ Do NOT add the plugin to `tsconfig.dev.json` / `tsconfig.build.json` variants th
 
 ### Plugin configuration — errors only, no warning tier
 
-This repo runs **every Effect language-service rule at `"error"`**, with `ignoreEffectSuggestionsInTscExitCode: false`. There is no soft/warning tier: the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit. The only rules currently set to `"off"` are `unstableApiUsage`, `newSchemaClass`, and `missingPipeableSignature`; each carries its justification as a comment in `tsconfigs/tsconfig.lib.json`.
+This repo runs **every Effect language-service rule at `"error"`**, with `ignoreEffectSuggestionsInTscExitCode: false`. There is no soft/warning tier: the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit. The only rules currently set to `"off"` are `apiStabilityLeak`, `unstableApiUsage`, `newSchemaClass`, and `missingPipeableSignature`; each carries its justification as a comment in `tsconfigs/tsconfig.lib.json`.
 
 Rationale: a warning tier trains humans and agents to ignore the signal. If a rule isn't load-bearing, remove it; if it is, make it fail the build.
 
@@ -336,6 +344,8 @@ Paste this block verbatim into the target tsconfig (merge into existing `compile
         "ignoreEffectSuggestionsInTscExitCode": false,
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "error",
+          // Off: public APIs intentionally expose `effect/http` and `effect/http-api` types, which Effect 4 marks `@stability unstable`.
+          "apiStabilityLeak": "off",
           "classSelfMismatch": "error",
           "duplicatePackage": "error",
           "effectFnImplicitAny": "error",
@@ -469,7 +479,7 @@ Notes for the agent while editing tsconfigs:
 - Never duplicate plugin entries. If the plugin already lives in the direct parent shared tsconfig, do NOT re-add it in leaves.
 - This repo intentionally does **not** use a `refactors` / `diagnostics` / `quickinfo` / `completions` / `goto` / `renames` / `inlays` keyset — those default to `true` on recent `@effect/language-service` and specifying them adds drift with upstream.
 - This repo intentionally does **not** use an `overrides` block to bump severities inside `src/**`, because every rule is already at `"error"` repo-wide. If a downstream repo wants a split-severity model, use `overrides` as described in the `@effect/language-service` docs.
-- On every `@effect/tsgo` upgrade, compare the installed README's Diagnostic Status table with `diagnosticSeverity` and explicitly add new rules as `"error"`. Version `0.48.0` exposes 118 rules, including `unstableApiUsage`, `experimentalApiUsage`, and `floatingEffectInVitest`; relying only on defaults silently creates a mixed error/suggestion policy.
+- On every `@effect/tsgo` upgrade, compare the installed README's Diagnostic Status table with `diagnosticSeverity` and explicitly add new rules as `"error"`. Version `0.51.1` exposes 119 rules, including `apiStabilityLeak`, `unstableApiUsage`, `experimentalApiUsage`, and `floatingEffectInVitest`; relying only on defaults silently creates a mixed error/suggestion policy.
 - After editing, run the smoke test in Phase 6 — introducing a floating Effect should fail typecheck with `TS377001 effect(floatingEffect)`.
 
 ---
@@ -563,8 +573,9 @@ Append a short section to the repo's `AGENTS.md` (or `CLAUDE.md`, whichever exis
 - This repo compiles and typechecks with stable `typescript` v7 patched by `@effect/tsgo` (config in `tsconfigs/`). If `pnpm exec tsc --version` does not end in `+effect-tsgo.*`, run `pnpm exec effect-tsgo patch`.
 - Every Effect language-service rule is set to `error`, with `ignoreEffectSuggestionsInTscExitCode: false` — there is no soft/warning tier, the entire ruleset blocks `pnpm typecheck`. Lowering any rule severity requires deliberate justification in the commit.
 - The plugin block lives in `tsconfigs/tsconfig.lib.json`, NOT in `tsconfig.base.json`, because `compilerOptions.plugins` may not propagate through a two-level `extends` chain. When adding a new variant in `tsconfigs/`, either extend `tsconfig.lib.json` from it or duplicate the plugin block — see `tsconfigs/README.md` for the smoke test.
-- Effect v4 packages are pinned to one exact aligned release in the pnpm catalog. pnpm 11 build-script exceptions are explicit and narrowly scoped in `pnpm-workspace.yaml`.
-- Lefthook owns pre-commit hooks via `lefthook.yml`; do not reintroduce Husky or lint-staged. Its install script is explicitly allowed in pnpm 11.
+- Effect v4 packages are pinned to one exact aligned release in the pnpm catalog. Published packages depend on `effect@^4.0.0` and import HTTP from `effect/http` and `effect/http-api`.
+- pnpm is pinned with Corepack in the root `packageManager` field (`pnpm@12.11.2`). Build-script exceptions stay explicit and narrowly scoped in `pnpm-workspace.yaml` `allowBuilds`.
+- Lefthook owns pre-commit hooks via `lefthook.yml`; do not reintroduce Husky or lint-staged. Its install script is explicitly allowed in `allowBuilds`.
 ```
 
 Update the version numbers if the pinned combination drifts.
@@ -577,7 +588,7 @@ Produce a concise summary for the user covering:
 
 - Installed versions of stable `typescript` and `@effect/tsgo`, plus confirmation that the exact TypeScript build appears in the installed tsgo compatibility table.
 - Exact Effect version used by `effect` and each `@effect/*` catalog dependency; confirm they are aligned.
-- pnpm version and any `peerDependencyRules`, `minimumReleaseAgeExclude`, or `allowBuilds` exceptions added, including why each exception is necessary.
+- pnpm version pinned by Corepack (`packageManager`, including the `+sha512` suffix) and any `peerDependencyRules`, `minimumReleaseAgeExclude`, or `allowBuilds` exceptions added, including why each exception is necessary.
 - Lefthook version, removal of Husky/lint-staged, installed hook path, and confirmation that format/tests/typecheck/package checks run sequentially and fail fast.
 - Tsconfig handling:
   - Topology detected (leaf-only / local-shared / workspace-shared / external)

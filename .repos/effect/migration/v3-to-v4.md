@@ -2,9 +2,9 @@
 
 # v3 to v4 Migration Reference
 
-Base: `origin/v3` (`0963a1c17f5be8e26676ed5ffc9c542bd26f97f0`)
+Base: `origin/v3` (`e730f59d29db5f1e312be6476a95d07bcad45788`)
 
-Head: `HEAD` (`072cdc42a84421694593035d65d0f3375d1a17fd`)
+Head: `7e444029d3101640ea2edbffafa882097b78bb68` (`7e444029d3101640ea2edbffafa882097b78bb68`)
 
 This file is generated from the API diff and `migration/annotations/*.yaml`.
 
@@ -4152,9 +4152,15 @@ effect/rpc/Utils (barrel: effect/rpc)
 
 ### `@effect/ai-openai/OpenAiTelemetry`
 
-- `OpenAiTelemetry.AllAttributes` -> `OpenAiTelemetry.AllAttributes`: Still exported in v4; update imports and adapt to the revised v4 service and schema types.
+- `OpenAiTelemetry.AllAttributes` -> `none`: Removed. Use OpenAiTelemetry.OpenAiTelemetryAttributeOptions for the grouped options accepted by OpenAiTelemetry.addGenAIAnnotations, or OpenAiTelemetry.OpenAiTelemetryAttributes for the prefixed span attribute keys.
 
 - `OpenAiTelemetry.OpenAiTelemetryAttributeOptions` -> `OpenAiTelemetry.OpenAiTelemetryAttributeOptions`: Still exported in v4; update imports and adapt to the revised v4 service and schema types.
+
+- `OpenAiTelemetry.OpenAiTelemetryAttributes` -> `OpenAiTelemetry.OpenAiTelemetryAttributes`: Use openai.request.\* for request keys and openai.response.\* for response keys instead of gen\_ai.openai.\*. The response-format attribute was removed; use gen\_ai.output.type from LanguageModel instead.
+
+- `OpenAiTelemetry.RequestAttributes` -> `OpenAiTelemetry.RequestAttributes`: Attributes are written under openai.request.\* instead of gen\_ai.openai.request.\*. responseFormat was removed; LanguageModel records gen\_ai.output.type for every provider.
+
+- `OpenAiTelemetry.WellKnownResponseFormat` -> `Telemetry.WellKnownOutputType`: The response format is no longer a telemetry option. LanguageModel records gen\_ai.output.type as text or json from the requested response format.
 
 - `OpenAiTelemetry.addGenAIAnnotations` -> `OpenAiTelemetry.addGenAIAnnotations`: Still exported in v4; update imports and adapt to the revised v4 service and schema types.
 
@@ -4972,19 +4978,19 @@ effect/rpc/Utils (barrel: effect/rpc)
 
 - `McpServer.layerStdio` -> `McpServer.layerStdio`: Moved to effect/ai/McpServer. Pass a non-empty protocols array of adapters, such as [McpProtocol.v2025\_06\_18], imported with McpProtocol from effect/ai.
 
-- `McpServer.prompt` -> `McpServer.prompt`: Moved to effect/ai/McpServer. The registration layer excludes McpSchema.McpRequestContext from prompt decoding and handler requirements instead of McpServerClient.
+- `McpServer.prompt` -> `McpServer.prompt`: Moved to effect/ai/McpServer. The registration layer excludes McpSchema.McpRequestContext from prompt decoding, handler, and completion callback requirements instead of McpServerClient.
 
-- `McpServer.registerPrompt` -> `McpServer.registerPrompt`: Moved to effect/ai/McpServer. Prompt decoding and handler requirements now exclude McpSchema.McpRequestContext instead of McpServerClient; use the request context for protocol-neutral client metadata.
+- `McpServer.registerPrompt` -> `McpServer.registerPrompt`: Moved to effect/ai/McpServer. Prompt decoding, handler, and completion callback requirements now exclude McpSchema.McpRequestContext instead of McpServerClient; use the request context for protocol-neutral client metadata.
 
 - `McpServer.registerResource` -> `McpServer.registerResource`: Moved to effect/ai/McpServer. Resource and completion handler requirements now exclude McpSchema.McpRequestContext instead of McpServerClient; use the request context for protocol-neutral client metadata.
 
-- `McpServer.registerToolkit` -> `McpServer.registerToolkit`: Moved to effect/ai/McpServer. Handler requirements now exclude McpSchema.McpRequestContext instead of McpServerClient. Strict tools reject excess input properties; raw JSON Schema dynamic tools cannot use strict mode. Declared handler failures produce isError results, while parameter validation fails with InvalidParams.
+- `McpServer.registerToolkit` -> `McpServer.registerToolkit`: Moved to effect/ai/McpServer. Requirements from every tool handler are propagated, excluding McpSchema.McpRequestContext instead of McpServerClient; provide the remaining handler services. Strict tools reject excess input properties; raw JSON Schema dynamic tools cannot use strict mode. Declared handler failures produce isError results, while parameter validation fails with InvalidParams.
 
 - `McpServer.resource` -> `McpServer.resource`: Moved to effect/ai/McpServer. The registration layer excludes McpSchema.McpRequestContext from resource and completion handler requirements instead of McpServerClient.
 
 - `McpServer.run` -> `McpServer.run`: Moved to effect/ai/McpServer. Pass a non-empty protocols array of adapters, such as [McpProtocol.v2025\_06\_18], imported with McpProtocol from effect/ai; it remains the Effect-level runner over RpcServer.Protocol.
 
-- `McpServer.toolkit` -> `McpServer.toolkit`: Moved to effect/ai/McpServer. The registration layer supplies McpSchema.McpRequestContext to handlers instead of excluding McpServerClient from requirements. Strict tools reject excess properties and require an Effect Schema rather than raw dynamic JSON Schema.
+- `McpServer.toolkit` -> `McpServer.toolkit`: Moved to effect/ai/McpServer. The registration layer supplies McpSchema.McpRequestContext to handlers instead of excluding McpServerClient from requirements. Its requirements include services from every tool handler. Strict tools reject excess properties and require an Effect Schema rather than raw dynamic JSON Schema.
 
 ### `@effect/ai/Model`
 
@@ -5063,6 +5069,20 @@ effect/rpc/Utils (barrel: effect/rpc)
 - `Response.toolResultPart` -> `Response.toolResultPart`: Moved to effect/ai/Response; providerName was removed and decoded tool results now require preliminary, normally false.
 
 - `Response.urlSourcePart` -> `Response.makePart("source", { ...params, sourceType: "url" })`: The lowercase convenience constructor was removed. The UrlSourcePart model remains, and the generic constructor now requires the URL source discriminator.
+
+### `@effect/ai/Telemetry`
+
+- `Telemetry.AllAttributes` -> `none`: Removed. Use Telemetry.GenAITelemetryAttributeOptions for the grouped options accepted by Telemetry.addGenAIAnnotations, or Telemetry.GenAITelemetryAttributes for the prefixed gen\_ai.\* span attribute keys.
+
+- `Telemetry.BaseAttributes` -> `Telemetry.ProviderAttributes`: gen\_ai.system was replaced by gen\_ai.provider.name. Pass provider: { name } instead of system; legacy system values are not mapped.
+
+- `Telemetry.GenAITelemetryAttributeOptions` -> `Telemetry.GenAITelemetryAttributeOptions`: The system and token options were removed. Use provider: { name } for gen\_ai.provider.name; gen\_ai.token.type has no span replacement. The new output option writes gen\_ai.output.type.
+
+- `Telemetry.GenAITelemetryAttributes` -> `Telemetry.GenAITelemetryAttributes`: The flat span attribute keys changed: replace gen\_ai.system with gen\_ai.provider.name and remove gen\_ai.token.type. gen\_ai.output.type records text or json. Update code constructing or indexing this attribute type.
+
+- `Telemetry.TokenAttributes` -> `none`: Removed with the token option. gen\_ai.token.type is not a span attribute in the current OpenTelemetry GenAI conventions.
+
+- `Telemetry.WellKnownSystem` -> `Telemetry.WellKnownProviderName`: Values follow gen\_ai.provider.name: az.ai.inference, az.ai.openai, gemini, vertex\_ai and xai became azure.ai.inference, azure.ai.openai, gcp.gemini, gcp.vertex\_ai and x\_ai.
 
 ### `@effect/ai/Tool`
 
@@ -6172,6 +6192,8 @@ effect/rpc/Utils (barrel: effect/rpc)
 
 ### `@effect/opentelemetry/OtlpResource`
 
+- `OtlpResource.make` -> `OtlpResource.make`: The constructor remains in the module moved to effect/observability/OtlpResource.
+
 - `OtlpResource.unsafeServiceName` -> `OtlpResource.serviceNameUnsafe`: Moved to effect/observability/OtlpResource and renamed to follow the v4 unsafe-suffix convention.
 
 ### `@effect/opentelemetry/OtlpTracer`
@@ -6702,7 +6724,7 @@ effect/rpc/Utils (barrel: effect/rpc)
 
 ### `@effect/platform/HttpApiClient`
 
-- `HttpApiClient.Client.Method` -> `effect/http-api/HttpApiClient#Client.Method`: The type remains without GroupError. Requests use params/query and responseMode instead of path/urlParams and withResponse.
+- `HttpApiClient.Client.Method` -> `effect/http-api/HttpApiClient#Client.Method`: The type remains without GroupError. Requests use params/query and responseMode instead of path/urlParams and withResponse. Omitting responseMode returns the decoded value; a union-valued mode returns the corresponding union of decoded values, responses, or [value, response] tuples.
 
 - `HttpApiClient.endpoint` -> `effect/http-api/HttpApiClient#endpoint`: The endpoint client remains, selected by group and endpoint identifiers and using v4 request and responseMode fields.
 
@@ -7248,7 +7270,7 @@ effect/rpc/Utils (barrel: effect/rpc)
 
 - `HttpServer.Address` -> `effect/net/NetAddress#SocketAddress`: Replaced by the shared concrete internet-or-Unix socket address union.
 
-- `HttpServer.HttpServer` -> `HttpServer.HttpServer`: The interface and tag became one Context.Service class; use its Service member for implementations.
+- `HttpServer.HttpServer` -> `HttpServer.HttpServer`: The interface and tag became one Context.Service class; use its Service member for implementations. The service-level serve method derives requirements from the middleware-transformed application, so services added by middleware must also be provided.
 
 - `HttpServer.ServeOptions` -> `none`: The unused respond option model was removed with no shared v4 counterpart.
 
@@ -7956,6 +7978,12 @@ effect/rpc/Utils (barrel: effect/rpc)
 
 - `SqliteClient.SqliteClient` -> `@effect/sql-sqlite-bun/SqliteClient#SqliteClient`: Retained; the service value is now a Context.Service.
 
+- `SqliteClient.layer` -> `SqliteClient.layer`: The layer now has a SqlError error channel for database opening and initialization failures. Handle setup failures, or use Layer.orDie when they should remain fatal.
+
+- `SqliteClient.layerConfig` -> `SqliteClient.layerConfig`: The layer now fails with ConfigError | SqlError: configuration errors remain typed, and database opening and initialization failures are also typed. Handle SqlError as well, or use Layer.orDie if all setup failures should be fatal.
+
+- `SqliteClient.make` -> `SqliteClient.make`: Database opening and initialization now fail with SqlError instead of defects. Handle the typed setup error, or use Effect.orDie when setup failures should remain fatal.
+
 ### `@effect/sql-sqlite-do/SqliteClient`
 
 - `SqliteClient.SqliteClientConfig` -> `@effect/sql-sqlite-do/SqliteClient#SqliteClientConfig`: Retained; db is optional and storage may be supplied, but one of db or storage is required at runtime.
@@ -7965,6 +7993,12 @@ effect/rpc/Utils (barrel: effect/rpc)
 - `SqliteClient.SqliteClient` -> `@effect/sql-sqlite-node/SqliteClient#SqliteClient`: Retained on node:sqlite, but the byte-export member was removed; use backup(destination) for file backup.
 
 - `SqliteClient.SqliteClientConfig` -> `@effect/sql-sqlite-node/SqliteClient#SqliteClientConfig`: Retained; prepareCacheTTL now uses Duration.Input.
+
+- `SqliteClient.layer` -> `SqliteClient.layer`: The layer now has a SqlError error channel for database opening and initialization failures. Handle setup failures, or use Layer.orDie when they should remain fatal.
+
+- `SqliteClient.layerConfig` -> `SqliteClient.layerConfig`: The layer now fails with ConfigError | SqlError: configuration errors remain typed, and database opening and initialization failures are also typed. Handle SqlError as well, or use Layer.orDie if all setup failures should be fatal.
+
+- `SqliteClient.make` -> `SqliteClient.make`: Database opening and initialization now fail with SqlError instead of defects. Handle the typed setup error, or use Effect.orDie when setup failures should remain fatal.
 
 ### `@effect/sql-sqlite-react-native/SqliteClient`
 
@@ -9146,7 +9180,7 @@ Arbitrary.schema(schema)
 
 - `Channel.mapInputIn` -> `Channel.mapInput`: Use Channel.mapInput(self, (value) =\> Effect.succeed(f(value))); v4 consolidated pure and effectful input mapping.
 
-- `Channel.mapInputInEffect` -> `Channel.mapInput`: Renamed to mapInput; the mapper remains effectful.
+- `Channel.mapInputInEffect` -> `Channel.mapInput`: Renamed to mapInput; the mapper remains effectful. Both overloads retain mapper service requirements in the resulting channel, so provide those services before running it.
 
 - `Channel.mapOut` -> `Channel.map`: Renamed to map; the v4 mapper also receives the element index.
 
@@ -10354,11 +10388,11 @@ Arbitrary.schema(schema)
 
 ### `effect/ExecutionPlan`
 
-- `ExecutionPlan.ExecutionPlan` -> `ExecutionPlan.ExecutionPlan`: The plan type remains; withRequirements was renamed to captureRequirements.
+- `ExecutionPlan.ExecutionPlan` -> `ExecutionPlan.ExecutionPlan`: The plan type remains; withRequirements was renamed to captureRequirements. Step schedules use Schedule\<Output, Input, Error, Requirements\>; captureRequirements supplies captured services to schedule initialization and execution.
 
 - `ExecutionPlan.TypesBase` -> `ExecutionPlan.ConfigBase`: The base type for execution-plan step configuration was renamed.
 
-- `ExecutionPlan.make` -> `ExecutionPlan.make`: The variadic execution-plan constructor remains unchanged.
+- `ExecutionPlan.make` -> `ExecutionPlan.make`: The constructor remains variadic. Its inferred error channel includes failures from step layers, predicates, and schedules; requirements include services needed by all three across every step.
 
 ### `effect/ExecutionStrategy`
 
@@ -14435,7 +14469,7 @@ Schema.toFormatter(schema)
 
 - `Schema.Number` -> `Schema.Number`: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
 
-- `Schema.NumberFromString` -> `Schema.NumberFromString`: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
+- `Schema.NumberFromString` -> `Schema.NumberFromString`: Decoding now uses JavaScript number coercion: unlike v3, `"abc"` decodes to `NaN`, while `""` and whitespace-only strings decode to `0`. `FiniteFromString` rejects non-finite results, so it rejects invalid strings but also the `"NaN"` and infinity spellings accepted by v3; it still decodes blank strings to `0`. Use a custom codec to preserve the v3 acceptance rules exactly.
 
 - `Schema.Object` -> `Schema.ObjectKeyword`: Rename the object keyword schema.
 
@@ -14923,9 +14957,9 @@ Schema.toFormatter(schema)
 
 - `Schema.optionalWith` -> `Schema.optional / Schema.optionalKey / Schema.withDecodingDefaultType`: Choose `optional` or `optionalKey`; use the decoding-default helpers and an explicit nullable transformation as required by the old options.
 
-- `Schema.parseJson` -> `Schema.UnknownFromJsonString / Schema.fromJsonString(schema)`: Use `UnknownFromJsonString` without an inner schema or `fromJsonString(schema)` with one.
+- `Schema.parseJson` -> `Schema.fromJsonString(Schema.Unknown) / Schema.fromJsonString(schema)`: Use `fromJsonString(Schema.Unknown)` without an inner schema or `fromJsonString(schema)` with one.
 
-- `Schema.parseNumber` -> `Schema.NumberFromString`: Use the built-in string-to-number codec.
+- `Schema.parseNumber` -> `Schema.NumberFromString`: Use the built-in string-to-number codec. Unlike v3 `parseNumber`, invalid strings decode to `NaN`, while blank strings decode to `0`. `FiniteFromString` rejects non-finite results but also the `"NaN"` and infinity spellings accepted by v3; exact compatibility requires a custom codec.
 
 - `Schema.partial` -> `schema.mapFields(Struct.map(Schema.optional))`: Map struct fields with `Schema.optional`.
 
@@ -15111,7 +15145,7 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.ParseIssueTitleAnnotationId` -> `none`: The symbol annotation was removed; use message or expected annotations.
 
-- `SchemaAST.ParseJsonSchemaId` -> `Schema.UnknownFromJsonString`: Use the built-in JSON string codec instead of checking the old schema ID.
+- `SchemaAST.ParseJsonSchemaId` -> `Schema.fromJsonString(Schema.Unknown)`: Use the built-in JSON string codec instead of checking the old schema ID.
 
 - `SchemaAST.ParseOptions` -> `SchemaAST.ParseOptions`: Pass parsing options at runtime. onExcessProperty supports ignore or error, not preserve; model extra values with an explicit Record or StructWithRest. propertyOrder was removed. concurrency follows Effect.forEach semantics for tuple, array, struct, record, and struct-with-rest children, applies independently at each nested product, and does not make Union candidates concurrent. Output key order is unspecified, including in values passed to checks. Handle required presentation or serialization order explicitly outside the parser.
 
