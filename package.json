@@ -31,12 +31,12 @@
 	"packageManager": "pnpm@12.11.2+sha512.25a51652a196785af5f28bda6dfe8dc582ebefa4ac1d180221ce1390231c5fb76637822ea4b6e4633ce74acdcb0a77f725af11bad38177fdeddaee818a955cb9",
 	"devDependencies": {
 		"@ballatech/biome-config": "^1.0.1",
-		"@biomejs/biome": "2.5.9",
-		"@changesets/changelog-github": "^1.0.0",
-		"@changesets/cli": "^3.0.1",
-		"@effect/tsgo": "^0.48.0",
+		"@biomejs/biome": "2.5.15",
+		"@changesets/changelog-github": "^1.0.1",
+		"@changesets/cli": "^3.0.3",
+		"@effect/tsgo": "^0.51.1",
 		"@effect/vitest": "catalog:",
-		"lefthook": "2.1.10",
+		"lefthook": "2.2.1",
 		"typescript": "7.0.2",
 		"vitest": "^5.0.3"
 	}
