@@ -7,9 +7,9 @@ import type {
 import { Context, Effect, Layer, pipe, Schema } from 'effect'
 import { applyMiddleware, type Middleware } from '../src/applyMiddleware'
 import {
-	APIGatewayProxyEvent,
+	ApiGatewayProxyEvent,
 	type HandlerEffect,
-	NormalizedHeaders,
+	normalizedHeaders,
 	schemaBodyJson,
 	schemaPathParams,
 	toLambdaHandler,
@@ -37,9 +37,9 @@ const createEvent = (
 })
 
 describe('RestApi', () => {
-	describe('NormalizedHeaders', () => {
+	describe('normalizedHeaders', () => {
 		it('should normalize headers', async () => {
-			const handler = NormalizedHeaders.pipe(
+			const handler = normalizedHeaders.pipe(
 				Effect.map((headers) => ({
 					statusCode: 200,
 					body: JSON.stringify(headers),
@@ -68,7 +68,7 @@ describe('RestApi', () => {
 		it('should expose event on the context with original headers', async () => {
 			let evt = {} as AwsAPIGatewayProxyEvent
 
-			const handler = APIGatewayProxyEvent.use((e) => {
+			const handler = ApiGatewayProxyEvent.use((e) => {
 				evt = e
 				return Effect.succeed({ statusCode: 200, body: 'Woohoo' })
 			}).pipe((eff) => toLambdaHandler(eff))({ layer: Layer.empty })
@@ -144,7 +144,12 @@ describe('RestApi', () => {
 
 			expect(result?.statusCode).toBe(500)
 			expect(result?.headers?.['content-type']).toBe('application/problem+json')
-			expect(result?.body).toBe(JSON.stringify({ status: 500, title: 'Internal Server Error' }))
+			expect(JSON.parse(result?.body ?? '')).toEqual({
+				type: 'about:blank',
+				title: 'Internal Server Error',
+				status: 500,
+				detail: 'An unexpected error occurred',
+			})
 		})
 	})
 
@@ -223,10 +228,10 @@ describe('RestApi', () => {
 		})
 	})
 
-	describe('NormalizedHeaders', () => {
+	describe('normalizedHeaders', () => {
 		it('should access normalized headers, via component', async () => {
 			const headersM: { [key: string]: string | undefined }[] = []
-			const handler = NormalizedHeaders.pipe(
+			const handler = normalizedHeaders.pipe(
 				Effect.map((headers) => {
 					headersM.push(headers)
 					return {

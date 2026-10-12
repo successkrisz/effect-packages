@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"target": "ES2024",
+		"lib": ["ES2024", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"allowImportingTsExtensions": true,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"rootDir": "src",
+		"outDir": "dist",
+		"skipLibCheck": false,
+		"types": ["node"]
+	},
+	"include": ["src"]
+}

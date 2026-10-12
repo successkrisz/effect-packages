@@ -3,11 +3,19 @@
  * with Effect HttpApi.
  *
  * @see https://www.rfc-editor.org/rfc/rfc9457.html
+ * @since 1.0.0
  */
 import { Effect, ErrorReporter, Option, Schema, SchemaIssue } from 'effect'
 import { HttpRouter, HttpServerRespondable, HttpServerResponse } from 'effect/http'
 import { HttpApiError, HttpApiSchema } from 'effect/http-api'
 
+/**
+ * RFC 9110 reason phrases for all 4xx and 5xx status codes, used as the default
+ * problem `title`.
+ *
+ * @since 1.0.0
+ * @category constants
+ */
 export const statusTitles = {
 	400: 'Bad Request',
 	401: 'Unauthorized',
@@ -51,6 +59,12 @@ export const statusTitles = {
 	511: 'Network Authentication Required',
 } as const
 
+/**
+ * A 4xx or 5xx status code with a known title.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type StatusCode = keyof typeof statusTitles
 
 type ProblemBaseKeys = 'type' | 'title' | 'status' | 'detail' | 'instance'
@@ -251,6 +265,29 @@ function validationResponseFromError(
 	return ValidationProblem.toResponse(schemaError, { typePrefix })
 }
 
+/**
+ * Create a problem-detail error class for a tag and status code.
+ *
+ * The returned function takes optional extension fields and returns a
+ * `Schema.Error` class. Its instances are encoded as `application/problem+json`
+ * with `type` defaulting to `about:blank` and `title` derived from the status.
+ * The class can be used directly in `HttpApiEndpoint` error declarations.
+ *
+ * @example
+ * ```ts
+ * import { Schema } from 'effect'
+ * import { HttpApiProblemDetail as ProblemDetail } from '@ballatech/effect-problem-json'
+ *
+ * const DuplicateTitle = ProblemDetail.ProblemError('DuplicateTitle', 422)({
+ *   existingId: Schema.Number,
+ * })
+ *
+ * const error = new DuplicateTitle({ detail: 'Title already exists', existingId: 42 })
+ * ```
+ *
+ * @since 1.0.0
+ * @category constructors
+ */
 export function ProblemError<Tag extends string, Status extends StatusCode>(
 	tag: Tag,
 	status: Status,
@@ -302,6 +339,12 @@ export function ProblemError<Tag extends string, Status extends StatusCode>(
 	}
 }
 
+/**
+ * Create an ad-hoc `application/problem+json` response.
+ *
+ * @since 1.0.0
+ * @category constructors
+ */
 export function makeResponse(
 	status: StatusCode,
 	detail: string,
@@ -318,6 +361,13 @@ export function makeResponse(
 	})
 }
 
+/**
+ * Convert a `SchemaError` into problem `errors` entries. Each entry has a
+ * `detail` message and, when the issue has a path, a JSON Pointer in `pointer`.
+ *
+ * @since 1.0.0
+ * @category utils
+ */
 export function formatSchemaIssues(
 	error: Schema.SchemaError,
 ): Array<{ readonly detail: string; readonly pointer?: string }> {
@@ -335,6 +385,16 @@ const ValidationProblemBase = ProblemError(
 	errors: Schema.Array(ValidationIssue),
 })
 
+/**
+ * `400` problem-detail error for schema validation failures, with an `errors`
+ * array built by `formatSchemaIssues`.
+ *
+ * - `fromSchemaError` creates an error instance to fail with.
+ * - `toResponse` creates an `HttpServerResponse` directly, for plain `HttpRouter` routes.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const ValidationProblem = Object.assign(ValidationProblemBase, {
 	fromSchemaError(
 		error: Schema.SchemaError,
@@ -370,6 +430,19 @@ export const ValidationProblem = Object.assign(ValidationProblemBase, {
 	},
 })
 
+/**
+ * Global `HttpRouter` middleware that turns framework-generated errors into
+ * problem+json responses.
+ *
+ * - Catches `SchemaError`s and returns a validation problem.
+ * - Rewrites empty-body 4xx/5xx responses (including `HttpApi`'s built-in
+ *   validation 400) to problem+json.
+ * - Fixes the content type of JSON error responses that already have an RFC 9457 body.
+ * - Logs defects and returns a safe `500` problem detail.
+ *
+ * @since 1.0.0
+ * @category middleware
+ */
 export function middleware(options?: { readonly typePrefix?: string }) {
 	const prefix = options?.typePrefix ?? '/problems/'
 	const safeServerError = makeFallbackResponse(500, prefix)
@@ -454,6 +527,13 @@ const validationProblemSchema = {
 	additionalProperties: false,
 } as const
 
+/**
+ * `OpenApi.Transform` that documents `400` responses as RFC 9457 validation
+ * problems instead of `HttpApi`'s default validation error schema.
+ *
+ * @since 1.0.0
+ * @category utils
+ */
 export function openApiTransform(spec: OpenApiSpec): OpenApiSpec {
 	const result = structuredClone(spec)
 	const components = (result.components as Record<string, unknown> | undefined) ?? {}
@@ -491,18 +571,108 @@ export function openApiTransform(spec: OpenApiSpec): OpenApiSpec {
 	return result
 }
 
+/**
+ * Built-in `400` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const BadRequest = ProblemError('BadRequest', 400)()
+/**
+ * Built-in `401` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const Unauthorized = ProblemError('Unauthorized', 401)()
+/**
+ * Built-in `402` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const PaymentRequired = ProblemError('PaymentRequired', 402)()
+/**
+ * Built-in `403` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const Forbidden = ProblemError('Forbidden', 403)()
+/**
+ * Built-in `404` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const NotFound = ProblemError('NotFound', 404)()
+/**
+ * Built-in `405` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const MethodNotAllowed = ProblemError('MethodNotAllowed', 405)()
+/**
+ * Built-in `409` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const Conflict = ProblemError('Conflict', 409)()
+/**
+ * Built-in `410` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const Gone = ProblemError('Gone', 410)()
+/**
+ * Built-in `422` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const UnprocessableContent = ProblemError('UnprocessableContent', 422)()
+/**
+ * Built-in `429` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const TooManyRequests = ProblemError('TooManyRequests', 429)()
+/**
+ * Built-in `500` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const InternalServerError = ProblemError('InternalServerError', 500)()
+/**
+ * Built-in `501` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const NotImplemented = ProblemError('NotImplemented', 501)()
+/**
+ * Built-in `502` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const BadGateway = ProblemError('BadGateway', 502)()
+/**
+ * Built-in `503` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const ServiceUnavailable = ProblemError('ServiceUnavailable', 503)()
+/**
+ * Built-in `504` problem-detail error.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
 export const GatewayTimeout = ProblemError('GatewayTimeout', 504)()

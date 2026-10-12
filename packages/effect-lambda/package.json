@@ -1,6 +1,19 @@
 {
 	"name": "effect-lambda",
 	"version": "1.0.0-beta.5",
+	"description": "Effect-native adapters for AWS Lambda: API Gateway (REST and HTTP APIs), SQS, SNS, DynamoDB Streams and custom authorizers",
+	"keywords": [
+		"effect",
+		"effect-ts",
+		"aws",
+		"lambda",
+		"aws-lambda",
+		"api-gateway",
+		"sqs",
+		"sns",
+		"dynamodb",
+		"serverless"
+	],
 	"private": false,
 	"license": "MIT",
 	"author": {
@@ -18,7 +31,8 @@
 		"./Sqs": "./src/Sqs.ts",
 		"./CustomAuthorizer": "./src/CustomAuthorizer.ts",
 		"./DynamoDb": "./src/DynamoDb.ts",
-		"./HttpResponse": "./src/HttpResponse.ts"
+		"./HttpResponse": "./src/HttpResponse.ts",
+		"./package.json": "./package.json"
 	},
 	"files": [
 		"src/**/*.ts",
@@ -35,6 +49,7 @@
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {
+		"@ballatech/effect-problem-json": "workspace:*",
 		"@types/node": "catalog:",
 		"effect": "catalog:",
 		"helmet": "^8.1.0"
@@ -54,6 +69,7 @@
 	},
 	"publishConfig": {
 		"access": "public",
+		"provenance": true,
 		"exports": {
 			".": "./dist/index.js",
 			"./RestApi": "./dist/RestApi.js",
@@ -62,7 +78,8 @@
 			"./Sqs": "./dist/Sqs.js",
 			"./CustomAuthorizer": "./dist/CustomAuthorizer.js",
 			"./DynamoDb": "./dist/DynamoDb.js",
-			"./HttpResponse": "./dist/HttpResponse.js"
+			"./HttpResponse": "./dist/HttpResponse.js",
+			"./package.json": "./package.json"
 		}
 	},
 	"repository": {

@@ -5,7 +5,7 @@ import type {
 } from 'aws-lambda'
 import { Effect, Layer, Schema } from 'effect'
 import {
-	NormalizedHeaders,
+	normalizedHeaders,
 	schemaBodyJson,
 	schemaPathParams,
 	schemaQueryParams,
@@ -52,7 +52,7 @@ const createEvent = (
 
 describe('HttpApi', () => {
 	it('should normalize headers', async () => {
-		const handler = NormalizedHeaders.pipe(
+		const handler = normalizedHeaders.pipe(
 			Effect.map((headers) => ({
 				statusCode: 200,
 				body: JSON.stringify(headers),
@@ -150,5 +150,22 @@ describe('HttpApi', () => {
 		const result = await handler(event, mockContext, () => {})
 
 		expect(result).toEqual({ statusCode: 200, body: 'search' })
+	})
+
+	it('should return a problem+json 500 when the effect dies', async () => {
+		const handler = toLambdaHandler(Effect.die(new Error('boom')))({ layer: Layer.empty })
+
+		const result = await handler(createEvent(), mockContext, () => {})
+
+		expect(result).toEqual({
+			statusCode: 500,
+			headers: { 'content-type': 'application/problem+json' },
+			body: JSON.stringify({
+				type: 'about:blank',
+				title: 'Internal Server Error',
+				status: 500,
+				detail: 'An unexpected error occurred',
+			}),
+		})
 	})
 })

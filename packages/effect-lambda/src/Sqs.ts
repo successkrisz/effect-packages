@@ -1,84 +1,113 @@
+/**
+ * Adapters for SQS-triggered Lambda functions.
+ *
+ * The incoming `SQSEvent` is provided to the program through the `SqsEvent`
+ * service. `recordProcessorAdapter` turns a single-record program into a batch
+ * program that reports per-record failures as `batchItemFailures`.
+ *
+ * @since 1.0.0
+ */
 import { Context, Effect, Result } from 'effect'
-import type { AwsSQSEvent, AwsSQSRecord } from './aws.ts'
+import type { AwsSQSEvent, AwsSQSRecord, Handler } from './aws.ts'
 import type { BatchResponse } from './common.ts'
 import { makeToHandler } from './makeToHandler.ts'
 
-/**
- * Export types from aws-lambda
- */
-export type { AwsSQSEvent, AwsSQSRecord }
+export type {
+	/**
+	 * @since 1.0.0
+	 * @category models
+	 */
+	AwsSQSEvent,
+	/**
+	 * @since 1.0.0
+	 * @category models
+	 */
+	AwsSQSRecord,
+	// Lets emitted declarations of `toLambdaHandler` name `Handler` via this module instead of
+	// the unresolvable `aws-lambda/handler` subpath.
+	/**
+	 * @since 1.0.0
+	 * @category models
+	 */
+	Handler,
+}
 
 /**
- * Context tag for an incoming SQS event.
+ * Service providing the incoming SQS event.
+ *
+ * @since 1.0.0
+ * @category services
  */
-export class SQSEvent extends Context.Service<SQSEvent, AwsSQSEvent>()(
-	'effect-lambda/Sqs/SQSEvent',
+export class SqsEvent extends Context.Service<SqsEvent, AwsSQSEvent>()(
+	'effect-lambda/Sqs/SqsEvent',
 ) {}
 
 /**
- * Context tag for a single SQS record.
+ * Service providing a single SQS record, used together with `recordProcessorAdapter`.
+ *
+ * @since 1.0.0
+ * @category services
  */
-export class SQSRecord extends Context.Service<SQSRecord, AwsSQSRecord>()(
-	'effect-lambda/Sqs/SQSRecord',
+export class SqsRecord extends Context.Service<SqsRecord, AwsSQSRecord>()(
+	'effect-lambda/Sqs/SqsRecord',
 ) {}
 
 /**
- * Extract the message bodies from all records in the SQS event.
+ * The message bodies of all records in the SQS event.
+ *
+ * @since 1.0.0
+ * @category accessors
  */
-export const SQSMessageBodies = SQSEvent.useSync((event) =>
-	event.Records.map((record) => record.body),
-)
+export const messageBodies = SqsEvent.useSync((event) => event.Records.map((record) => record.body))
 
 /**
- * Convert an effectful SQS program into an SQS batch Lambda handler.
+ * Convert an effectful program into an SQS batch Lambda handler.
  *
  * @example
  * ```ts
- * import { SQSEvent, toLambdaHandler } from '@effect-lambda/Sqs'
- * import { Effect, Console } from 'effect'
+ * import { SqsEvent, toLambdaHandler } from 'effect-lambda/Sqs'
+ * import { Console } from 'effect'
  *
- * const program = SQSEvent.use((e) =>
- *   Console.log(`records: ${e.Records.length}`)
- * )
+ * const program = SqsEvent.use((event) => Console.log(`records: ${event.Records.length}`))
+ *
  * export const handler = toLambdaHandler(program)()
  * ```
+ *
+ * @since 1.0.0
+ * @category converting
  */
 export const toLambdaHandler = makeToHandler<
-	typeof SQSEvent,
+	typeof SqsEvent,
 	// biome-ignore lint/suspicious/noConfusingVoidType: SQS handler return type is void | BatchResponse
 	void | BatchResponse
->(SQSEvent)
+>(SqsEvent)
 
 /**
  * Adapt a single-record effect into a batch SQS program that returns a `BatchResponse`.
  *
- * Records are processed sequentially by default, matching SQS batch failure semantics.
- *
- * @param effect Effect that processes a single `SQSRecord`.
- * @returns Effect producing a `BatchResponse` compatible with SQS batch handlers.
+ * Records are processed sequentially, matching SQS batch failure semantics.
+ * Every record whose effect fails is reported in `batchItemFailures`.
  *
  * @example
- * ```typescript
- * import { Console, Effect } from 'effect';
- * import { SQSRecord, toLambdaHandler, recordProcessorAdapter } from '@effect-lambda/Sqs';
+ * ```ts
+ * import { recordProcessorAdapter, SqsRecord, toLambdaHandler } from 'effect-lambda/Sqs'
+ * import { Console } from 'effect'
  *
- * const processRecord = SQSRecord.use((record) =>
- *   Console.log(record.body)
- * );
+ * const processRecord = SqsRecord.use((record) => Console.log(record.body))
  *
- * export const handler = processRecord.pipe(
- *    recordProcessorAdapter<never>,
- *    toLambdaHandler,
- * )();
+ * export const handler = toLambdaHandler(processRecord.pipe(recordProcessorAdapter))()
  * ```
+ *
+ * @since 1.0.0
+ * @category combinators
  */
-export const recordProcessorAdapter = <R = SQSRecord, E = never>(
+export const recordProcessorAdapter = <R = SqsRecord, E = never>(
 	effect: Effect.Effect<void, E, R>,
-): Effect.Effect<BatchResponse, never, SQSEvent | Exclude<R, SQSRecord>> =>
+): Effect.Effect<BatchResponse, never, SqsEvent | Exclude<R, SqsRecord>> =>
 	Effect.gen(function* () {
-		const { Records } = yield* SQSEvent
+		const { Records } = yield* SqsEvent
 
-		const effects = Records.map((record) => effect.pipe(Effect.provideService(SQSRecord, record)))
+		const effects = Records.map((record) => effect.pipe(Effect.provideService(SqsRecord, record)))
 		const results = yield* Effect.all(effects, {
 			mode: 'result',
 		})
@@ -90,3 +119,36 @@ export const recordProcessorAdapter = <R = SQSRecord, E = never>(
 				.map(([_, id]) => ({ itemIdentifier: id })),
 		}
 	})
+
+/**
+ * @deprecated Use `SqsEvent`.
+ * @since 1.0.0
+ * @category services
+ */
+export const SQSEvent = SqsEvent
+/**
+ * @deprecated Use `SqsEvent`.
+ * @since 1.0.0
+ * @category services
+ */
+export type SQSEvent = SqsEvent
+
+/**
+ * @deprecated Use `SqsRecord`.
+ * @since 1.0.0
+ * @category services
+ */
+export const SQSRecord = SqsRecord
+/**
+ * @deprecated Use `SqsRecord`.
+ * @since 1.0.0
+ * @category services
+ */
+export type SQSRecord = SqsRecord
+
+/**
+ * @deprecated Use `messageBodies`.
+ * @since 1.0.0
+ * @category accessors
+ */
+export const SQSMessageBodies = messageBodies

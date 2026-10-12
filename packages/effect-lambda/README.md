@@ -59,7 +59,7 @@ export const handlerWithMiddleware = RestApi.toLambdaHandler(
 
 // Or you can add a pre-processing middleware
 export const handlerWithPreMiddleware = RestApi.toLambdaHandler(
-  RestApi.APIGatewayProxyEvent.use((event) =>
+  RestApi.ApiGatewayProxyEvent.use((event) =>
     Console.log(`Received event: ${event}`)
   ).pipe(Effect.flatMap(() => _handler)),
 )({ layer: Layer.empty })
@@ -86,6 +86,7 @@ export const handlerWithPreMiddleware = RestApi.toLambdaHandler(
     - [DynamoDB Stream Event Handler](#dynamodb-stream-event-handler)
     - [Custom Authorizer Handler](#custom-authorizer-handler)
     - [makeToHandler](#maketohandler)
+  - [Naming and deprecated aliases](#naming-and-deprecated-aliases)
   - [Useful other libraries to use with effect-lambda](#useful-other-libraries-to-use-with-effect-lambda)
   - [TODO list](#todo-list)
 
@@ -196,14 +197,14 @@ export const handlerWithSchemas = HttpApi.toLambdaHandler(
 
 ### HttpResponse (response helpers)
 
-Helpers to build consistent API responses (including RFC 7807 problem+json) with `effect` encoders. Works with both REST API (v1) and HTTP API (v2) handlers, since both accept the same `statusCode/headers/body` shape.
+Helpers to build consistent API responses (including [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html) problem+json) with `effect` encoders. Works with both REST API (v1) and HTTP API (v2) handlers, since both accept the same `statusCode/headers/body` shape.
 
 Available helpers:
 
 - `ok` - 2xx response defaulting to 200 OK (excluding 204 No Content)
 - `created` - 201 Created response with optional location header
 - `noContent` - 204 No Content response
-- `redirect` - 3xx response defaulting to 302 Found
+- `redirect` - 3xx response defaulting to 303 See Other
 - `clientError` - 4xx client error response
 - `serverError` - 5xx server error response
 - `jsonResponse` - JSON response with schema-based encoding
@@ -222,7 +223,7 @@ const getUser = HttpResponse.jsonResponse({
 // => { statusCode: 200, headers: { 'x-trace': 'req-1', 'content-type': 'application/json' }, body: '{"id":"123","active":true}' }
 
 // 2xx helpers
-const ok = HttpResponse.ok({ statusCode: 200, body: { ok: true } })
+const ok = HttpResponse.ok({ body: { ok: true } })
 const created = HttpResponse.created({ body: { id: 1 }, location: "/users/1" })
 const noContent = HttpResponse.noContent({ "X-Trace": "1" })
 
@@ -256,7 +257,20 @@ export const handler = Effect.succeed({ userId: 1 }).pipe(
 Notes:
 
 - All JSON-producing helpers ensure `content-type: application/json` (or keep a valid JSON media type you provide, e.g. `application/vnd.api+json`).
-- Problem+json helpers (`clientError`, `serverError`, `problem`, `badRequestFromSchemaError`) always set `content-type: application/problem+json` and derive `title` from the HTTP status.
+- Problem+json helpers (`clientError`, `serverError`, `problem`, `badRequestFromSchemaError`) always set `content-type: application/problem+json` and derive `title` from the HTTP status. `type` defaults to `about:blank`.
+- `badRequestFromSchemaError` produces the same body shape as [`@ballatech/effect-problem-json`](../effect-problem-json)'s `ValidationProblem`:
+
+  ```json
+  {
+    "type": "about:blank",
+    "title": "Bad Request",
+    "status": 400,
+    "detail": "The request did not match the expected schema",
+    "errors": [{ "detail": "Expected string", "pointer": "#/name" }]
+  }
+  ```
+
+- `RestApi.toLambdaHandler` and `HttpApi.toLambdaHandler` turn defects into a `500` problem+json response with `detail: "An unexpected error occurred"`.
 - Headers you pass in are normalized to lowercase. This makes comparison and merging predictable.
 - `ok` forbids `204` at the type-level; use `noContent()` for 204.
 - `redirect` merges the `Location` header for you and leaves the body undefined.
@@ -284,11 +298,11 @@ export const handler = RestApi.toLambdaHandler(
 ### SQS Trigger Handler
 
 ```typescript
-import { SQSEvent, toLambdaHandler } from "effect-lambda/Sqs"
+import { SqsEvent, toLambdaHandler } from "effect-lambda/Sqs"
 import { Effect, Layer } from "effect"
 
 export const handler = toLambdaHandler(
-  SQSEvent.use((event) => {
+  SqsEvent.use((event) => {
     // Do something with the event
     return Effect.void
   }),
@@ -299,13 +313,13 @@ You can also use a record processor to process each record in a batch individual
 
 ```typescript
 import {
-  SQSRecord,
+  SqsRecord,
   toLambdaHandler,
   recordProcessorAdapter,
 } from "effect-lambda/Sqs"
 import { Effect, Layer } from "effect"
 
-const processRecord = SQSRecord.use((record) => {
+const processRecord = SqsRecord.use((record) => {
   // Do something with the record
   return Effect.void
 })
@@ -315,6 +329,8 @@ export const handler = toLambdaHandler(
 )({ layer: Layer.empty })
 ```
 
+`Sqs.messageBodies` is an effect that reads the bodies of all records in the batch.
+
 ### SNS Trigger Handler
 
 ```typescript
@@ -322,7 +338,7 @@ import { Sns } from "effect-lambda"
 import { Effect, Layer } from "effect"
 
 export const handler = Sns.toLambdaHandler(
-  Sns.SNSEvent.use((event) => {
+  Sns.SnsEvent.use((event) => {
     // Do something with the event
     return Effect.void
   }),
@@ -337,7 +353,7 @@ import { DynamoDb } from "effect-lambda"
 import { Effect, Layer } from "effect"
 
 export const handler = DynamoDb.toLambdaHandler(
-  DynamoDb.DynamoDBStreamEvent.use((event) =>
+  DynamoDb.DynamoDbStreamEvent.use((event) =>
     Effect.forEach(
       event.Records,
       (record) => Effect.log(`DynamoDB Record: ${record.eventID}`),
@@ -347,7 +363,7 @@ export const handler = DynamoDb.toLambdaHandler(
 )({ layer: Layer.empty })
 ```
 
-This handler allows you to process DynamoDB stream events in a functional way using the `effect-lambda` library. You can access each record in the stream and apply your business logic accordingly.
+This handler allows you to process DynamoDB stream events in a functional way using the `effect-lambda` library. You can access each record in the stream and apply your business logic accordingly. `DynamoDb.newImages` is an effect that reads the `NewImage` of every record.
 
 ### Custom Authorizer Handler
 
@@ -358,7 +374,7 @@ import { Effect } from "effect"
 export const handler = CustomAuthorizer.toLambdaHandler(
   Effect.gen(function* () {
     // Access the incoming authorizer event if needed
-    // const event = yield* CustomAuthorizer.APIGatewayAuthorizerEvent
+    // const event = yield* CustomAuthorizer.ApiGatewayAuthorizerEvent
 
     // Build and return an IAM policy
     return {
@@ -399,6 +415,22 @@ const program = Event.use((event) => {
 
 export const handler = toHandler(program)({ layer: Layer.empty })
 ```
+
+## Naming and deprecated aliases
+
+Names follow Effect v4 conventions: services use compound PascalCase for acronyms (`SqsEvent`, `SnsEvent`, `DynamoDbStreamEvent`, `ApiGatewayProxyEvent`) and derived effects use camelCase (`messageBodies`, `newImages`, `normalizedEvent`, `normalizedHeaders`). The previous names are still exported as deprecated aliases of the same values, so code providing or reading a service through the old name keeps working.
+
+| Deprecated                                                             | Replacement                                      |
+| ---------------------------------------------------------------------- | ------------------------------------------------ |
+| `Sqs.SQSEvent`, `Sqs.SQSRecord`, `Sqs.SQSMessageBodies`                | `Sqs.SqsEvent`, `Sqs.SqsRecord`, `Sqs.messageBodies` |
+| `Sns.SNSEvent`                                                         | `Sns.SnsEvent`                                   |
+| `DynamoDb.DynamoDBStreamEvent`, `DynamoDBRecord`, `DynamoDBNewImages`  | `DynamoDbStreamEvent`, `DynamoDbRecord`, `newImages` |
+| `RestApi.APIGatewayProxyEvent`, `NormalizedAPIGatewayProxyEvent`       | `ApiGatewayProxyEvent`, `normalizedEvent`        |
+| `HttpApi.APIGatewayProxyEventV2`, `NormalizedAPIGatewayProxyEventV2`   | `ApiGatewayProxyEventV2`, `normalizedEvent`      |
+| `RestApi.NormalizedHeaders`, `HttpApi.NormalizedHeaders`               | `normalizedHeaders`                              |
+| `CustomAuthorizer.APIGatewayAuthorizerEvent`                           | `ApiGatewayAuthorizerEvent`                      |
+
+`CustomAuthorizer.UnauthorizedError` has the `_tag` `"LambdaUnauthorizedError"`.
 
 ## Useful other libraries to use with effect-lambda
 

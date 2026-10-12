@@ -1,3 +1,13 @@
+/**
+ * OAuth 2.0 client credentials support for the Effect `HttpClient`.
+ *
+ * `make` builds an `HttpClient` that fetches an access token with the client
+ * credentials grant, caches it until shortly before it expires, and attaches it
+ * as a bearer token to every request. A `401` response invalidates the cached
+ * token and retries the request once.
+ *
+ * @since 1.0.0
+ */
 import {
 	type Config,
 	Context,
@@ -14,20 +24,40 @@ import {
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 /**
- * OAuth client utilities for obtaining and attaching client credentials tokens.
+ * Runtime identifier used to mark `AuthorizationError` values.
+ *
+ * @since 1.0.0
+ * @category type IDs
  */
 export const AuthorizationErrorTypeId: unique symbol = Symbol.for(
 	'@ballatech/effect-oauth-client/AuthorizationErrorTypeId',
 )
+/**
+ * @since 1.0.0
+ * @category type IDs
+ */
 export type AuthorizationErrorTypeId = typeof AuthorizationErrorTypeId
 
+/**
+ * Returns `true` if the value is an `AuthorizationError`.
+ *
+ * @since 1.0.0
+ * @category guards
+ */
 export const isAuthorizationError = (u: unknown): u is AuthorizationError =>
 	Predicate.hasProperty(u, AuthorizationErrorTypeId)
 
-/** Error type for OAuth authorization failures. */
-export class AuthorizationError extends Data.TaggedError(
-	'@ballatech/effect-oauth-client/AuthorizationError',
-)<{
+/**
+ * Error for OAuth failures.
+ *
+ * - `credentials_error`: the token endpoint response did not match the expected schema.
+ * - `client_error`: obtaining a token failed after retries (network error, `429`, `5xx`).
+ * - `unauthorized`: the downstream API still answered `401` after a token refresh.
+ *
+ * @since 1.0.0
+ * @category errors
+ */
+export class AuthorizationError extends Data.TaggedError('OAuthAuthorizationError')<{
 	readonly message: string
 	readonly code: 'credentials_error' | 'client_error' | 'unauthorized'
 	readonly cause?: unknown
@@ -35,20 +65,30 @@ export class AuthorizationError extends Data.TaggedError(
 	readonly [AuthorizationErrorTypeId] = AuthorizationErrorTypeId
 }
 
-/** Configuration required to obtain tokens via client credentials flow. */
+/**
+ * Configuration required to obtain tokens via the client credentials grant.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type Credentials = {
-	clientId: string
-	clientSecret: Redacted.Redacted<string>
-	tokenUrl: string
-	scope?: string
-	audience?: string
+	readonly clientId: string
+	readonly clientSecret: Redacted.Redacted<string>
+	readonly tokenUrl: string
+	readonly scope?: string
+	readonly audience?: string
 	/** Base URL prepended to all outgoing requests (e.g. `https://api.example.com`). */
-	baseUrl?: string
-	ttl?: Duration.Duration
-	expiryBuffer?: Duration.Duration
+	readonly baseUrl?: string
+	readonly ttl?: Duration.Duration
+	readonly expiryBuffer?: Duration.Duration
 }
 
-/** Config-based credentials where each value is resolved from a `Config` provider. */
+/**
+ * Like `Credentials`, but each value is resolved from a `Config`.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type CredentialsConfig = {
 	readonly clientId: Config.Config<string>
 	readonly clientSecret: Config.Config<Redacted.Redacted<string>>
@@ -66,10 +106,13 @@ type Token = {
 	expiresAt: DateTime.DateTime
 }
 /**
- * Build an HttpClient that automatically injects a bearer token.
+ * Build an `HttpClient` that automatically injects a bearer token.
  *
  * Tokens are fetched using the OAuth client credentials grant and cached according to
- * the ttl, with early refresh controlled by expiryBuffer.
+ * the `ttl`, with early refresh controlled by `expiryBuffer`.
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 export const make = ({
 	clientId,
@@ -204,6 +247,9 @@ export const make = ({
  *
  * This avoids the `Config → asEffect → flatMap → make` boilerplate
  * when credentials come from environment variables or a config provider.
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 export const makeFromConfig = (config: CredentialsConfig) =>
 	Effect.gen(function* () {
@@ -233,6 +279,9 @@ export const makeFromConfig = (config: CredentialsConfig) =>
  * The built-in {@link OAuthHttpClient} tag is a convenience for programs that only
  * talk to a single OAuth-protected API. When you connect to multiple APIs, define
  * your own tags with this type and wire them with {@link make} / {@link makeFromConfig}.
+ *
+ * @since 1.0.0
+ * @category models
  */
 export type Client = Effect.Success<ReturnType<typeof make>>
 
@@ -240,21 +289,41 @@ export type Client = Effect.Success<ReturnType<typeof make>>
  * Built-in service tag for an OAuth-authenticated `HttpClient`.
  *
  * This is a convenience for the common single-client case — use with
- * {@link layer} or {@link layerFromConfig}. When your program connects to
+ * {@link layer} or {@link layerConfig}. When your program connects to
  * multiple OAuth-protected APIs, create your own tags instead:
  *
  * ```ts
  * class AzureClient extends Context.Service<AzureClient, OAuthClient.Client>()('AzureClient') {}
  * class GoogleClient extends Context.Service<GoogleClient, OAuthClient.Client>()('GoogleClient') {}
  * ```
+ *
+ * @since 1.0.0
+ * @category services
  */
 export class OAuthHttpClient extends Context.Service<OAuthHttpClient, Client>()(
 	'@ballatech/effect-oauth-client/OAuthHttpClient',
 ) {}
 
-/** Build a `Layer` that provides {@link OAuthHttpClient} from static credentials. */
+/**
+ * Build a `Layer` that provides {@link OAuthHttpClient} from static credentials.
+ *
+ * @since 1.0.0
+ * @category layers
+ */
 export const layer = (credentials: Credentials) => Layer.effect(OAuthHttpClient)(make(credentials))
 
-/** Build a `Layer` that provides {@link OAuthHttpClient} from `Config` values. */
-export const layerFromConfig = (config: CredentialsConfig) =>
+/**
+ * Build a `Layer` that provides {@link OAuthHttpClient} from `Config` values.
+ *
+ * @since 1.0.0
+ * @category layers
+ */
+export const layerConfig = (config: CredentialsConfig) =>
 	Layer.effect(OAuthHttpClient)(makeFromConfig(config))
+
+/**
+ * @deprecated Use `layerConfig`.
+ * @since 1.0.0
+ * @category layers
+ */
+export const layerFromConfig = layerConfig

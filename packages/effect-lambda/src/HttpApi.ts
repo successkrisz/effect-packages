@@ -1,3 +1,12 @@
+/**
+ * Adapters for API Gateway HTTP API (payload format v2) Lambda functions.
+ *
+ * The incoming proxy event is provided to the program through the
+ * `ApiGatewayProxyEventV2` service. Helpers decode the JSON body, path
+ * parameters and query parameters with `Schema`.
+ *
+ * @since 1.0.0
+ */
 import { Context, Effect, type Layer, Schema, type SchemaAST } from 'effect'
 import type {
 	APIGatewayProxyHandlerV2,
@@ -6,110 +15,183 @@ import type {
 } from './aws.ts'
 import type { HandlerContext } from './common.ts'
 import { headerNormalizer, normalizeHeaders } from './internal/headerNormalizer.ts'
-import { httpStatusMessages } from './internal/http-status-codes.ts'
 import { jsonBodyParser } from './internal/jsonBodyParser.ts'
+import { makeInternalServerErrorResponse } from './internal/problemDetail.ts'
 import { makeToHandler } from './makeToHandler.ts'
 
-/**
- * Export types from aws-lambda for HTTP API (payload format v2)
- */
 export type {
+	/**
+	 * @since 1.0.0
+	 * @category models
+	 */
 	APIGatewayProxyHandlerV2 as Handler,
+	/**
+	 * @since 1.0.0
+	 * @category models
+	 */
 	AwsAPIGatewayProxyEventV2,
+	/**
+	 * @since 1.0.0
+	 * @category models
+	 */
 	AwsAPIGatewayProxyResultV2,
 }
 
 /**
- * Context tag for the HTTP API v2 proxy event.
+ * Service providing the incoming HTTP API v2 proxy event, as received from AWS.
  *
- * - Headers are normalized to lowercase when using `NormalizedAPIGatewayProxyEventV2`
- * - Body is parsed to JSON when `content-type` is JSON using `schemaBodyJson`
+ * @since 1.0.0
+ * @category services
  */
-export class APIGatewayProxyEventV2 extends Context.Service<
-	APIGatewayProxyEventV2,
+export class ApiGatewayProxyEventV2 extends Context.Service<
+	ApiGatewayProxyEventV2,
 	AwsAPIGatewayProxyEventV2
->()('effect-lambda/HttpApi/APIGatewayProxyEventV2') {}
+>()('effect-lambda/HttpApi/ApiGatewayProxyEventV2') {}
 
-/** Lazily-normalized (lowercased) headers and preserved rawHeaders on the event. */
-export const NormalizedAPIGatewayProxyEventV2 = APIGatewayProxyEventV2.useSync((event) =>
-	headerNormalizer(event),
-)
+/**
+ * The proxy event with lowercased `headers`. The original headers are kept in
+ * `rawHeaders`.
+ *
+ * @since 1.0.0
+ * @category accessors
+ */
+export const normalizedEvent = ApiGatewayProxyEventV2.useSync((event) => headerNormalizer(event))
 
-/** Lazily-computed map of normalized (lowercased) headers. */
-export const NormalizedHeaders = APIGatewayProxyEventV2.useSync((event) =>
+/**
+ * The request headers with lowercased keys.
+ *
+ * @since 1.0.0
+ * @category accessors
+ */
+export const normalizedHeaders = ApiGatewayProxyEventV2.useSync((event) =>
 	normalizeHeaders(event.headers),
 )
+
 /**
- * Utility to parse the JSON body of an HTTP API v2 event into a schema.
+ * Decode the JSON body of the event with a schema.
+ *
+ * The body is base64-decoded when `isBase64Encoded` is true, and only parsed
+ * as JSON when the `content-type` is a JSON media type.
+ *
+ * @since 1.0.0
+ * @category decoding
  */
 export const schemaBodyJson = <S extends Schema.Top>(
 	schema: S,
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
-	NormalizedAPIGatewayProxyEventV2.pipe(
+	normalizedEvent.pipe(
 		Effect.flatMap(jsonBodyParser),
 		Effect.map(({ body }) => body as unknown),
 		Effect.flatMap((body) => Schema.decodeUnknownEffect(schema)(body, options)),
 	)
 
 /**
- * Utility to parse path parameters into a schema.
+ * Decode the path parameters of the event with a schema.
+ *
+ * @since 1.0.0
+ * @category decoding
  */
 export const schemaPathParams = <S extends Schema.Top>(
 	schema: S,
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
-	APIGatewayProxyEventV2.useSync((e) => e.pathParameters || {}).pipe(
+	ApiGatewayProxyEventV2.useSync((e) => e.pathParameters || {}).pipe(
 		Effect.flatMap((params) => Schema.decodeEffect(schema)(params, options)),
 	)
+
 /**
- * Utility to parse query parameters into a schema.
+ * Decode the query string parameters of the event with a schema.
+ *
+ * @since 1.0.0
+ * @category decoding
  */
 export const schemaQueryParams = <S extends Schema.Top>(
 	schema: S,
 	options?: SchemaAST.ParseOptions | undefined,
 ) =>
-	APIGatewayProxyEventV2.useSync((e) => e.queryStringParameters || {}).pipe(
+	ApiGatewayProxyEventV2.useSync((e) => e.queryStringParameters || {}).pipe(
 		Effect.flatMap((queryStringParameters) =>
 			Schema.decodeEffect(schema)(queryStringParameters, options),
 		),
 	)
 
 /**
- * Utility type for Effects that produce an HTTP API v2 response and depend on the event/context.
+ * An effect that produces an HTTP API v2 response and may depend on the event,
+ * the Lambda context and `R`.
+ *
+ * @since 1.0.0
+ * @category models
  */
 export type HandlerEffect<R = never> = Effect.Effect<
 	AwsAPIGatewayProxyResultV2,
 	never,
-	APIGatewayProxyEventV2 | HandlerContext | R
+	ApiGatewayProxyEventV2 | HandlerContext | R
 >
 
 /**
- * Transform a HandlerEffect into an `APIGatewayProxyHandlerV2`.
+ * Convert a `HandlerEffect` into an `APIGatewayProxyHandlerV2`.
  *
- * - Adds a 500 fallback on defects
- * - Provide your own dependencies via `layer`
+ * Defects are turned into a `500` `application/problem+json` response.
+ * Services required by the effect other than the event and the Lambda context
+ * are provided through `layer`.
+ *
+ * @example
+ * ```ts
+ * import { HttpApi } from 'effect-lambda'
+ * import { Effect, Layer } from 'effect'
+ *
+ * export const handler = HttpApi.toLambdaHandler(
+ *   HttpApi.ApiGatewayProxyEventV2.use((event) =>
+ *     Effect.succeed({ statusCode: 200, body: event.rawPath }),
+ *   ),
+ * )({ layer: Layer.empty })
+ * ```
+ *
+ * @since 1.0.0
+ * @category converting
  */
 export function toLambdaHandler<R, E = never>(
-	handler: HandlerEffect<R | APIGatewayProxyEventV2 | HandlerContext>,
+	handler: HandlerEffect<R | ApiGatewayProxyEventV2 | HandlerContext>,
 ): (params: {
-	layer: Layer.Layer<Exclude<R, APIGatewayProxyEventV2 | HandlerContext>, E>
+	layer: Layer.Layer<Exclude<R, ApiGatewayProxyEventV2 | HandlerContext>, E>
 	options?: { readonly memoMap?: Layer.MemoMap }
 }) => APIGatewayProxyHandlerV2 {
-	const result1 = makeToHandler<typeof APIGatewayProxyEventV2, AwsAPIGatewayProxyResultV2>(
-		APIGatewayProxyEventV2,
+	const toHandler = makeToHandler<typeof ApiGatewayProxyEventV2, AwsAPIGatewayProxyResultV2>(
+		ApiGatewayProxyEventV2,
 	)
 
-	const result2 = result1<R | APIGatewayProxyEventV2 | HandlerContext, E>(
+	return toHandler<R | ApiGatewayProxyEventV2 | HandlerContext, E>(
 		handler.pipe(
-			Effect.catchDefect(() =>
-				Effect.succeed({
-					statusCode: 500,
-					body: JSON.stringify({ status: 500, title: httpStatusMessages[500] }),
-					headers: { 'content-type': 'application/problem+json' },
-				}),
-			),
+			Effect.tapDefect(Effect.logError),
+			Effect.catchDefect(() => Effect.sync(makeInternalServerErrorResponse)),
 		),
 	)
-	return result2
 }
+
+/**
+ * @deprecated Use `ApiGatewayProxyEventV2`.
+ * @since 1.0.0
+ * @category services
+ */
+export const APIGatewayProxyEventV2 = ApiGatewayProxyEventV2
+/**
+ * @deprecated Use `ApiGatewayProxyEventV2`.
+ * @since 1.0.0
+ * @category services
+ */
+export type APIGatewayProxyEventV2 = ApiGatewayProxyEventV2
+
+/**
+ * @deprecated Use `normalizedEvent`.
+ * @since 1.0.0
+ * @category accessors
+ */
+export const NormalizedAPIGatewayProxyEventV2 = normalizedEvent
+
+/**
+ * @deprecated Use `normalizedHeaders`.
+ * @since 1.0.0
+ * @category accessors
+ */
+export const NormalizedHeaders = normalizedHeaders

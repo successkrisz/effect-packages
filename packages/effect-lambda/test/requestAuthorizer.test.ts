@@ -52,4 +52,8 @@ describe('toHandler', () => {
 			handler(event as unknown as APIGatewayAuthorizerEvent, mockContext, () => {}),
 		).rejects.toThrow()
 	})
+
+	it('tags UnauthorizedError with a domain-prefixed tag', () => {
+		expect(new UnauthorizedError()._tag).toBe('LambdaUnauthorizedError')
+	})
 })

@@ -1,15 +1,37 @@
-import { Data, Effect, Schema, SchemaIssue } from 'effect'
-import {
-	type ClientErrorStatusCode,
-	type HttpStatusCode,
+/**
+ * Response helpers for API Gateway Lambda handlers.
+ *
+ * The helpers build `{ statusCode, headers, body }` results that work with both
+ * REST API (v1) and HTTP API (v2) handlers. JSON bodies are encoded with
+ * `Schema`, and error helpers produce RFC 9457 `application/problem+json`
+ * bodies with the same shape as `@ballatech/effect-problem-json`.
+ *
+ * @since 1.0.0
+ */
+import { Data, Effect, Schema } from 'effect'
+import type {
+	ClientErrorStatusCode,
+	HttpStatusCode,
 	httpStatusMessages,
-	type RedirectionStatusCode,
-	type ServerErrorStatusCode,
-	type SuccessStatusCode,
+	RedirectionStatusCode,
+	ServerErrorStatusCode,
+	SuccessStatusCode,
 } from './internal/http-status-codes.ts'
 import { isJsonContentType } from './internal/jsonBodyParser.ts'
+import {
+	formatSchemaIssues,
+	makeProblemBody,
+	problemJsonContentType,
+	validationProblemDetail,
+} from './internal/problemDetail.ts'
 import { type ForbidKeysWithValues, lowercaseKeys } from './utils.ts'
 
+/**
+ * Response headers.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type CommonHeaders = { [header: string]: boolean | number | string }
 
 const getContentTypeHeader = (contentType: string | undefined | boolean | number) =>
@@ -18,7 +40,10 @@ const getContentTypeHeader = (contentType: string | undefined | boolean | number
 		: 'application/json'
 
 /**
- * Narrow AWS Gateway v2-style result (works with HTTP API and REST API)
+ * Response accepted by both REST API and HTTP API handlers.
+ *
+ * @since 1.0.0
+ * @category models
  */
 export type HttpResponse = Readonly<{
 	statusCode: HttpStatusCode
@@ -41,10 +66,14 @@ class JsonResponseEncodeError extends Data.TaggedError('JsonResponseEncodeError'
 }> {}
 
 /**
- * JSON HTTP Response with schema-based encoding.
+ * JSON response with schema-based encoding.
  *
- * When a schema is provided, encodes the body via `Schema.encodeUnknownEffect(Schema.fromJsonString(schema))`.
- * Otherwise falls back to `JSON.stringify`.
+ * When a schema is provided, the body is encoded with
+ * `Schema.encodeUnknownEffect(Schema.fromJsonString(schema))`. Otherwise it is
+ * serialized as JSON. Encoding failures are defects.
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 function jsonResponse<S extends JsonResponseSchema>(opts: {
 	statusCode: HttpStatusCode
@@ -87,8 +116,13 @@ function jsonResponse({
 }
 
 /**
- * RFC 7807 Problem Details (problem+json).
- * You can extend with custom fields via `extensions`.
+ * RFC 9457 Problem Details (`application/problem+json`).
+ *
+ * `type` defaults to `about:blank` and `title` is derived from `status`. Custom
+ * members can be added through `extensions`.
+ *
+ * @since 1.0.0
+ * @category models
  */
 export type ProblemJson = Readonly<{
 	title: (typeof httpStatusMessages)[keyof typeof httpStatusMessages]
@@ -99,71 +133,91 @@ export type ProblemJson = Readonly<{
 	extensions?: ForbidKeysWithValues<'title' | 'status' | 'type' | 'detail' | 'instance', unknown>
 }>
 
-// Internal helpers for problem+json -------------------------------
-const buildProblemBody = (
-	statusCode: HttpStatusCode,
-	options?: Omit<ProblemJson, 'status' | 'title'>,
-) => ({
-	...options?.extensions,
-	status: statusCode,
-	title: httpStatusMessages[statusCode],
-	type: options?.type,
-	instance: options?.instance,
-	detail: options?.detail,
-})
-
 const problemJsonResponse = (
 	statusCode: HttpStatusCode,
 	headers?: CommonHeaders,
-	options?: Omit<ProblemJson, 'status' | 'title'>,
+	options?: Omit<ProblemJson, 'status' | 'title'> & Readonly<{ title?: string }>,
 ): Effect.Effect<HttpResponse> =>
 	jsonResponse({
 		statusCode: statusCode,
-		headers: { ...headers, 'content-type': 'application/problem+json' },
-		body: buildProblemBody(statusCode, options),
+		headers: { ...headers, 'content-type': problemJsonContentType },
+		body: makeProblemBody(statusCode, options),
 	})
-// -----------------------------------------------------------------
 
-// -- 2xx Success responses --
+/**
+ * Options for 2xx responses.
+ *
+ * @since 1.0.0
+ * @category options
+ */
 export type SuccessOptions = Readonly<{
 	statusCode: SuccessStatusCode
 	headers?: CommonHeaders
 }>
 
+/**
+ * Options for `201 Created` responses.
+ *
+ * @since 1.0.0
+ * @category options
+ */
 export type CreatedOptions = Omit<SuccessOptions, 'statusCode'> &
 	Readonly<{
 		location?: string
 	}>
 
+/**
+ * Signature of `ok`.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type OkResponse = (
 	_: Omit<JsonResponseBaseOptions, 'statusCode'> & {
-		statusCode: Exclude<SuccessStatusCode, 204>
+		statusCode?: Exclude<SuccessStatusCode, 204>
 	},
 ) => Effect.Effect<HttpResponse>
 
+/**
+ * Signature of `created`.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type CreatedResponse = (
 	_: Omit<JsonResponseBaseOptions, 'statusCode'> & {
 		location?: string
 	},
 ) => Effect.Effect<HttpResponse>
 
+/**
+ * Signature of `noContent`.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type NoContentResponse = (headers?: CommonHeaders) => HttpResponse
 
 /**
- * 2xx response defaulting to 200 OK
- *
- * Excludes 204 No Content
+ * 2xx JSON response, defaulting to `200 OK`. `204 No Content` is excluded; use
+ * `noContent` instead.
  *
  * @example
  * ```ts
  * const ok = HttpResponse.ok({ statusCode: 200, body: { ok: true } })
  * // => { statusCode: 200, headers: { 'content-type': 'application/json' }, body: '{"ok":true}' }
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const ok: OkResponse = ({ statusCode = 200, ...props }) => jsonResponse({ statusCode, ...props })
 
 /**
- * 201 Created response with optional location header
+ * `201 Created` JSON response with an optional `location` header.
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const created: CreatedResponse = ({ location, headers, ...props }) =>
 	jsonResponse({
@@ -173,7 +227,10 @@ const created: CreatedResponse = ({ location, headers, ...props }) =>
 	})
 
 /**
- * 204 No Content response
+ * `204 No Content` response.
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const noContent: NoContentResponse = (headers) => ({
 	statusCode: 204,
@@ -181,7 +238,12 @@ const noContent: NoContentResponse = (headers) => ({
 	body: '',
 })
 
-// -- 3xx Redirection responses --
+/**
+ * Options for 3xx responses.
+ *
+ * @since 1.0.0
+ * @category options
+ */
 export type RedirectionOptions = Readonly<{
 	to: string
 	statusCode: RedirectionStatusCode
@@ -189,36 +251,49 @@ export type RedirectionOptions = Readonly<{
 }>
 
 /**
- * 3xx response defaulting to 303 See Other
+ * 3xx response with a `location` header, defaulting to `303 See Other`.
  *
- * Particularly useful for getting results from s3 via signed S3 URLs
+ * Particularly useful for redirecting to signed S3 URLs.
  *
  * @example
  * ```ts
  * const redirect = HttpResponse.redirect({ to: "/new", statusCode: 303, headers: { "X-Req": "1" } })
  * // => { statusCode: 303, headers: { 'location': '/new', 'x-req': '1' } }
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const redirect = ({ to, statusCode = 303, headers }: RedirectionOptions) => ({
 	statusCode,
 	headers: lowercaseKeys({ ...headers, location: to }),
 })
 
-// -- 4xx Client Error responses --
-
+/**
+ * Options for `clientError`.
+ *
+ * @since 1.0.0
+ * @category options
+ */
 export type ClientErrorOptions = Readonly<{
 	statusCode: ClientErrorStatusCode
 	headers?: CommonHeaders
-	type?: string // default: "about:blank" or your org’s URI
-	title?: string // short summary; default derived from status
+	type?: string
+	title?: string
 	detail?: string
 	instance?: string
 	extensions?: Readonly<Record<string, unknown>>
 }>
 
+/**
+ * Options for `badRequestFromSchemaError`.
+ *
+ * @since 1.0.0
+ * @category options
+ */
 export type BadRequestFromSchemaOptions = Readonly<{
 	/**
-	 * Defaults to "https://example.com/problems/validation-error".
+	 * Defaults to `about:blank`.
 	 */
 	type?: string
 	/**
@@ -231,29 +306,25 @@ export type BadRequestFromSchemaOptions = Readonly<{
 	 */
 	statusCode?: 400 | 422
 	/**
-	 * Optionally attach a detail message.
+	 * Defaults to `The request did not match the expected schema`.
 	 */
 	detail?: string
 }>
 
-const standardSchemaV1Formatter = SchemaIssue.makeFormatterStandardSchemaV1()
-
-const badRequestErrorFormatter = (error: Schema.SchemaError) =>
-	standardSchemaV1Formatter(error.issue).issues.map(({ path, message }) =>
-		path !== undefined && path.length > 0 ? { path, message } : { message },
-	)
-
 /**
- * 400 Bad Request response from SchemaError
+ * `400 Bad Request` (or `422`) problem+json response from a `SchemaError`.
+ *
+ * Each schema issue becomes an entry in `errors` with a `detail` message and,
+ * when the issue has a path, a JSON Pointer in `pointer`.
  *
  * @example
  * ```ts
- * const badRequest = HttpResponse.badRequestFromSchemaError(schemaError, {
- *   statusCode: 400,
- *   type: "https://example.com/problems/validation-error",
- * })
- * // => { statusCode: 400, headers: { 'content-type': 'application/problem+json' }, body: '{"status":400,"title":"Bad Request","errors":[{"message":"Invalid value"}]}' }
+ * const badRequest = HttpResponse.badRequestFromSchemaError(schemaError)
+ * // => { statusCode: 400, headers: { 'content-type': 'application/problem+json' }, body: '{"errors":[{"detail":"Expected number, got \"x\"","pointer":"#/n"}],"type":"about:blank","title":"Bad Request","status":400,"detail":"The request did not match the expected schema"}' }
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const badRequestFromSchemaError = (
 	schemaError: Schema.SchemaError,
@@ -261,17 +332,21 @@ const badRequestFromSchemaError = (
 ): Effect.Effect<HttpResponse> =>
 	problemJsonResponse(options?.statusCode ?? 400, options?.headers, {
 		...options,
-		extensions: { errors: badRequestErrorFormatter(schemaError) },
+		detail: options?.detail ?? validationProblemDetail,
+		extensions: { errors: formatSchemaIssues(schemaError) },
 	})
 
 /**
- * 4xx client error response
+ * 4xx problem+json response.
  *
  * @example
  * ```ts
  * const problem = HttpResponse.problem({ status: 404, instance: "/users/123" })
- * // => { statusCode: 404, headers: { 'content-type': 'application/problem+json' }, body: '{"status":404,"title":"Not Found","instance":"/users/123"}' }
+ * // => { statusCode: 404, headers: { 'content-type': 'application/problem+json' }, body: '{"type":"about:blank","title":"Not Found","status":404,"instance":"/users/123"}' }
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const problem = (
 	problem: Omit<ProblemJson, 'status' | 'title'> & { status: ClientErrorStatusCode },
@@ -279,19 +354,26 @@ const problem = (
 ): Effect.Effect<HttpResponse> => problemJsonResponse(problem.status, headers, problem)
 
 /**
- * Generic 4xx client error builder as problem+json.
- * Enforces 4xx status range.
+ * 4xx problem+json response, defaulting to `400 Bad Request`.
  *
  * @example
  * ```ts
  * const clientError = HttpResponse.clientError({ statusCode: 401, detail: "I don't know you" })
- * // => { statusCode: 401, headers: { 'content-type': 'application/problem+json' }, body: '{"status":401,"title":"Unauthorized","detail":"I don't know you"}' }
+ * // => { statusCode: 401, headers: { 'content-type': 'application/problem+json' }, body: '{"type":"about:blank","title":"Unauthorized","status":401,"detail":"I don't know you"}' }
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const clientError = (options?: ClientErrorOptions): Effect.Effect<HttpResponse> =>
 	problemJsonResponse(options?.statusCode ?? 400, options?.headers, options)
 
-// -- 5xx Server Error responses --
+/**
+ * Options for `serverError`.
+ *
+ * @since 1.0.0
+ * @category options
+ */
 export type ServerErrorOptions = Omit<ProblemJson, 'status' | 'title'> &
 	Readonly<{
 		statusCode: ServerErrorStatusCode
@@ -299,13 +381,16 @@ export type ServerErrorOptions = Omit<ProblemJson, 'status' | 'title'> &
 	}>
 
 /**
- * 5xx server error response
+ * 5xx problem+json response, defaulting to `500 Internal Server Error`.
  *
  * @example
  * ```ts
- * const serverError = HttpResponse.serverError({ statusCode: 500, detail: 'Something went wrong, please try again later or contact support if the problem persists', extensions: { issueRef: "x1234" } })
- * // => { statusCode: 500, headers: { 'content-type': 'application/problem+json' }, body: '{"status":500,"title":"Internal Server Error","detail":"Something went wrong, please try again later or contact support if the problem persists","issueRef":"x1234"}' }
+ * const serverError = HttpResponse.serverError({ statusCode: 503, detail: 'Try again later', extensions: { issueRef: "x1234" } })
+ * // => { statusCode: 503, headers: { 'content-type': 'application/problem+json' }, body: '{"issueRef":"x1234","type":"about:blank","title":"Service Unavailable","status":503,"detail":"Try again later"}' }
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
 const serverError = (options?: ServerErrorOptions): Effect.Effect<HttpResponse> =>
 	problemJsonResponse(options?.statusCode ?? 500, options?.headers, options)

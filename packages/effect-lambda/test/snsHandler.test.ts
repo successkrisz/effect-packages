@@ -3,7 +3,7 @@ import { describe, expect, it } from '@effect/vitest'
 import type { Context } from 'aws-lambda'
 import { Effect, Layer } from 'effect'
 import { HandlerContext } from '../src/common'
-import { SNSEvent, toLambdaHandler } from '../src/Sns'
+import { SnsEvent, toLambdaHandler } from '../src/Sns'
 import event from './sampleEvents/snsEvent.json'
 
 describe('snsHandler', () => {
@@ -28,7 +28,7 @@ describe('snsHandler', () => {
 
 	it('effect should have access to the event', async () => {
 		const actual = toLambdaHandler(
-			SNSEvent.use((_event) => {
+			SnsEvent.use((_event) => {
 				expect(_event).toEqual(event)
 				return Effect.void
 			}),

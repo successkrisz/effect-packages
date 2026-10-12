@@ -1,3 +1,8 @@
+/**
+ * Generic adapter for building Lambda handlers for any event type.
+ *
+ * @since 1.0.0
+ */
 import { type Config, type Context, Effect, Layer } from 'effect'
 import type { Handler } from './aws.ts'
 import { HandlerContext } from './common.ts'
@@ -40,8 +45,10 @@ import { lambdaRuntimeFromLayer } from './internal/lambdaRuntime.ts'
  *   })
  * )({ layer: Layer.succeed(Db, { query: () => Effect.void }) })
  * ```
+ *
+ * @since 1.0.0
+ * @category constructors
  */
-
 // biome-ignore lint/suspicious/noExplicitAny: pattern is used for generic tags
 export function makeToHandler<T extends Context.Key<any, any>, A>(eventTag: T) {
 	// Overload for when no dependencies are needed (R is never)

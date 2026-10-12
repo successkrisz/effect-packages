@@ -1,13 +1,25 @@
 {
 	"name": "@ballatech/effect-problem-json",
 	"version": "1.0.0-beta.7",
+	"description": "RFC 9457 problem details (application/problem+json) errors and middleware for Effect HttpApi",
+	"keywords": [
+		"effect",
+		"effect-ts",
+		"http-api",
+		"problem-details",
+		"problem+json",
+		"rfc9457",
+		"rfc7807",
+		"errors"
+	],
 	"private": false,
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./HttpApiProblemDetail": "./src/HttpApiProblemDetail.ts"
+		"./HttpApiProblemDetail": "./src/HttpApiProblemDetail.ts",
+		"./package.json": "./package.json"
 	},
 	"files": [
 		"src/**/*.ts",
@@ -38,9 +50,11 @@
 	},
 	"publishConfig": {
 		"access": "public",
+		"provenance": true,
 		"exports": {
 			".": "./dist/index.js",
-			"./HttpApiProblemDetail": "./dist/HttpApiProblemDetail.js"
+			"./HttpApiProblemDetail": "./dist/HttpApiProblemDetail.js",
+			"./package.json": "./package.json"
 		}
 	},
 	"repository": {

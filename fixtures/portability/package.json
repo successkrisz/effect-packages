@@ -1,0 +1,14 @@
+{
+	"name": "portability-fixture",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@ballatech/effect-oauth-client": "workspace:*",
+		"@ballatech/effect-problem-json": "workspace:*",
+		"effect": "catalog:",
+		"effect-lambda": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:"
+	}
+}

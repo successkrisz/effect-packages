@@ -4,9 +4,9 @@ import type { DynamoDBStreamEvent as _DynamoDBStreamEvent, Context } from 'aws-l
 import { Effect, Layer } from 'effect'
 import { HandlerContext } from '../src/common'
 import {
-	DynamoDBNewImages,
-	DynamoDBStreamEvent,
 	toLambdaHandler as DynamoDBStreamEventHandler,
+	DynamoDbStreamEvent,
+	newImages,
 } from '../src/DynamoDb'
 import event from './sampleEvents/ddbEvent.json'
 
@@ -28,7 +28,7 @@ describe('ddbHandler', () => {
 
 	it('effect should have access to the event', async () => {
 		const actual = DynamoDBStreamEventHandler(
-			DynamoDBStreamEvent.use((_event) => {
+			DynamoDbStreamEvent.use((_event) => {
 				expect(_event).toEqual(event)
 				return Effect.void
 			}),
@@ -53,7 +53,7 @@ describe('ddbHandler', () => {
 
 	it('should have access to the NewImages', async () => {
 		const actual = DynamoDBStreamEventHandler(
-			DynamoDBNewImages.pipe(
+			newImages.pipe(
 				Effect.map((newImages) => {
 					expect(newImages).toEqual(event.Records.map((r) => r.dynamodb?.NewImage))
 				}),
