@@ -8,6 +8,7 @@ Useful Effect libraries
 
 - [`effect-lambda`](packages/effect-lambda/README.md) -- Effect-friendly AWS Lambda wrappers and utilities.
 - [`effect-oauth-client`](packages/effect-oauth-client/README.md) -- OAuth 2.0 Client Credentials `HttpClient` wrapper for Effect v4 HTTP.
+- [`effect-problem-json`](packages/effect-problem-json/README.md) -- RFC 9457 problem details (`application/problem+json`) for Effect v4 `HttpApi`.
 
 ### effect-lambda quickstart
 
@@ -37,6 +38,22 @@ const program = Effect.gen(function* () {
 })
 
 Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
+```
+
+### effect-problem-json quickstart
+
+```ts
+import { HttpApiProblemDetail as ProblemDetail } from "@ballatech/effect-problem-json"
+import { Effect } from "effect"
+import { HttpApiEndpoint } from "effect/http-api"
+
+const getTodo = HttpApiEndpoint.get("getTodo", "/todos/:id", {
+  error: ProblemDetail.NotFound,
+})
+
+Effect.fail(new ProblemDetail.NotFound({
+  detail: `Todo ${id} was not found`,
+}))
 ```
 
 ## Development
