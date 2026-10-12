@@ -1,5 +1,68 @@
 # effect-lambda
 
+## 1.0.0
+
+### Major Changes
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`2ea4f38`](https://github.com/successkrisz/effect-packages/commit/2ea4f382a138ff389fa54c19cf4554c598186a15) Thanks [@successkrisz](https://github.com/successkrisz)! - Support stable Effect 4.0: the `effect` peer dependency is now `^4.0.0`, and HTTP modules are imported from `effect/http` and `effect/http-api` instead of the removed `effect/unstable/*` paths.
+
+- [#35](https://github.com/successkrisz/effect-packages/pull/35) [`9dc214f`](https://github.com/successkrisz/effect-packages/commit/9dc214f7ae486bbd3f78e9a6a6893905badcd83a) Thanks [@successkrisz](https://github.com/successkrisz)! - Align the public API with Effect v4 naming conventions.
+  
+  Services use compound PascalCase for acronyms and derived effects use camelCase. The previous names remain as deprecated aliases of the same values, so existing code keeps working:
+  
+  - `Sqs.SQSEvent`, `Sqs.SQSRecord`, `Sqs.SQSMessageBodies` → `Sqs.SqsEvent`, `Sqs.SqsRecord`, `Sqs.messageBodies`
+  - `Sns.SNSEvent` → `Sns.SnsEvent`
+  - `DynamoDb.DynamoDBStreamEvent`, `DynamoDb.DynamoDBRecord`, `DynamoDb.DynamoDBNewImages` → `DynamoDb.DynamoDbStreamEvent`, `DynamoDb.DynamoDbRecord`, `DynamoDb.newImages`
+  - `RestApi.APIGatewayProxyEvent`, `RestApi.NormalizedAPIGatewayProxyEvent`, `RestApi.NormalizedHeaders` → `RestApi.ApiGatewayProxyEvent`, `RestApi.normalizedEvent`, `RestApi.normalizedHeaders`
+  - `HttpApi.APIGatewayProxyEventV2`, `HttpApi.NormalizedAPIGatewayProxyEventV2`, `HttpApi.NormalizedHeaders` → `HttpApi.ApiGatewayProxyEventV2`, `HttpApi.normalizedEvent`, `HttpApi.normalizedHeaders`
+  - `CustomAuthorizer.APIGatewayAuthorizerEvent` → `CustomAuthorizer.ApiGatewayAuthorizerEvent`
+  
+  Breaking changes:
+  
+  - Service keys follow the new names, e.g. `effect-lambda/Sqs/SQSEvent` is now `effect-lambda/Sqs/SqsEvent`. This only matters if you look services up by their string key.
+  - `CustomAuthorizer.UnauthorizedError` now has the `_tag` `"LambdaUnauthorizedError"` (was `"@effect-lambda/UnauthorizedError"`). Update `Effect.catchTag` calls that match on the old string.
+  - Problem+json helpers (`problem`, `clientError`, `serverError`, `badRequestFromSchemaError`) now emit RFC 9457 bodies: `type` defaults to `"about:blank"`, and `badRequestFromSchemaError` sets a `detail` and reports issues as `errors: [{ detail, pointer }]` with JSON Pointers, matching `@ballatech/effect-problem-json`.
+  - `RestApi.toLambdaHandler` and `HttpApi.toLambdaHandler` turn defects into a 500 problem+json body with `type`, `title`, `status` and `detail`. The defect is now logged with `Effect.logError` before it is converted.
+  - `clientError` now uses the `title` option when given; it was previously ignored.
+  - The titles for 413 and 422 are now `"Content Too Large"` and `"Unprocessable Content"` (RFC 9110).
+  
+  Other changes:
+  
+  - `Sqs`, `Sns` and `DynamoDb` re-export `Handler`. Their published `toLambdaHandler` declarations previously referenced the unresolvable `aws-lambda/handler` subpath, which made consumers' handler types `any`.
+  - `HttpResponse.ok` no longer requires `statusCode`; it defaults to `200` as documented.
+  - Every public export has `@since` and `@category` JSDoc.
+  - `package.json` is exported, and packages are published with provenance.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`0347319`](https://github.com/successkrisz/effect-packages/commit/0347319102d29b7b6eece5ef80cf68ffeb976363) Thanks [@successkrisz](https://github.com/successkrisz)! - Update to work with effect beta.49
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`1de2850`](https://github.com/successkrisz/effect-packages/commit/1de2850126fc0be581254d486c685e9b2fc66778) Thanks [@successkrisz](https://github.com/successkrisz)! - Support Effect v4
+
+### Patch Changes
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`740724c`](https://github.com/successkrisz/effect-packages/commit/740724c0d2fe2f18438e0b071a8890993bee60f0) Thanks [@successkrisz](https://github.com/successkrisz)! - fix broken HttpApi.schemaQueryParams
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`7923d56`](https://github.com/successkrisz/effect-packages/commit/7923d56a3962259e012d23b273f48e5bace95a38) Thanks [@successkrisz](https://github.com/successkrisz)! - Rename internal Context tag identifier strings to the deterministic format `effect-lambda/<file>/<ClassName>` (enforced by the Effect language service `deterministicKeys` rule). Affected tags:
+  
+  - `APIGatewayAuthorizerEvent` → `effect-lambda/CustomAuthorizer/APIGatewayAuthorizerEvent`
+  - `DynamoDBStreamEvent` → `effect-lambda/DynamoDb/DynamoDBStreamEvent`
+  - `DynamoDBRecord` → `effect-lambda/DynamoDb/DynamoDBRecord`
+  - `APIGatewayProxyEventV2` → `effect-lambda/HttpApi/APIGatewayProxyEventV2`
+  - `APIGatewayProxyEvent` → `effect-lambda/RestApi/APIGatewayProxyEvent`
+  - `SNSEvent` → `effect-lambda/Sns/SNSEvent`
+  - `SQSEvent` → `effect-lambda/Sqs/SQSEvent`
+  - `SQSRecord` → `effect-lambda/Sqs/SQSRecord`
+  - `HandlerContext` → `effect-lambda/common/HandlerContext`
+  
+  The exported class symbols are unchanged — consumers importing the tags (e.g. `import { SQSEvent } from 'effect-lambda/Sqs'`) are unaffected. Only code that constructed tags by the raw identifier string, or cross-module code that compared stringified tag ids, will need to update.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`9adef95`](https://github.com/successkrisz/effect-packages/commit/9adef95551ec249f812a0d948f61f636f1f2f9bd) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: fix release pipeline
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`ded75cc`](https://github.com/successkrisz/effect-packages/commit/ded75cc22292d94558955c39a83e23220ad8c330) Thanks [@successkrisz](https://github.com/successkrisz)! - Drop CommonJS output and replace tsup bundler with plain tsc compilation. Packages now emit ESM-only output with source maps and declaration maps. Source `.ts` files are included in the published package for better IDE experience.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`64d58da`](https://github.com/successkrisz/effect-packages/commit/64d58daa9bf42671f2e6ab784613561ad64182df) Thanks [@successkrisz](https://github.com/successkrisz)! - update dev deps to effect@rc
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - effect@4.0.0-beta.83 support
+
 ## 1.0.0-beta.5
 
 ### Patch Changes

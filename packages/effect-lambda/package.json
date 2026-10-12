@@ -1,6 +1,6 @@
 {
 	"name": "effect-lambda",
-	"version": "1.0.0-beta.5",
+	"version": "1.0.0",
 	"description": "Effect-native adapters for AWS Lambda: API Gateway (REST and HTTP APIs), SQS, SNS, DynamoDB Streams and custom authorizers",
 	"keywords": [
 		"effect",

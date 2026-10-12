@@ -1,5 +1,33 @@
 # @ballatech/effect-problem-json
 
+## 1.0.0
+
+### Major Changes
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`2ea4f38`](https://github.com/successkrisz/effect-packages/commit/2ea4f382a138ff389fa54c19cf4554c598186a15) Thanks [@successkrisz](https://github.com/successkrisz)! - Support stable Effect 4.0: the `effect` peer dependency is now `^4.0.0`, and HTTP modules are imported from `effect/http` and `effect/http-api` instead of the removed `effect/unstable/*` paths.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`b08c254`](https://github.com/successkrisz/effect-packages/commit/b08c2546b74b30018df0f7bd598fbd0bd95264eb) Thanks [@successkrisz](https://github.com/successkrisz)! - Fix type inference issues and ensure that it works well with @effect-aws/lambda
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`a936fbd`](https://github.com/successkrisz/effect-packages/commit/a936fbd2e6f8c2cf31abfb37230604abf1f16b23) Thanks [@successkrisz](https://github.com/successkrisz)! - Refactor internals and rename ProblemJson to HttpApiProblemDetail
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`0347319`](https://github.com/successkrisz/effect-packages/commit/0347319102d29b7b6eece5ef80cf68ffeb976363) Thanks [@successkrisz](https://github.com/successkrisz)! - Update to work with effect beta.49
+
+### Minor Changes
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`97961ff`](https://github.com/successkrisz/effect-packages/commit/97961ff2cd0724f8d90ad8290cfda520a90a0a62) Thanks [@successkrisz](https://github.com/successkrisz)! - Initial release of effect-problem-json
+
+### Patch Changes
+
+- [#35](https://github.com/successkrisz/effect-packages/pull/35) [`9dc214f`](https://github.com/successkrisz/effect-packages/commit/9dc214f7ae486bbd3f78e9a6a6893905badcd83a) Thanks [@successkrisz](https://github.com/successkrisz)! - Add `@since` and `@category` JSDoc to every public export, export `package.json`, and publish with provenance.
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`9adef95`](https://github.com/successkrisz/effect-packages/commit/9adef95551ec249f812a0d948f61f636f1f2f9bd) Thanks [@successkrisz](https://github.com/successkrisz)! - chore: fix release pipeline
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`20856eb`](https://github.com/successkrisz/effect-packages/commit/20856ebaf56acf1393462b838c8f90ed921c4458) Thanks [@successkrisz](https://github.com/successkrisz)! - Fix ci actions
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`64d58da`](https://github.com/successkrisz/effect-packages/commit/64d58daa9bf42671f2e6ab784613561ad64182df) Thanks [@successkrisz](https://github.com/successkrisz)! - update dev deps to effect@rc
+
+- [#33](https://github.com/successkrisz/effect-packages/pull/33) [`a91b9bd`](https://github.com/successkrisz/effect-packages/commit/a91b9bd17ab94937103622e30d6fb9c8053730e7) Thanks [@successkrisz](https://github.com/successkrisz)! - effect@4.0.0-beta.83 support
+
 ## 1.0.0-beta.7
 
 ### Patch Changes
