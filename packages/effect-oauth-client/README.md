@@ -35,25 +35,25 @@ import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
   - Same as `make`, but resolves each credential from a `Config` value. Useful when credentials come from environment variables or a config provider.
 - `OAuthHttpClient.layer(credentials)` → `Layer<OAuthHttpClient>`
   - Provides an `OAuthHttpClient` service from static credentials.
-- `OAuthHttpClient.layerFromConfig(credentialsConfig)` → `Layer<OAuthHttpClient>`
-  - Provides an `OAuthHttpClient` service from `Config` values.
-- `OAuthHttpClient.OAuthHttpClient` — Built-in service tag for the single-client case. Use with `layer` / `layerFromConfig`.
+- `OAuthHttpClient.layerConfig(credentialsConfig)` → `Layer<OAuthHttpClient>`
+  - Provides an `OAuthHttpClient` service from `Config` values. `layerFromConfig` is a deprecated alias.
+- `OAuthHttpClient.OAuthHttpClient` — Built-in service tag for the single-client case. Use with `layer` / `layerConfig`.
 - `OAuthHttpClient.Client` — Type alias for the authenticated `HttpClient` shape. Use this when creating your own service tags for multi-client setups.
-- `OAuthHttpClient.AuthorizationError` — Tagged error class for all OAuth failures. Has a `code` field: `'credentials_error'`, `'client_error'`, or `'unauthorized'`.
+- `OAuthHttpClient.AuthorizationError` — Tagged error class for all OAuth failures. Its `_tag` is `"OAuthAuthorizationError"`. Has a `code` field: `'credentials_error'`, `'client_error'`, or `'unauthorized'`.
 - `OAuthHttpClient.isAuthorizationError(u)` — Type guard that narrows `unknown` to `AuthorizationError`.
 
 ### Credentials
 
 ```ts
 type Credentials = {
-  clientId: string
-  clientSecret: Redacted.Redacted<string>
-  tokenUrl: string
-  scope?: string
-  audience?: string
-  baseUrl?: string            // prepended to all outgoing request URLs
-  ttl?: Duration.Duration     // default: 3600 seconds
-  expiryBuffer?: Duration.Duration // default: 300 seconds (refresh ~5m early)
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted<string>
+  readonly tokenUrl: string
+  readonly scope?: string
+  readonly audience?: string
+  readonly baseUrl?: string            // prepended to all outgoing request URLs
+  readonly ttl?: Duration.Duration     // default: 3600 seconds
+  readonly expiryBuffer?: Duration.Duration // default: 300 seconds (refresh ~5m early)
 }
 ```
 
@@ -69,14 +69,14 @@ Notes:
 
 ```ts
 type CredentialsConfig = {
-  clientId: Config.Config<string>
-  clientSecret: Config.Config<Redacted.Redacted<string>>
-  tokenUrl: Config.Config<string>
-  scope?: Config.Config<string>
-  audience?: Config.Config<string>
-  baseUrl?: Config.Config<string>
-  ttl?: Duration.Duration
-  expiryBuffer?: Duration.Duration
+  readonly clientId: Config.Config<string>
+  readonly clientSecret: Config.Config<Redacted.Redacted<string>>
+  readonly tokenUrl: Config.Config<string>
+  readonly scope?: Config.Config<string>
+  readonly audience?: Config.Config<string>
+  readonly baseUrl?: Config.Config<string>
+  readonly ttl?: Duration.Duration
+  readonly expiryBuffer?: Duration.Duration
 }
 ```
 
@@ -172,14 +172,14 @@ Effect.runPromise(program.pipe(Effect.provide(AppLayer)))
 
 ### With Config provider (environment variables)
 
-Using `layerFromConfig` for the simplest case:
+Using `layerConfig` for the simplest case:
 
 ```ts
 import { Config, Effect, Layer } from "effect"
 import { OAuthHttpClient } from "@ballatech/effect-oauth-client"
 import { FetchHttpClient } from "effect/http"
 
-const AppLayer = OAuthHttpClient.layerFromConfig({
+const AppLayer = OAuthHttpClient.layerConfig({
   clientId: Config.String("OAUTH_CLIENT_ID"),
   clientSecret: Config.Redacted("OAUTH_CLIENT_SECRET"),
   tokenUrl: Config.String("OAUTH_TOKEN_URL"),

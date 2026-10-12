@@ -153,10 +153,13 @@ describe('HttpResponse.badRequestFromSchemaError', () => {
 		expect(res.statusCode).toBe(400)
 		expect(res.headers?.['content-type']).toBe('application/problem+json')
 		const body = parseBody(res)
-		expect(body.status).toBe(400)
-		expect(body.title).toBe('Bad Request')
-		expect(Array.isArray(body.errors)).toBe(true)
-		expect(body.errors.length).toBeGreaterThan(0)
+		expect(body).toEqual({
+			type: 'about:blank',
+			title: 'Bad Request',
+			status: 400,
+			detail: 'The request did not match the expected schema',
+			errors: [{ detail: expect.any(String), pointer: '#/n' }],
+		})
 	})
 
 	it('allows overriding status (e.g. 422) and adds optional fields', async () => {
@@ -172,7 +175,7 @@ describe('HttpResponse.badRequestFromSchemaError', () => {
 		expect(res.statusCode).toBe(422)
 		const body = parseBody(res)
 		expect(body.status).toBe(422)
-		expect(body.title).toBe('Unprocessable Entity')
+		expect(body.title).toBe('Unprocessable Content')
 		expect(body.type).toBe('https://example.com/problems/validation-error')
 		expect(body.instance).toBe('/request/123')
 		expect(body.detail).toBe('Invalid data')
@@ -197,8 +200,7 @@ describe('HttpResponse.clientError', () => {
 		const body = parseBody(res)
 		expect(res.statusCode).toBe(400)
 		expect(res.headers?.['content-type']).toBe('application/problem+json')
-		expect(body.status).toBe(400)
-		expect(body.title).toBe('Bad Request')
+		expect(body).toEqual({ type: 'about:blank', title: 'Bad Request', status: 400 })
 	})
 
 	it('respects overrides and includes extensions', async () => {
@@ -219,6 +221,14 @@ describe('HttpResponse.clientError', () => {
 		expect(body.type).toBe('about:blank')
 		expect(body.instance).toBe('/secure')
 		expect(body.reason).toEqual('missing_token')
+	})
+
+	it('uses a custom title when provided', async () => {
+		const res = await clientError({ statusCode: 409, title: 'Duplicate title' }).pipe(
+			Effect.runPromise,
+		)
+
+		expect(parseBody(res).title).toBe('Duplicate title')
 	})
 })
 

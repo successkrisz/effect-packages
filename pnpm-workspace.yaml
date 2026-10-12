@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - fixtures/*
 
 catalog:
   '@effect/platform-node': 4.0.0

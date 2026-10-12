@@ -4,10 +4,10 @@ import type { Context } from 'aws-lambda'
 import { Effect, Layer } from 'effect'
 import { HandlerContext } from '../src/common'
 import {
+	messageBodies,
 	recordProcessorAdapter,
-	SQSEvent,
-	SQSMessageBodies,
-	SQSRecord,
+	SqsEvent,
+	SqsRecord,
 	toLambdaHandler,
 } from '../src/Sqs'
 import event from './sampleEvents/sqsEvent.json'
@@ -34,7 +34,7 @@ describe('sqsHandler', () => {
 
 	it('effect should have access to the event', async () => {
 		const actual = toLambdaHandler(
-			SQSEvent.use((_event) => {
+			SqsEvent.use((_event) => {
 				expect(_event).toEqual(event)
 				return Effect.void
 			}),
@@ -59,7 +59,7 @@ describe('sqsHandler', () => {
 
 	it('should have access to the MessageBodies', async () => {
 		const actual = toLambdaHandler(
-			SQSMessageBodies.pipe(
+			messageBodies.pipe(
 				Effect.map((messageBodies) => {
 					expect(messageBodies).toEqual(event.Records.map((r) => r.body))
 				}),
@@ -70,14 +70,14 @@ describe('sqsHandler', () => {
 	})
 
 	it('should process each record and return a batch response', async () => {
-		const processRecord = SQSRecord.use((record) => {
+		const processRecord = SqsRecord.use((record) => {
 			expect(record.body).toBeDefined()
 			return Effect.void
 		})
 
 		const result = await processRecord.pipe(
 			recordProcessorAdapter,
-			Effect.provideService(SQSEvent, event),
+			Effect.provideService(SqsEvent, event),
 			(eff) => toLambdaHandler(eff),
 		)({ layer: Layer.empty })(event, {} as Context, () => {})
 
@@ -87,7 +87,7 @@ describe('sqsHandler', () => {
 	})
 
 	it('should return batchItemFailures for failed records', async () => {
-		const processRecord = SQSRecord.use((record) =>
+		const processRecord = SqsRecord.use((record) =>
 			record.body === 'fail' ? Effect.fail('Processing failed') : Effect.succeed(undefined),
 		)
 
@@ -98,7 +98,7 @@ describe('sqsHandler', () => {
 
 		const result = await processRecord.pipe(
 			recordProcessorAdapter,
-			Effect.provideService(SQSEvent, modifiedEvent),
+			Effect.provideService(SqsEvent, modifiedEvent),
 			(eff) => toLambdaHandler(eff),
 		)({ layer: Layer.empty })(event, {} as Context, () => {})
 
@@ -117,7 +117,7 @@ describe('sqsHandler', () => {
 			],
 		}
 		const lifecycle: Array<string> = []
-		const processRecord = SQSRecord.use((record) =>
+		const processRecord = SqsRecord.use((record) =>
 			Effect.gen(function* () {
 				lifecycle.push(`start:${record.messageId}`)
 				yield* Effect.sleep('10 millis')
@@ -126,7 +126,7 @@ describe('sqsHandler', () => {
 		)
 
 		const result = await Effect.runPromise(
-			processRecord.pipe(recordProcessorAdapter, Effect.provideService(SQSEvent, modifiedEvent)),
+			processRecord.pipe(recordProcessorAdapter, Effect.provideService(SqsEvent, modifiedEvent)),
 		)
 
 		expect(result).toEqual({

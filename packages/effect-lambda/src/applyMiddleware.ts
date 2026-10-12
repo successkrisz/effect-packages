@@ -1,3 +1,8 @@
+/**
+ * Apply Express-style header middleware (such as `helmet`) to Lambda responses.
+ *
+ * @since 1.0.0
+ */
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- type-only import, no runtime dependency on Node
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -7,6 +12,12 @@ type ObjectWithOptionalHeaders = {
 
 type Headers = Record<string, boolean | number | string>
 
+/**
+ * Express-style middleware signature.
+ *
+ * @since 1.0.0
+ * @category models
+ */
 export type Middleware = (
 	req: IncomingMessage,
 	res: ServerResponse,
@@ -14,39 +25,27 @@ export type Middleware = (
 ) => void
 
 /**
- * This function applies a middleware to a response object to update its headers.
+ * Apply an Express-style middleware to a response-like object to update its headers.
  *
- * Primarily used for applying helmet headers to a response object.
- * Supports the express middleware signature to allow for easy integration with the existing helmet middleware.
- *
- * @param middleware express middleware to apply header changes
- * @returns response with the header changes applied
+ * Only the header methods of the response (`setHeader`, `getHeader`,
+ * `removeHeader`) are available to the middleware, which makes this suitable
+ * for header-only middleware such as `helmet`.
  *
  * @example
- * import helmet from 'helmet';
- * import { applyMiddleware, RestApi } from 'effect-lambda';
- * import { Effect } from 'effect';
+ * ```ts
+ * import helmet from 'helmet'
+ * import { applyMiddleware, RestApi } from 'effect-lambda'
+ * import { Effect, Layer } from 'effect'
  *
- * const middleware = helmet({
- *     xXssProtection: true,
- * });
- * const result = applyMiddleware(middleware)({ headers: {} });
+ * const handlerEffect: RestApi.HandlerEffect = Effect.succeed({ statusCode: 200, body: 'Woohoo' })
  *
- * expect(result.headers).toEqual(
- *     expect.objectContaining({ 'X-XSS-Protection': '0' }),
- * );
- *
- * // When using together with an ApiGatewayProxyHandler, you can apply the middleware to the handler effect:
- * const handlerEffect: HandlerEffect = Effect.succeed({
- *    statusCode: 200,
- *    body: 'Woohoo',
- * });
  * export const handler = RestApi.toLambdaHandler(
- *    handlerEffect.pipe(Effect.map(applyMiddleware(middleware)))
- * )({ layer: Layer.empty });
- */
-/**
- * Apply an Express-style middleware to a response-like object to mutate headers.
+ *   handlerEffect.pipe(Effect.map(applyMiddleware(helmet()))),
+ * )({ layer: Layer.empty })
+ * ```
+ *
+ * @since 1.0.0
+ * @category combinators
  */
 export const applyMiddleware =
 	(middleware: Middleware) =>

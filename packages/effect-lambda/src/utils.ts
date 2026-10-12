@@ -1,14 +1,23 @@
+/**
+ * Internal helpers. Only `ToEffect` is part of the public API.
+ *
+ * @since 1.0.0
+ */
 import { Effect } from 'effect'
 
 /**
- * Run an array of effects in parallel with unbounded concurrency, collecting `Either` results.
+ * Run an array of effects in parallel with unbounded concurrency, collecting `Result` values.
+ *
+ * @internal
  */
 export const runPar = <T, E = never>(effects: Array<Effect.Effect<T, E>>) =>
 	Effect.all(effects, { concurrency: 'unbounded', mode: 'result' })
 
-// Utility type to generate the effect signature for a handler function.
 /**
- * Utility type to turn a Lambda-style handler signature into an `Effect` signature.
+ * Turn a Lambda-style handler signature into the matching `Effect` signature.
+ *
+ * @since 1.0.0
+ * @category utility types
  */
 export type ToEffect<
 	// biome-ignore lint/suspicious/noExplicitAny: Lambda handler signature
@@ -17,17 +26,18 @@ export type ToEffect<
 	R,
 > = Effect.Effect<Exclude<Awaited<ReturnType<T>>, void>, never, R>
 
-/** Lowercase object keys at the type level. */
+/** @internal */
 export type LowercaseKeys<T> = {
 	[K in keyof T as Lowercase<string & K>]: T[K]
 }
 
-/** Lowercase object keys. */
+/** @internal */
 export const lowercaseKeys = <T = unknown>(record: Record<string, T>) =>
 	Object.fromEntries(Object.entries(record).map(([k, v]) => [k.toLowerCase(), v]))
 
-/** Utility type to forbid keys in an object. */
+/** @internal */
 export type ForbidKeys<K extends PropertyKey> = { [P in K]?: never }
-/** Utility type to forbid keys in an object with values. */
+
+/** @internal */
 // biome-ignore lint/suspicious/noExplicitAny: utility type
 export type ForbidKeysWithValues<K extends PropertyKey, V> = ForbidKeys<K> & Record<keyof any, V>

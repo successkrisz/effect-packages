@@ -154,6 +154,19 @@ describe('OAuthClient', () => {
 		expect(OAuthClient.isAuthorizationError(anotherError)).toBe(false)
 	})
 
+	it('tags AuthorizationError with a domain-prefixed tag', () => {
+		const error = new OAuthClient.AuthorizationError({
+			message: 'Some error',
+			code: 'client_error',
+		})
+
+		expect(error._tag).toBe('OAuthAuthorizationError')
+	})
+
+	it('keeps layerFromConfig as a deprecated alias of layerConfig', () => {
+		expect(OAuthClient.layerFromConfig).toBe(OAuthClient.layerConfig)
+	})
+
 	it('should prepend baseUrl to outgoing requests', async () => {
 		const program = Effect.gen(function* () {
 			const client = yield* OAuthClient.make({
@@ -218,8 +231,8 @@ describe('OAuthClient', () => {
 		expect(fetch.mock.calls.filter((c) => (c[0] as URL).href.includes('token')).length).toBe(1)
 	})
 
-	it('layerFromConfig should provide OAuthHttpClient from Config values', async () => {
-		const oauthLayer = OAuthClient.layerFromConfig({
+	it('layerConfig should provide OAuthHttpClient from Config values', async () => {
+		const oauthLayer = OAuthClient.layerConfig({
 			clientId: Config.succeed('id123'),
 			clientSecret: Config.succeed(Redacted.make('secret')),
 			tokenUrl: Config.succeed('https://api.example.com/token'),
