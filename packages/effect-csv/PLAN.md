@@ -1,6 +1,6 @@
 # effect-csv implementation plan
 
-**Status:** skeleton only. The package is `private: true` and exports nothing yet. It will be published to npm as [`effect-csv`](https://www.npmjs.com/package/effect-csv) (unscoped; the name was unclaimed on 2026-10-15).
+**Status:** Phase 1 (core decoding) is done. The package is still `private: true`. It will be published to npm as [`effect-csv`](https://www.npmjs.com/package/effect-csv) (unscoped; the name was unclaimed on 2026-10-15).
 
 ## Goal
 
@@ -24,7 +24,7 @@ Most of its options map onto things Effect already does (see [Mapping from csv-p
 2. **Pure core, Effect at the edges.** The state machine in `src/internal/` is plain synchronous TypeScript that returns errors as values and never throws. `Channel.fromTransform` wraps it once per stream and feeds it whole chunks, the same way `Sse.decode` wraps `Sse.makeParser`.
 3. **Follow upstream naming.** Mirror `effect/encoding/Ndjson`: `decode`, `decodeString`, `decodeSchema`, `decodeSchemaString` and the matching `encode*` functions, with the same curried `<IE, Done>` channel signatures.
 4. **RFC 4180 by default.** Relaxations are opt-in options.
-5. **Bad data fails, bad options die.** Malformed input is a `CsvError` in the error channel. Invalid options are programmer errors and surface as defects when the channel starts (inside `Channel.fromTransform`). An option is invalid when `delimiter`, `quote` or `escape` is not exactly one UTF-16 code unit, is `\r` or `\n`, or when `delimiter` equals `quote`. When `quote` is `null`, `escape` is ignored.
+5. **Bad data fails, bad options die.** Malformed input is a `CsvError` in the error channel. Invalid options are programmer errors and surface as `IllegalArgumentError` defects when the channel starts (inside `Channel.fromTransform`) or when `parse` runs. An option is invalid when `delimiter`, `quote` or `escape` is not exactly one UTF-16 code unit, is `\r` or `\n`, when `quote` or `escape` equals `delimiter`, or when `maxRecordSize` is not a positive integer or `Infinity`. When `quote` is `null`, `escape` is ignored. An `escape` equal to `delimiter` is rejected because it would turn the `,"` at the end of a field such as `"x,"` into an escaped quote.
 6. **Bounded memory.** `maxRecordSize` is on by default, so an unclosed quote in a large input fails fast instead of buffering the whole input.
 7. **Synthetic test data only.** Fixtures come from `csv-spectrum` or are generated in tests. Never commit real exports.
 
@@ -44,9 +44,11 @@ Most of its options map onto things Effect already does (see [Mapping from csv-p
 src/
   index.ts             export * as Csv from "./Csv.ts"
   Csv.ts               public API
+  internal/errors.ts   CsvError and its reasons, re-exported from Csv.ts
   internal/parser.ts   decoding state machine
   internal/encoder.ts  field quoting and row formatting
 test/
+  utils.ts             runs the pure parser over chunks
   parser.test.ts       table-driven tests of the pure parser
   decode.test.ts       channels, schema decoding, errors
   encode.test.ts       channels, quoting, schema encoding
@@ -66,7 +68,7 @@ type NonEmpty<A> = Arr.NonEmptyReadonlyArray<A>
 
 // Decoding
 Csv.decodeString(options?)   // Channel<NonEmpty<Row>, CsvError | IE, Done, NonEmpty<string>, IE, Done>
-Csv.decode(options?)         // same, but the input is NonEmpty<Uint8Array>
+Csv.decode(options?)         // same, but the input is NonEmpty<Uint8Array>; options is DecodeBytesOptions
 Csv.toObjects(options?)      // Channel<NonEmpty<Readonly<Record<string, string>>>, CsvError | IE, Done, NonEmpty<Row>, IE, Done>
 Csv.decodeSchema(schema)(options?)        // bytes -> S["Type"]; adds Schema.SchemaError and S["DecodingServices"]
 Csv.decodeSchemaString(schema)(options?)  // strings -> S["Type"]
@@ -81,7 +83,7 @@ Csv.encodeSchemaString(schema)(options?)  // S["Type"] -> strings
 Csv.stringify(rows, options?) // string
 
 // Errors and types
-Csv.CsvError, Csv.isCsvError, the reason classes, Csv.DecodeOptions, Csv.EncodeOptions, Csv.Row
+Csv.CsvError, Csv.isCsvError, the reason classes, Csv.DecodeOptions, Csv.DecodeBytesOptions, Csv.EncodeOptions, Csv.Row
 ```
 
 Target usage:
@@ -111,10 +113,10 @@ Typing notes:
 | --- | --- | --- | --- |
 | `delimiter` | `","` | 1 | Single character. Use `"\t"` for TSV. |
 | `quote` | `'"'` | 1 | Single character, or `null` to disable quoting. |
-| `escape` | same as `quote` | 1 | Escapes a quote inside a quoted field. The default gives RFC 4180 `""` doubling; `"\\"` supports backslash dialects. |
+| `escape` | same as `quote` | 1 | Escapes a quote inside a quoted field. The default gives RFC 4180 `""` doubling; `"\\"` supports backslash dialects. A non-quote escape also escapes itself, is kept as text before any other character, and makes `""` invalid. It has no effect outside quoted fields. |
 | `relaxColumnCount` | `false` | 1 | When `false`, a row whose field count differs from the first row fails with `FieldCountMismatch`. |
-| `maxRecordSize` | 10 MiB | 1 | Maximum UTF-16 code units in one record, matching the `Sse` `maxEventSize` default. |
-| `encoding` | `"utf-8"` | 1 | `decode` only; passed to `TextDecoder`. |
+| `maxRecordSize` | 10 MiB | 1 | Maximum UTF-16 code units in one record, matching the `Sse` `maxEventSize` default. Quotes, delimiters and line breaks inside quotes count; the line break that ends the record does not. `Infinity` disables the limit. |
+| `encoding` | `"utf-8"` | 1 | `decode` only (`DecodeBytesOptions`); passed to `TextDecoder`. |
 | `columns` | `"header"` | 2 | `toObjects` and `decodeSchema` only; see the typing notes. |
 | `trim` | `false` | 4 | Trim whitespace around unquoted fields and around quoted fields. |
 | `comment` | none | 4 | Skip lines that start with this character. |
@@ -124,7 +126,8 @@ Typing notes:
 Behaviour that is not configurable:
 
 - Records may end with `\n`, `\r\n` or `\r`, mixed freely, as in `Channel.splitLines`.
-- A U+FEFF that is the first character of the stream is removed, even if earlier chunks were empty strings. This covers `decodeString` input that was decoded with `ignoreBOM`.
+- A U+FEFF that is the first character of the stream is removed, even if earlier chunks were empty strings. This covers `decodeString` input that was decoded with `ignoreBOM`. `decode` itself passes `ignoreBOM: true` to `TextDecoder`, so exactly one byte-order mark is removed in both cases.
+- Rows decoded before a malformed record are emitted before the channel fails. An upstream failure does not flush a partial record.
 - A line break at the very end of the input does not produce an extra empty record.
 - With `skipEmptyLines: false`, a blank line is a record with one empty field, so it fails the column-count check on multi-column input. This matches csv-parse.
 - `toObjects` with `relaxColumnCount: true` omits keys for missing fields and drops extra fields.
@@ -162,8 +165,8 @@ type CsvErrorReason =
 - **States:** `RecordStart` (no field of the current record seen yet), `FieldStart` (a delimiter just ended a field, so an empty field is already pending), `Unquoted`, `Quoted`, `QuoteInQuoted` (a quote was seen inside a quoted field, and the next character decides between an escaped quote and the closing quote) and `AfterCR` (a `\r` ended a record, so a following `\n` is swallowed even if it arrives in the next chunk). When `escape` differs from `quote`, add an `EscapeInQuoted` state.
 - **End of input:** `end()` in `RecordStart` emits nothing, so empty input and a trailing line break produce no extra record. In `FieldStart` it emits the record with a final empty field (`a,` gives `["a", ""]`). In `Unquoted` or `QuoteInQuoted` it closes the field and emits the record. In `Quoted` or `EscapeInQuoted` it fails with `UnclosedQuote`.
 - **Line breaks inside quotes:** `\r`, `\n` and `\r\n` inside a quoted field are kept in the field verbatim and are not record terminators, so `AfterCR` does not apply there. Line counting uses its own pending-`\r` flag so that a `\r\n` inside quotes counts as one line, even when it is split across chunks.
-- **Fast path:** in `Unquoted` and `Quoted`, jump to the next special character with `indexOf` and copy the span with `slice`, instead of appending one character at a time. A field that spans chunks collects its parts and joins them once at the end of the field.
-- **Interface:** `makeParser(options, onRow)` returns `{ feed(chunk): CsvError | undefined; end(): CsvError | undefined }`, like `Sse.makeParser`. Returning the wrapped `CsvError` keeps the channel wrapper a plain `Effect.fail(error)`.
+- **Fast path:** in `Unquoted` and `Quoted`, jump to the next special character with `indexOf` and copy the span with `slice`, instead of appending one character at a time. The next position of each special character is cached per chunk and looked up again only once it falls behind, so scanning stays linear. A field that spans chunks collects its parts and joins them once at the end of the field.
+- **Interface:** `Parser.make(options, onRow)` returns `{ feed(chunk): CsvError | undefined; end(): CsvError | undefined }`, like `Sse.makeParser`. Returning the wrapped `CsvError` keeps the channel wrapper a plain `Effect.fail(error)`. Once it fails, both methods keep returning the same error. The error classes live in `internal/errors.ts`, so the parser can construct them without importing `Csv.ts`.
 - **Channel wrapper:** buffer the rows from each `feed` and emit them as one non-empty batch per upstream pull. When upstream finishes, call `end()`, flush and propagate `Done`.
 - **Size guard:** check `maxRecordSize` while a record accumulates, not after it ends.
 
@@ -173,7 +176,7 @@ type CsvErrorReason =
 - **Chunk invariance (the key streaming test):** for any input and any set of split points, parsing the chunks gives the same rows or the same error as parsing the whole string. Generate inputs dense in delimiters, quotes, `\r` and `\n`. Test the pure parser with the synchronous `it.prop`, and the channels with `it.effect.prop`. Both come from `@effect/vitest` and take `Schema` or `effect/Arbitrary` generators.
 - **Round trip:** for any rectangular `ReadonlyArray<Row>` and any valid dialect, `parse(stringify(rows))` returns `rows`. Exclude lossy options (`trim`, `escapeFormulae`, `comment`, `skipEmptyLines`) from this property and test them with examples instead.
 - **Option validation:** each invalid option from the design principles dies with a defect.
-- **csv-spectrum:** add `csv-spectrum` (BSD-2-Clause) as a devDependency and read its fixtures in tests instead of copying them into the repo.
+- **csv-spectrum:** add `csv-spectrum` (BSD-2-Clause) as a devDependency and read its fixtures in tests instead of copying them into the repo. They are read through Effect's `FileSystem` with `@effect/platform-node-shared`, because the `nodeBuiltinImport` rule rejects `node:fs` even in tests. The `location_coordinates` fixture is asserted to fail with `InvalidQuote`: its CSV has a bare `"` in an unquoted field, and its JSON does not describe the CSV.
 - **Errors:** each reason with the correct `line`, including records that come after multi-line quoted fields.
 - **Differential (optional):** compare against `csv-parse`, as a devDependency only, on generated inputs.
 - **Benchmarks (not in CI):** a generated 100 MB file against `csv-parse/sync` and `papaparse`. Aim for the same order of magnitude as csv-parse, and profile before optimizing.
@@ -212,10 +215,10 @@ Each phase ends with `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm format
 
 ### Phase 1: core decoding
 
-- [ ] `internal/parser.ts` with `delimiter`, `quote`, `escape`, `relaxColumnCount` and `maxRecordSize`
-- [ ] `CsvError` with the `UnclosedQuote`, `InvalidQuote`, `FieldCountMismatch` and `RecordTooLarge` reasons
-- [ ] `decodeString`, `decode`, `parse`
-- [ ] Parser tables, the chunk-invariance property and the csv-spectrum tests
+- [x] `internal/parser.ts` with `delimiter`, `quote`, `escape`, `relaxColumnCount` and `maxRecordSize`
+- [x] `CsvError` with the `UnclosedQuote`, `InvalidQuote`, `FieldCountMismatch` and `RecordTooLarge` reasons
+- [x] `decodeString`, `decode`, `parse`
+- [x] Parser tables, the chunk-invariance property and the csv-spectrum tests
 
 ### Phase 2: objects and schema decoding
 

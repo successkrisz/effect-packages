@@ -41,7 +41,10 @@
 		"prepack": "pnpm run build"
 	},
 	"devDependencies": {
+		"@effect/platform-node": "catalog:",
+		"@effect/platform-node-shared": "catalog:",
 		"@types/node": "catalog:",
+		"csv-spectrum": "2.0.0",
 		"effect": "catalog:"
 	},
 	"peerDependencies": {
