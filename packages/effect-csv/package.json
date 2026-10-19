@@ -1,6 +1,6 @@
 {
 	"name": "effect-csv",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Streaming CSV parsing and writing for Effect v4 with Schema-typed rows and no runtime dependencies",
 	"keywords": [
 		"effect",
