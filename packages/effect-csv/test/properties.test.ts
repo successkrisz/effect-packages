@@ -234,3 +234,101 @@ describe('chunk invariance', () => {
 		{ arbitrary: { runs: 300, size: 20 } },
 	)
 })
+
+// Every character that is special in some generated encoding dialect, plus ordinary text, a formula start and a surrogate pair.
+const encodedField = joined(
+	['a', ' ', '=', ',', ';', '\t', '|', '"', "'", '$', '\\', '\r', '\n', '\uFEFF', '😀'],
+	5,
+)
+
+/** Rows that all have the same number of fields, from 1 to 4. */
+const table = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 }))).pipe(
+	Arbitrary.flatMap((width) =>
+		Arbitrary.array(Arbitrary.array(encodedField, { minLength: width, maxLength: width }), {
+			maxLength: 6,
+		}),
+	),
+)
+
+/** Every lossless encoding option; `escapeFormulae` changes fields, so it is tested with examples. */
+const encodeDialect: Arbitrary.Arbitrary<Csv.EncodeOptions> = Arbitrary.all({
+	delimiter: Arbitrary.schema(Schema.Literals([',', ';', '\t', '|'])),
+	quote: Arbitrary.schema(Schema.Literals(['"', "'", '$'])),
+	escape: Arbitrary.schema(Schema.UndefinedOr(Schema.Literal('\\'))),
+	recordDelimiter: Arbitrary.schema(Schema.Literals(['\n', '\r\n'])),
+	quoteMode: Arbitrary.schema(Schema.Literals(['needed', 'all'])),
+	bom: Arbitrary.schema(Schema.Boolean),
+})
+
+const decodeOptions = ({
+	delimiter,
+	quote,
+	escape: escapeChar,
+}: Csv.EncodeOptions): Csv.DecodeOptions => ({ delimiter, quote, escape: escapeChar })
+
+describe('round trip', () => {
+	it.prop(
+		'parsing the output of stringify gives back the rows in any dialect',
+		{ rows: table, options: encodeDialect },
+		({ rows, options }) => {
+			const outcome = parseChunks([Csv.stringify(rows, options)], decodeOptions(options))
+			assert.deepStrictEqual(outcome, { rows, error: undefined })
+		},
+		{ arbitrary: { runs: 3000, size: 20 } },
+	)
+
+	it.effect.prop(
+		'encodeString matches stringify for any chunking of the rows',
+		{
+			rows: table,
+			options: encodeDialect,
+			chunkSize: Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 }))),
+		},
+		Effect.fnUntraced(function* ({ rows, options, chunkSize }) {
+			const text = yield* Stream.fromIterable(rows).pipe(
+				Stream.rechunk(chunkSize),
+				Stream.pipeThroughChannel(Csv.encodeString(options)),
+				Stream.mkString,
+			)
+			assert.strictEqual(text, Csv.stringify(rows, options))
+		}),
+		{ arbitrary: { runs: 300, size: 20 } },
+	)
+
+	it.effect.prop(
+		'decode gives back the rows encoded by encode for any byte split',
+		{ rows: table, options: encodeDialect, cuts },
+		Effect.fnUntraced(function* ({ rows, options, cuts }) {
+			const chunks = yield* Stream.fromIterable(rows).pipe(
+				Stream.pipeThroughChannel(Csv.encode(options)),
+				Stream.runCollect,
+			)
+			const bytes = new Uint8Array(chunks.flatMap((chunk) => [...chunk]))
+			const outcome = yield* runChannel(
+				Stream.fromIterable(splitBytes(bytes, cuts)).pipe(
+					Stream.rechunk(1),
+					Stream.pipeThroughChannel(Csv.decode(decodeOptions(options))),
+				),
+			)
+			assert.deepStrictEqual(outcome, { rows, error: undefined })
+		}),
+		{ arbitrary: { runs: 300, size: 20 } },
+	)
+
+	it.effect.prop(
+		'toObjects gives back the objects converted by fromObjects',
+		{ rows: table },
+		Effect.fnUntraced(function* ({ rows }) {
+			const objects = rows.map((row) => Object.fromEntries(row.map((value, i) => [`c${i}`, value])))
+			const decoded = yield* Stream.fromIterable(objects).pipe(
+				Stream.pipeThroughChannel(Csv.fromObjects()),
+				Stream.pipeThroughChannel(Csv.encodeString()),
+				Stream.pipeThroughChannel(Csv.decodeString()),
+				Stream.pipeThroughChannel(Csv.toObjects()),
+				Stream.runCollect,
+			)
+			assert.deepStrictEqual(decoded, objects)
+		}),
+		{ arbitrary: { runs: 300, size: 20 } },
+	)
+})

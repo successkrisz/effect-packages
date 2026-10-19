@@ -1,6 +1,7 @@
-import { Cause } from 'effect'
-import type { Row, ToObjectsOptions } from '../Csv.ts'
+import { Array as Arr } from 'effect'
+import type { FromObjectsOptions, Row, ToObjectsOptions } from '../Csv.ts'
 import { CsvError, type CsvErrorReason, FieldCountMismatch, InvalidHeader } from './errors.ts'
+import { invalidOption } from './options.ts'
 
 /** @internal */
 export type CsvRecord = Readonly<Record<string, string>>
@@ -27,16 +28,13 @@ const findInvalidName = (names: ReadonlyArray<string>): InvalidName | undefined 
 	return undefined
 }
 
-const invalidOption = (message: string): never => {
-	throw new Cause.IllegalArgumentError(`Invalid CSV options: ${message}`)
-}
-
-const resolveColumns = (
-	columns: ToObjectsOptions['columns'],
-): ReadonlyArray<string> | undefined => {
-	if (columns === undefined || columns === 'header') return undefined
+/** Validates and copies explicit column names; `expected` describes the valid values of `columns`. */
+const validateColumns = (
+	columns: ReadonlyArray<string>,
+	expected: string,
+): ReadonlyArray<string> => {
 	if (!Array.isArray(columns) || columns.length === 0) {
-		invalidOption('`columns` must be "header" or a non-empty array of names')
+		invalidOption(`\`columns\` must be ${expected}`)
 	}
 	const invalid = findInvalidName(columns)
 	if (invalid?.problem === 'Empty') {
@@ -47,6 +45,11 @@ const resolveColumns = (
 	}
 	return [...columns]
 }
+
+const resolveColumns = (columns: ToObjectsOptions['columns']): ReadonlyArray<string> | undefined =>
+	columns === undefined || columns === 'header'
+		? undefined
+		: validateColumns(columns, '"header" or a non-empty array of names')
 
 /** Counts the line breaks inside a row's fields, counting `\r\n` once, as the parser does. */
 const lineBreaks = (row: Row): number => {
@@ -129,4 +132,61 @@ export const make = (
 	}
 
 	return { feed }
+}
+
+/** @internal */
+export interface Rows {
+	/** Converts values into rows, preceded by the header row before the first value. */
+	readonly feed: (values: ReadonlyArray<CsvRecord | Row>) => Array<Row>
+	/** Returns the header row if no value arrived but the columns are known. */
+	readonly end: () => Row | undefined
+}
+
+const toRow = (names: ReadonlyArray<string>, record: CsvRecord): Row =>
+	// Only own properties count, so a `toString` or `__proto__` column is not read from the prototype.
+	names.map((name) => (Object.hasOwn(record, name) ? (record[name] ?? '') : ''))
+
+/**
+ * Creates a converter from objects into rows for `fromObjects`.
+ *
+ * Without explicit columns, the keys of the first object name the columns.
+ * Arrays pass through as rows, so that one converter serves schemas whose
+ * encoded type is either an object or a row. Invalid options throw an
+ * `IllegalArgumentError` here, which callers run inside an Effect so that it
+ * surfaces as a defect.
+ *
+ * @internal
+ */
+export const makeRows = (options: FromObjectsOptions | undefined): Rows => {
+	let names =
+		options?.columns === undefined
+			? undefined
+			: validateColumns(options.columns, 'a non-empty array of names')
+	let headerPending = options?.header ?? true
+
+	const takeHeader = (): Row | undefined => {
+		if (!headerPending) return undefined
+		headerPending = false
+		// A copy, so that changing the emitted row cannot change the columns of later rows.
+		return names === undefined ? undefined : [...names]
+	}
+
+	const rowOf = (value: CsvRecord | Row): Row => {
+		if (Arr.isArray<CsvRecord | Row>(value)) return value
+		names ??= Object.keys(value)
+		return toRow(names, value)
+	}
+
+	const feed = (values: ReadonlyArray<CsvRecord | Row>): Array<Row> => {
+		const rows: Array<Row> = []
+		for (const value of values) {
+			const row = rowOf(value)
+			const header = takeHeader()
+			if (header !== undefined) rows.push(header)
+			rows.push(row)
+		}
+		return rows
+	}
+
+	return { feed, end: takeHeader }
 }

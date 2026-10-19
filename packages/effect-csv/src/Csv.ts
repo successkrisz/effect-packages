@@ -1,5 +1,5 @@
 /**
- * Streaming CSV decoding for Effect channels and streams.
+ * Streaming CSV decoding and encoding for Effect channels and streams.
  *
  * Records are decoded according to RFC 4180 by default: fields are separated
  * by `,`, quoted with `"`, and a quote inside a quoted field is written as
@@ -9,6 +9,12 @@
  * Rows can be converted into objects keyed by a header row with `toObjects`,
  * or decoded into typed values with a `Schema` by `decodeSchema` and
  * `decodeSchemaString`.
+ *
+ * Encoding goes the other way: `encode`, `encodeString` and `stringify` write
+ * rows in the same dialect, quoting only the fields that need it, so that
+ * decoding the output gives back the rows. `fromObjects` turns objects into a
+ * header row followed by rows, and `encodeSchema` and `encodeSchemaString`
+ * encode typed values with a `Schema` first. Encoding rows never fails.
  *
  * The module uses no Node-specific APIs, so it runs on any JavaScript runtime.
  *
@@ -37,6 +43,7 @@ import {
 	Pull,
 	type Schema,
 } from 'effect'
+import * as Encoder from './internal/encoder.ts'
 import type { CsvError } from './internal/errors.ts'
 import * as Objects from './internal/objects.ts'
 import * as Parser from './internal/parser.ts'
@@ -139,6 +146,87 @@ export interface ToObjectsOptions {
 	 * of missing fields are omitted and extra fields are dropped.
 	 */
 	readonly relaxColumnCount?: boolean | undefined
+}
+
+/**
+ * Options for encoding rows as CSV text.
+ *
+ * **Details**
+ *
+ * `delimiter`, `quote` and `escape` follow the rules of `DecodeOptions`, so
+ * that the same values decode the output, except that `quote` cannot be
+ * `null`: a field that contains the delimiter or a line break could not be
+ * written otherwise. Invalid options are defects: the encoding channel dies
+ * with an `IllegalArgumentError` when it starts, and `stringify` throws it.
+ *
+ * @category options
+ * @since 0.1.0
+ */
+export interface EncodeOptions {
+	/**
+	 * Separates fields. Defaults to `","`; use `"\t"` for TSV.
+	 */
+	readonly delimiter?: string | undefined
+	/**
+	 * Encloses fields that need quoting. Defaults to `'"'`.
+	 */
+	readonly quote?: string | undefined
+	/**
+	 * Escapes a quote inside a quoted field. Defaults to `quote`, which writes a
+	 * quote as `""` (RFC 4180). With a different character such as `"\\"`,
+	 * quotes and escape characters inside quoted fields are both prefixed with
+	 * it.
+	 */
+	readonly escape?: string | undefined
+	/**
+	 * Ends every record, including the last. Defaults to `"\r\n"`, as in
+	 * RFC 4180.
+	 */
+	readonly recordDelimiter?: '\n' | '\r\n' | undefined
+	/**
+	 * With `"needed"` (the default), a field is quoted only when it contains the
+	 * delimiter, the quote character, `\r` or `\n`, when it starts with U+FEFF,
+	 * or when it is the only field of its row and is empty, so that decoders
+	 * that skip blank lines keep the row. With `"all"`, every field is quoted.
+	 */
+	readonly quoteMode?: 'needed' | 'all' | undefined
+	/**
+	 * Prepends a U+FEFF byte-order mark to the output, which helps spreadsheet
+	 * programs such as Excel detect UTF-8. Defaults to `false`.
+	 */
+	readonly bom?: boolean | undefined
+	/**
+	 * Prefixes `'` to fields that start with `=`, `+`, `-`, `@`, a tab, `\r`,
+	 * `\n` or a full-width `＝`, `＋`, `－` or `＠`, so that spreadsheet programs
+	 * show them as text instead of evaluating them as formulas (CSV injection).
+	 * Defaults to `false`. The prefix is part of the field when the output is
+	 * decoded.
+	 */
+	readonly escapeFormulae?: boolean | undefined
+}
+
+/**
+ * Options for converting objects into rows.
+ *
+ * **Details**
+ *
+ * An explicit `columns` array must be non-empty and must not contain empty or
+ * repeated names; otherwise the channel dies with an `IllegalArgumentError`
+ * when it starts.
+ *
+ * @category options
+ * @since 0.1.0
+ */
+export interface FromObjectsOptions {
+	/**
+	 * Names the columns, in order. Defaults to the keys of the first object.
+	 */
+	readonly columns?: ReadonlyArray<string> | undefined
+	/**
+	 * When `true` (the default), a header row with the column names comes
+	 * first.
+	 */
+	readonly header?: boolean | undefined
 }
 
 /**
@@ -492,3 +580,327 @@ export const parse = (
 		const failure = parser.feed(input) ?? parser.end()
 		return failure === undefined ? Effect.succeed(rows) : Effect.fail(failure)
 	})
+
+const textEncoder = new TextEncoder()
+
+/**
+ * Creates a channel that encodes rows as CSV text.
+ *
+ * **Details**
+ *
+ * Each upstream chunk of rows becomes one string, and every record ends with
+ * `recordDelimiter`, including the last. Fields are quoted as described for
+ * `quoteMode`, which makes the output decode to the same rows with the same
+ * `delimiter`, `quote` and `escape`. A row without fields is written as a
+ * blank line, which decodes as one empty field.
+ *
+ * With `bom`, U+FEFF starts the first output chunk. Without rows, the channel
+ * emits nothing.
+ *
+ * **Example** (Encoding rows as CSV text)
+ *
+ * ```ts
+ * import { Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const text = Stream.make(['name', 'note'], ['Ada', 'said "hi", twice']).pipe(
+ * 	Stream.pipeThroughChannel(Csv.encodeString()),
+ * 	Stream.mkString,
+ * )
+ * // Effect<string> that succeeds with 'name,note\r\nAda,"said ""hi"", twice"\r\n'
+ * ```
+ *
+ * @category encoding
+ * @since 0.1.0
+ */
+export const encodeString = <IE = never, Done = unknown>(
+	options?: EncodeOptions,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<string>,
+	IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<Row>,
+	IE,
+	Done
+> =>
+	Channel.fromTransform((upstream, _scope) =>
+		Effect.sync(() => {
+			const encoder = Encoder.make(options)
+			return Effect.map(upstream, (rows) => Arr.of(encoder.encode(rows)))
+		}),
+	)
+
+/**
+ * Creates a channel that encodes rows as UTF-8 CSV bytes.
+ *
+ * **Details**
+ *
+ * Rows are encoded as in `encodeString` and then with a `TextEncoder`. With
+ * `bom`, the output starts with the bytes `EF BB BF`.
+ *
+ * @category encoding
+ * @since 0.1.0
+ */
+export const encode = <IE = never, Done = unknown>(
+	options?: EncodeOptions,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<Uint8Array>,
+	IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<Row>,
+	IE,
+	Done
+> =>
+	Channel.map(
+		encodeString<IE, Done>(options),
+		Arr.map((text) => textEncoder.encode(text)),
+	)
+
+const rowsFromValues = <In extends Readonly<Record<string, string>> | Row, IE, Done>(
+	options: FromObjectsOptions | undefined,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<Row>,
+	IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<In>,
+	IE,
+	Done
+> =>
+	Channel.fromTransform((upstream, _scope) =>
+		Effect.sync(() => {
+			const converter = Objects.makeRows(options)
+			let done = Option.none<Done>()
+
+			const pull: Pull.Pull<Arr.NonEmptyReadonlyArray<Row>, IE, Done> = Effect.suspend(() => {
+				if (Option.isSome(done)) return Cause.done(done.value)
+				return Pull.matchEffect(upstream, {
+					onSuccess: (values) => {
+						const rows = converter.feed(values)
+						return Arr.isArrayNonEmpty(rows) ? Effect.succeed(rows) : pull
+					},
+					onFailure: Effect.failCause,
+					onDone: (leftover) => {
+						done = Option.some(leftover)
+						const header = converter.end()
+						return header === undefined ? Cause.done(leftover) : Effect.succeed(Arr.of(header))
+					},
+				})
+			})
+			return pull
+		}),
+	)
+
+/**
+ * Creates a channel that converts objects into rows, after a header row by
+ * default.
+ *
+ * **Details**
+ *
+ * Without `columns`, the keys of the first object name the columns. Each row
+ * has one field per column, in column order: keys that an object lacks become
+ * empty fields, as do `undefined` values, and keys that are not columns are
+ * dropped. Only own properties are read.
+ *
+ * With `header: true` (the default), the header row is emitted before the
+ * first row. With explicit `columns`, it is emitted even when there are no
+ * objects, so that the output still names the columns.
+ *
+ * **Example** (Encoding objects as CSV text)
+ *
+ * ```ts
+ * import { Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const text = Stream.make({ name: 'Ada', age: '36' }, { name: 'Alan', age: '41' }).pipe(
+ * 	Stream.pipeThroughChannel(Csv.fromObjects()),
+ * 	Stream.pipeThroughChannel(Csv.encodeString({ recordDelimiter: '\n' })),
+ * 	Stream.mkString,
+ * )
+ * // Effect<string> that succeeds with 'name,age\nAda,36\nAlan,41\n'
+ * ```
+ *
+ * @category encoding
+ * @since 0.1.0
+ */
+export const fromObjects = <IE = never, Done = unknown>(
+	options?: FromObjectsOptions,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<Row>,
+	IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<Readonly<Record<string, string>>>,
+	IE,
+	Done
+> => rowsFromValues(options)
+
+const encodeRowsSchema = <
+	S extends Schema.Constraint & { readonly Encoded: Readonly<Record<string, string>> | Row },
+	IE,
+	Done,
+>(
+	schema: S,
+	options: FromObjectsOptions | undefined,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<Row>,
+	Schema.SchemaError | IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<S['Type']>,
+	IE,
+	Done,
+	S['EncodingServices']
+> =>
+	Channel.pipeTo(
+		ChannelSchema.encode(schema)<IE, Done>(),
+		rowsFromValues<S['Encoded'], Schema.SchemaError | IE, Done>(options),
+	)
+
+/**
+ * Creates a channel that encodes values of a schema as CSV text.
+ *
+ * **Details**
+ *
+ * The overload is selected by the encoded type of the schema. When it is an
+ * object of strings, such as that of a `Schema.Struct` of `Schema.String` and
+ * `Schema.FiniteFromString`, each value is encoded with the schema and the
+ * objects are converted into rows as in `fromObjects`. When it is an array of
+ * strings, such as that of a `Schema.Tuple`, each encoded value is written as
+ * a row. The rows are then encoded as in `encodeString`.
+ *
+ * Without `columns`, the keys of the first encoded object name the columns,
+ * so pass `columns` when an optional key may be absent from it.
+ *
+ * A value that the schema cannot encode fails the channel with a
+ * `SchemaError`, and the other values of the same upstream chunk are not
+ * emitted.
+ *
+ * **Example** (Encoding typed objects as CSV text)
+ *
+ * ```ts
+ * import { Schema, Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const Person = Schema.Struct({ name: Schema.String, age: Schema.FiniteFromString })
+ *
+ * const text = Stream.make({ name: 'Ada', age: 36 }).pipe(
+ * 	Stream.pipeThroughChannel(Csv.encodeSchemaString(Person)()),
+ * 	Stream.mkString,
+ * )
+ * // Effect<string, Schema.SchemaError> that succeeds with 'name,age\r\nAda,36\r\n'
+ * ```
+ *
+ * @category encoding
+ * @since 0.1.0
+ */
+export const encodeSchemaString: {
+	<S extends Schema.Constraint & { readonly Encoded: Row }>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options?: EncodeOptions,
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<string>,
+		Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		IE,
+		Done,
+		S['EncodingServices']
+	>
+	<S extends Schema.Constraint & { readonly Encoded: Readonly<Record<string, string>> }>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options?: EncodeOptions & FromObjectsOptions,
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<string>,
+		Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		IE,
+		Done,
+		S['EncodingServices']
+	>
+} =
+	<S extends Schema.Constraint & { readonly Encoded: Readonly<Record<string, string>> | Row }>(
+		schema: S,
+	) =>
+	<IE = never, Done = unknown>(options?: EncodeOptions & FromObjectsOptions) =>
+		Channel.pipeTo(
+			encodeRowsSchema<S, IE, Done>(schema, options),
+			encodeString<Schema.SchemaError | IE, Done>(options),
+		)
+
+/**
+ * Creates a channel that encodes values of a schema as UTF-8 CSV bytes.
+ *
+ * **Details**
+ *
+ * Values are encoded as in `encodeSchemaString` and then with a
+ * `TextEncoder`, as in `encode`.
+ *
+ * @category encoding
+ * @since 0.1.0
+ */
+export const encodeSchema: {
+	<S extends Schema.Constraint & { readonly Encoded: Row }>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options?: EncodeOptions,
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<Uint8Array>,
+		Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		IE,
+		Done,
+		S['EncodingServices']
+	>
+	<S extends Schema.Constraint & { readonly Encoded: Readonly<Record<string, string>> }>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options?: EncodeOptions & FromObjectsOptions,
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<Uint8Array>,
+		Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		IE,
+		Done,
+		S['EncodingServices']
+	>
+} =
+	<S extends Schema.Constraint & { readonly Encoded: Readonly<Record<string, string>> | Row }>(
+		schema: S,
+	) =>
+	<IE = never, Done = unknown>(options?: EncodeOptions & FromObjectsOptions) =>
+		Channel.pipeTo(
+			encodeRowsSchema<S, IE, Done>(schema, options),
+			encode<Schema.SchemaError | IE, Done>(options),
+		)
+
+/**
+ * Encodes rows as a CSV string.
+ *
+ * **Details**
+ *
+ * Gives the same text as `encodeString` given the same rows in any number of
+ * chunks. Invalid options throw an `IllegalArgumentError`.
+ *
+ * **Example** (Writing TSV)
+ *
+ * ```ts
+ * import { Csv } from 'effect-csv'
+ *
+ * const text = Csv.stringify(
+ * 	[
+ * 		['id', 'note'],
+ * 		['1', 'tab\tinside'],
+ * 	],
+ * 	{ delimiter: '\t', recordDelimiter: '\n' },
+ * )
+ * // 'id\tnote\n1\t"tab\tinside"\n'
+ * ```
+ *
+ * @category encoding
+ * @since 0.1.0
+ */
+export const stringify = (rows: ReadonlyArray<Row>, options?: EncodeOptions): string =>
+	Encoder.make(options).encode(rows)

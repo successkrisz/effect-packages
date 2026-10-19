@@ -1,4 +1,3 @@
-import { Cause } from 'effect'
 import type { DecodeOptions, Row } from '../Csv.ts'
 import {
 	CsvError,
@@ -8,6 +7,7 @@ import {
 	RecordTooLarge,
 	UnclosedQuote,
 } from './errors.ts'
+import { invalidOption, resolveDialect } from './options.ts'
 
 /** @internal */
 export const defaultMaxRecordSize = 10 * 1024 * 1024
@@ -44,35 +44,10 @@ type State =
 	| typeof EscapeInQuoted
 	| typeof AfterCR
 
-const isFieldCharacter = (s: string): boolean => s.length === 1 && s !== '\r' && s !== '\n'
-
-const invalidOption = (message: string): never => {
-	throw new Cause.IllegalArgumentError(`Invalid CSV options: ${message}`)
-}
-
 const resolveOptions = (options: DecodeOptions | undefined) => {
-	const delimiter = options?.delimiter ?? ','
-	const quote = options?.quote === undefined ? '"' : options.quote
-	const escapeChar = options?.escape ?? quote ?? ''
+	const { delimiter, quote, escapeChar } = resolveDialect(options, true)
 	const relaxColumnCount = options?.relaxColumnCount ?? false
 	const maxRecordSize = options?.maxRecordSize ?? defaultMaxRecordSize
-	if (!isFieldCharacter(delimiter)) {
-		invalidOption('`delimiter` must be one UTF-16 code unit other than "\\r" and "\\n"')
-	}
-	if (quote !== null) {
-		if (!isFieldCharacter(quote)) {
-			invalidOption('`quote` must be null or one UTF-16 code unit other than "\\r" and "\\n"')
-		}
-		if (quote === delimiter) {
-			invalidOption('`quote` must differ from `delimiter`')
-		}
-		if (!isFieldCharacter(escapeChar)) {
-			invalidOption('`escape` must be one UTF-16 code unit other than "\\r" and "\\n"')
-		}
-		if (escapeChar === delimiter) {
-			invalidOption('`escape` must differ from `delimiter`')
-		}
-	}
 	if (
 		!(Number.isInteger(maxRecordSize) && maxRecordSize > 0) &&
 		maxRecordSize !== Number.POSITIVE_INFINITY

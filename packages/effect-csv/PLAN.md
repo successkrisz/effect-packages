@@ -1,6 +1,6 @@
 # effect-csv implementation plan
 
-**Status:** Phase 1 (core decoding) and Phase 2 (objects and schema decoding) are done. The package is still `private: true`. It will be published to npm as [`effect-csv`](https://www.npmjs.com/package/effect-csv) (unscoped; the name was unclaimed on 2026-10-15).
+**Status:** Phase 1 (core decoding), Phase 2 (objects and schema decoding) and Phase 3 (encoding) are done. The package is still `private: true`. It will be published to npm as [`effect-csv`](https://www.npmjs.com/package/effect-csv) (unscoped; the name was unclaimed on 2026-10-15).
 
 ## Goal
 
@@ -45,8 +45,9 @@ src/
   index.ts             export * as Csv from "./Csv.ts"
   Csv.ts               public API
   internal/errors.ts   CsvError and its reasons, re-exported from Csv.ts
+  internal/options.ts  delimiter, quote and escape validation shared by the parser and the encoder
   internal/parser.ts   decoding state machine
-  internal/objects.ts  header validation and row-to-object conversion for toObjects
+  internal/objects.ts  column validation, row-to-object conversion for toObjects, object-to-row conversion for fromObjects
   internal/encoder.ts  field quoting and row formatting
 test/
   utils.ts             runs the pure parser over chunks
@@ -84,7 +85,7 @@ Csv.encodeSchemaString(schema)(options?)  // S["Type"] -> strings
 Csv.stringify(rows, options?) // string
 
 // Errors and types
-Csv.CsvError, Csv.isCsvError, the reason classes, Csv.DecodeOptions, Csv.DecodeBytesOptions, Csv.ToObjectsOptions, Csv.EncodeOptions, Csv.Row
+Csv.CsvError, Csv.isCsvError, the reason classes, Csv.DecodeOptions, Csv.DecodeBytesOptions, Csv.ToObjectsOptions, Csv.EncodeOptions, Csv.FromObjectsOptions, Csv.Row
 ```
 
 Target usage:
@@ -109,7 +110,8 @@ Typing notes:
 - Rows carry no line numbers, so `toObjects` counts lines itself: one per row plus the line breaks inside its fields, with `\r\n` counted once as in the parser. The result is the input line when the rows come straight from `decode` or `decodeString`. Phase 4's `comment` and `skipEmptyLines` break that assumption, so `decodeSchema` will need to take lines from the parser then.
 - `toObjects` with explicit `columns` and `relaxColumnCount: false` fails with `FieldCountMismatch` when a row's field count differs from the number of names. Explicit names that are empty or repeated, or an empty list, are invalid options and die with `IllegalArgumentError`.
 - A `__proto__` column becomes an own property of each object, not a change of prototype.
-- `encodeSchema` has two overloads, chosen by `S["Encoded"]`. When it extends `Readonly<Record<string, string>>`, the pipeline is `ChannelSchema.encode` then `fromObjects` then `encode`. When it extends `Row`, it is `ChannelSchema.encode` then `encode`. A single signature constrained to the union of the two does not compose without a cast, because channel inputs are contravariant. `S["EncodingServices"]` goes on the channel's environment.
+- `encodeSchema` has two overloads, chosen by `S["Encoded"]`. When it extends `Readonly<Record<string, string>>`, the options are `EncodeOptions & FromObjectsOptions` and the objects are converted as by `fromObjects`. When it extends `Row`, the options are `EncodeOptions` and each encoded value is written as a row. Unlike `decodeSchema`, the row overload does not need `columns: "none"`: the encoded values themselves tell rows from objects. Both overloads share one pipeline, `ChannelSchema.encode` then an internal converter whose input is `Readonly<Record<string, string>> | Row` (arrays pass through, objects become rows) then `encode`. Because the converter accepts the union, the implementation composes without a cast. `S["EncodingServices"]` goes on the channel's environment.
+- Without `columns`, `fromObjects` and `encodeSchema` take the column names from the keys of the first object. Pass `columns` when an optional key may be missing from it. Missing keys and `undefined` values become empty fields, keys that are not columns are dropped, and only own properties are read.
 - Non-string values have to be encoded by the schema (for example with `Schema.FiniteFromString`). That keeps the raw encoders total: they never fail.
 
 ### Decode options
@@ -141,14 +143,16 @@ Behaviour that is not configurable:
 
 | Option | Default | Phase | Behaviour |
 | --- | --- | --- | --- |
-| `delimiter`, `quote`, `escape` | as for decoding | 3 | |
-| `recordDelimiter` | `"\r\n"` | 3 | `"\n"` or `"\r\n"`; see the open questions. |
+| `delimiter`, `quote`, `escape` | as for decoding | 3 | Validated by the same code as for decoding, except that `quote` cannot be `null`: a field containing the delimiter or a line break could not be written otherwise. |
+| `recordDelimiter` | `"\r\n"` | 3 | `"\n"` or `"\r\n"`; ends every record, including the last. See the open questions. |
 | `quoteMode` | `"needed"` | 3 | `"needed"` or `"all"`. |
-| `columns`, `header` | keys of the first object, `true` | 3 | `fromObjects` and `encodeSchema` only. |
-| `bom` | `false` | 3 | Prefix U+FEFF to the first output chunk; `encode` turns it into the UTF-8 bytes `EF BB BF`. Helps Excel detect UTF-8. |
-| `escapeFormulae` | `false` | 3 | Prefix fields that start with `=`, `+`, `-`, `@`, a tab or a carriage return with `'`, to prevent CSV formula injection (OWASP). |
+| `columns`, `header` | keys of the first object, `true` | 3 | `fromObjects` and `encodeSchema` only. Explicit `columns` are validated like those of `toObjects`. With explicit `columns`, the header row is emitted even when there are no objects. |
+| `bom` | `false` | 3 | Prefix U+FEFF to the first output chunk; `encode` turns it into the UTF-8 bytes `EF BB BF`. Helps Excel detect UTF-8. Without rows there is no output, so no BOM either. |
+| `escapeFormulae` | `false` | 3 | Prefix `'` to fields that start with `=`, `+`, `-`, `@`, a tab, `\r`, `\n`, or the full-width `＝`, `＋`, `－` or `＠`, to prevent CSV formula injection. This is OWASP's current list, which added `\n` and the full-width forms to the original six. |
 
-With `quoteMode: "needed"`, a field is quoted when it contains the delimiter, the quote character, `\r` or `\n`, when it starts with the comment character, or when it is the only field in its row and is empty. The last rule makes `[[""]]` encode as `""` instead of a blank line, so it round-trips.
+Invalid encode options die with `IllegalArgumentError` when the channel starts; `stringify` returns a plain string, so it throws the error instead.
+
+With `quoteMode: "needed"`, a field is quoted when it contains the delimiter, the quote character, `\r` or `\n`, when it starts with U+FEFF, or when it is the only field in its row and is empty. The U+FEFF rule stops a decoder from removing a leading U+FEFF as a byte-order mark. The last rule makes `[[""]]` encode as `""` instead of a blank line, so the row survives `skipEmptyLines` and other decoders that skip blank lines. Inside a quoted field, a quote is doubled; with a different `escape`, both the quote and the escape character are prefixed with it. An escape character outside quotes is plain text, so it does not cause quoting. A row with no fields is written as a blank line, which decodes as one empty field. Quoting fields that start with the comment character comes with the `comment` option in Phase 4.
 
 ### Errors
 
@@ -232,14 +236,15 @@ Each phase ends with `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm format
 
 ### Phase 3: encoding
 
-- [ ] `internal/encoder.ts`, `encodeString`, `encode`, `stringify`
-- [ ] `fromObjects`, `encodeSchema`, `encodeSchemaString`
-- [ ] `quoteMode`, `recordDelimiter`, `bom`, `escapeFormulae`
-- [ ] The round-trip property
+- [x] `internal/encoder.ts`, `encodeString`, `encode`, `stringify`
+- [x] `fromObjects`, `encodeSchema`, `encodeSchemaString`
+- [x] `quoteMode`, `recordDelimiter`, `bom`, `escapeFormulae`
+- [x] The round-trip property, both for `stringify` then `parse` and for the channels (`encode` then `decode` with the bytes split anywhere, `fromObjects` then `toObjects`), plus chunk invariance of `encodeString`
 
 ### Phase 4: dialect options
 
 - [ ] `trim`, `comment`, `skipEmptyLines`, `relaxQuotes`
+- [ ] A `comment` encode option that quotes fields starting with the comment character, so commented-looking rows round-trip
 - [ ] The chunk-invariance property extended to every option
 
 ### Phase 5: release
@@ -256,7 +261,7 @@ Multi-character delimiters, delimiter sniffing, a decoder that emits each row wi
 
 ## Open questions
 
-1. **Encoder line ending:** `"\r\n"` (RFC 4180, papaparse) or `"\n"` (csv-stringify)? The plan assumes `"\r\n"`.
+1. **Encoder line ending:** `"\r\n"` (RFC 4180, papaparse) or `"\n"` (csv-stringify)? Phase 3 ships `"\r\n"` as the default; switching it changes one default and the tests that assert exact output.
 2. **Skipping bad records:** a channel that fails ends the stream, so an equivalent of csv-parse's `skip_records_with_error` needs a separate decoder that emits a `Result<Row, CsvError>` per record for the recoverable reasons (`FieldCountMismatch`, `InvalidQuote`). Is that needed for v0.1?
 3. **Sync API:** should `parse` return an `Effect` (as planned), a `Result` (like `Schema.decodeResult`), or both?
 4. **Names:** `toObjects` and `fromObjects` are working names.
