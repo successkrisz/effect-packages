@@ -1,0 +1,68 @@
+{
+	"name": "effect-csv",
+	"version": "0.0.0",
+	"description": "Streaming CSV parsing and writing for Effect v4 with Schema-typed rows and no runtime dependencies",
+	"keywords": [
+		"effect",
+		"effect-ts",
+		"csv",
+		"tsv",
+		"parser",
+		"stringify",
+		"stream",
+		"schema"
+	],
+	"private": true,
+	"license": "MIT",
+	"author": {
+		"name": "Krisztian Balla",
+		"url": "https://github.com/successkrisz",
+		"organization": false
+	},
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./Csv": "./src/Csv.ts",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"src/**/*.ts",
+		"dist/**/*.js",
+		"dist/**/*.js.map",
+		"dist/**/*.d.ts",
+		"dist/**/*.d.ts.map",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.dev.json",
+		"build": "tsc -p tsconfig.json",
+		"prepack": "pnpm run build"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:",
+		"effect": "catalog:"
+	},
+	"peerDependencies": {
+		"effect": "^4.0.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true,
+		"exports": {
+			".": "./dist/index.js",
+			"./Csv": "./dist/Csv.js",
+			"./package.json": "./package.json"
+		}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/successkrisz/effect-packages.git",
+		"directory": "packages/effect-csv"
+	},
+	"bugs": {
+		"url": "https://github.com/successkrisz/effect-packages/issues"
+	},
+	"homepage": "https://github.com/successkrisz/effect-packages#readme"
+}
