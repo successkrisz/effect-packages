@@ -44,7 +44,8 @@ export class InvalidQuote extends Data.TaggedError('InvalidQuote')<{
 
 /**
  * Error reason raised when a record has a different number of fields than the
- * first record and `relaxColumnCount` is off.
+ * first record, or than the columns of `toObjects`, and `relaxColumnCount` is
+ * off.
  *
  * @category errors
  * @since 0.1.0
@@ -76,12 +77,42 @@ export class RecordTooLarge extends Data.TaggedError('RecordTooLarge')<{
 }
 
 /**
+ * Error reason raised when a header row cannot name the columns of an object.
+ *
+ * **Details**
+ *
+ * `problem` is `"Empty"` for an empty column name and `"Duplicate"` for a name
+ * that an earlier column already uses. `fieldIndex` is the 0-based index of
+ * the offending field, and `name` is its value.
+ *
+ * @category errors
+ * @since 0.1.0
+ */
+export class InvalidHeader extends Data.TaggedError('InvalidHeader')<{
+	readonly line: number
+	readonly fieldIndex: number
+	readonly name: string
+	readonly problem: 'Empty' | 'Duplicate'
+}> {
+	override get message() {
+		const column =
+			this.problem === 'Empty' ? 'Empty column name' : `Duplicate column name "${this.name}"`
+		return `${column} in field ${this.fieldIndex} of the header on line ${this.line}`
+	}
+}
+
+/**
  * Union of CSV decoding error reasons.
  *
  * @category errors
  * @since 0.1.0
  */
-export type CsvErrorReason = UnclosedQuote | InvalidQuote | FieldCountMismatch | RecordTooLarge
+export type CsvErrorReason =
+	| UnclosedQuote
+	| InvalidQuote
+	| FieldCountMismatch
+	| RecordTooLarge
+	| InvalidHeader
 
 /**
  * Error raised when CSV input is malformed.

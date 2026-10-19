@@ -6,6 +6,10 @@
  * `""`. Records may end with `\n`, `\r\n` or `\r`. Malformed input fails with a
  * `CsvError` whose `reason` carries the line on which the record starts.
  *
+ * Rows can be converted into objects keyed by a header row with `toObjects`,
+ * or decoded into typed values with a `Schema` by `decodeSchema` and
+ * `decodeSchemaString`.
+ *
  * The module uses no Node-specific APIs, so it runs on any JavaScript runtime.
  *
  * **Example** (Decoding a byte stream into rows)
@@ -23,8 +27,18 @@
  *
  * @since 0.1.0
  */
-import { Array as Arr, Cause, Channel, Effect, Option, Pull } from 'effect'
+import {
+	Array as Arr,
+	Cause,
+	Channel,
+	ChannelSchema,
+	Effect,
+	Option,
+	Pull,
+	type Schema,
+} from 'effect'
 import type { CsvError } from './internal/errors.ts'
+import * as Objects from './internal/objects.ts'
 import * as Parser from './internal/parser.ts'
 
 /**
@@ -98,6 +112,33 @@ export interface DecodeBytesOptions extends DecodeOptions {
 	 * unsupported label is a defect.
 	 */
 	readonly encoding?: string | undefined
+}
+
+/**
+ * Options for converting rows into objects.
+ *
+ * **Details**
+ *
+ * An explicit `columns` array must be non-empty and must not contain empty or
+ * repeated names; otherwise the channel dies with an `IllegalArgumentError`
+ * when it starts.
+ *
+ * @category options
+ * @since 0.1.0
+ */
+export interface ToObjectsOptions {
+	/**
+	 * Names the keys of each object. `"header"` (the default) consumes the
+	 * first row as the column names. An array of names consumes no row; to
+	 * replace an existing header, drop its row first with `Stream.drop(1)`.
+	 */
+	readonly columns?: 'header' | ReadonlyArray<string> | undefined
+	/**
+	 * When `false` (the default), a row whose field count differs from the
+	 * number of columns fails with `FieldCountMismatch`. When `true`, the keys
+	 * of missing fields are omitted and extra fields are dropped.
+	 */
+	readonly relaxColumnCount?: boolean | undefined
 }
 
 /**
@@ -191,6 +232,228 @@ export const decode = <IE = never, Done = unknown>(
 		Channel.decodeText<IE, Done>(options?.encoding, { ignoreBOM: true }),
 		decodeString(options),
 	)
+
+/**
+ * Creates a channel that converts rows into objects keyed by column name.
+ *
+ * **Details**
+ *
+ * With `columns: "header"` (the default), the first row names the columns and
+ * is not emitted; a header with an empty or repeated name fails with
+ * `InvalidHeader`. The keys of each object follow the column order.
+ *
+ * Errors carry the line on which the failing row starts, counted from the
+ * first row the channel receives, including line breaks inside fields. That
+ * is the input line when the rows come straight from `decode` or
+ * `decodeString`. Objects converted before an invalid row are emitted before
+ * the channel fails.
+ *
+ * **Example** (Decoding CSV text into objects)
+ *
+ * ```ts
+ * import { Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const people = Stream.make('name,age\nAda,36\n').pipe(
+ * 	Stream.pipeThroughChannel(Csv.decodeString()),
+ * 	Stream.pipeThroughChannel(Csv.toObjects()),
+ * 	Stream.runCollect,
+ * )
+ * // Effect<Array<Readonly<Record<string, string>>>, Csv.CsvError> that succeeds with [{ name: "Ada", age: "36" }]
+ * ```
+ *
+ * @category decoding
+ * @since 0.1.0
+ */
+export const toObjects = <IE = never, Done = unknown>(
+	options?: ToObjectsOptions,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<Readonly<Record<string, string>>>,
+	CsvError | IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<Row>,
+	IE,
+	Done
+> =>
+	Channel.fromTransform((upstream, _scope) =>
+		Effect.sync(() => {
+			let records: Array<Readonly<Record<string, string>>> = []
+			let failure: CsvError | undefined
+			const objects = Objects.make(options, (record) => {
+				records.push(record)
+			})
+
+			const pull: Pull.Pull<
+				Arr.NonEmptyReadonlyArray<Readonly<Record<string, string>>>,
+				CsvError | IE,
+				Done
+			> = Effect.suspend(() => {
+				if (Arr.isArrayNonEmpty(records)) {
+					const out = records
+					records = []
+					return Effect.succeed(out)
+				}
+				if (failure !== undefined) return Effect.fail(failure)
+				return Effect.flatMap(upstream, (rows) => {
+					for (const row of rows) {
+						failure = objects.feed(row)
+						if (failure !== undefined) break
+					}
+					return pull
+				})
+			})
+			return pull
+		}),
+	)
+
+const decodeRowsSchema = <S extends Schema.Constraint, IE, Done>(
+	schema: S,
+	options: ToObjectsOptions | { readonly columns: 'none' } | undefined,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<S['Type']>,
+	CsvError | Schema.SchemaError | IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<Row>,
+	CsvError | IE,
+	Done,
+	S['DecodingServices']
+> =>
+	options?.columns === 'none'
+		? ChannelSchema.decodeUnknown(schema)<CsvError | IE, Done>()
+		: Channel.pipeTo(
+				toObjects<CsvError | IE, Done>(options),
+				ChannelSchema.decodeUnknown(schema)<CsvError | IE, Done>(),
+			)
+
+/**
+ * Creates a channel that decodes CSV text chunks into values of a schema.
+ *
+ * **Details**
+ *
+ * By default, rows are converted into objects as in `toObjects` and each
+ * object is decoded with the schema. Use a schema whose encoded fields are
+ * strings, such as a `Schema.Struct` of `Schema.String` and
+ * `Schema.FiniteFromString`.
+ *
+ * With `columns: "none"`, each row is decoded as it is. That overload is
+ * selected by a schema whose encoded type is an array of strings, such as a
+ * `Schema.Tuple`, and requires the option.
+ *
+ * A value that does not match the schema fails the channel with a
+ * `SchemaError`, and the other values decoded from the same upstream chunk are
+ * not emitted.
+ *
+ * **Example** (Decoding rows into tuples)
+ *
+ * ```ts
+ * import { Schema, Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const Point = Schema.Tuple([Schema.FiniteFromString, Schema.FiniteFromString])
+ *
+ * const points = Stream.make('1,2\n3,4\n').pipe(
+ * 	Stream.pipeThroughChannel(Csv.decodeSchemaString(Point)({ columns: 'none' })),
+ * 	Stream.runCollect,
+ * )
+ * // Effect<Array<readonly [number, number]>, Csv.CsvError | Schema.SchemaError> that succeeds with [[1, 2], [3, 4]]
+ * ```
+ *
+ * @category decoding
+ * @since 0.1.0
+ */
+export const decodeSchemaString: {
+	<S extends Schema.Constraint & { readonly Encoded: Row }>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options: DecodeOptions & { readonly columns: 'none' },
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		CsvError | Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<string>,
+		IE,
+		Done,
+		S['DecodingServices']
+	>
+	<S extends Schema.Constraint>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options?: DecodeOptions & ToObjectsOptions,
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		CsvError | Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<string>,
+		IE,
+		Done,
+		S['DecodingServices']
+	>
+} =
+	<S extends Schema.Constraint>(schema: S) =>
+	<IE = never, Done = unknown>(
+		options?: DecodeOptions & (ToObjectsOptions | { readonly columns: 'none' }),
+	) =>
+		Channel.pipeTo(decodeString<IE, Done>(options), decodeRowsSchema<S, IE, Done>(schema, options))
+
+/**
+ * Creates a channel that decodes CSV bytes into values of a schema.
+ *
+ * **Details**
+ *
+ * Bytes are decoded as in `decode`, and rows are decoded with the schema as in
+ * `decodeSchemaString`.
+ *
+ * **Example** (Decoding a byte stream into typed objects)
+ *
+ * ```ts
+ * import { Schema, Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const Person = Schema.Struct({ name: Schema.String, age: Schema.FiniteFromString })
+ *
+ * const people = Stream.make(new TextEncoder().encode('name,age\nAda,36\n')).pipe(
+ * 	Stream.pipeThroughChannel(Csv.decodeSchema(Person)()),
+ * 	Stream.runCollect,
+ * )
+ * // Effect<Array<{ readonly name: string; readonly age: number }>, Csv.CsvError | Schema.SchemaError> that succeeds with [{ name: "Ada", age: 36 }]
+ * ```
+ *
+ * @category decoding
+ * @since 0.1.0
+ */
+export const decodeSchema: {
+	<S extends Schema.Constraint & { readonly Encoded: Row }>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options: DecodeBytesOptions & { readonly columns: 'none' },
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		CsvError | Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<Uint8Array>,
+		IE,
+		Done,
+		S['DecodingServices']
+	>
+	<S extends Schema.Constraint>(
+		schema: S,
+	): <IE = never, Done = unknown>(
+		options?: DecodeBytesOptions & ToObjectsOptions,
+	) => Channel.Channel<
+		Arr.NonEmptyReadonlyArray<S['Type']>,
+		CsvError | Schema.SchemaError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<Uint8Array>,
+		IE,
+		Done,
+		S['DecodingServices']
+	>
+} =
+	<S extends Schema.Constraint>(schema: S) =>
+	<IE = never, Done = unknown>(
+		options?: DecodeBytesOptions & (ToObjectsOptions | { readonly columns: 'none' }),
+	) =>
+		Channel.pipeTo(decode<IE, Done>(options), decodeRowsSchema<S, IE, Done>(schema, options))
 
 /**
  * Parses a complete CSV string into rows.

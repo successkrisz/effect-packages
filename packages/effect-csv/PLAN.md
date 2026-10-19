@@ -1,6 +1,6 @@
 # effect-csv implementation plan
 
-**Status:** Phase 1 (core decoding) is done. The package is still `private: true`. It will be published to npm as [`effect-csv`](https://www.npmjs.com/package/effect-csv) (unscoped; the name was unclaimed on 2026-10-15).
+**Status:** Phase 1 (core decoding) and Phase 2 (objects and schema decoding) are done. The package is still `private: true`. It will be published to npm as [`effect-csv`](https://www.npmjs.com/package/effect-csv) (unscoped; the name was unclaimed on 2026-10-15).
 
 ## Goal
 
@@ -46,6 +46,7 @@ src/
   Csv.ts               public API
   internal/errors.ts   CsvError and its reasons, re-exported from Csv.ts
   internal/parser.ts   decoding state machine
+  internal/objects.ts  header validation and row-to-object conversion for toObjects
   internal/encoder.ts  field quoting and row formatting
 test/
   utils.ts             runs the pure parser over chunks
@@ -83,7 +84,7 @@ Csv.encodeSchemaString(schema)(options?)  // S["Type"] -> strings
 Csv.stringify(rows, options?) // string
 
 // Errors and types
-Csv.CsvError, Csv.isCsvError, the reason classes, Csv.DecodeOptions, Csv.DecodeBytesOptions, Csv.EncodeOptions, Csv.Row
+Csv.CsvError, Csv.isCsvError, the reason classes, Csv.DecodeOptions, Csv.DecodeBytesOptions, Csv.ToObjectsOptions, Csv.EncodeOptions, Csv.Row
 ```
 
 Target usage:
@@ -92,7 +93,7 @@ Target usage:
 import { Schema, Stream } from "effect"
 import { Csv } from "effect-csv"
 
-const Person = Schema.Struct({ name: Schema.String, age: Schema.NumberFromString })
+const Person = Schema.Struct({ name: Schema.String, age: Schema.FiniteFromString })
 
 const people = Stream.make(new TextEncoder().encode("name,age\nAda,36\n")).pipe(
   Stream.pipeThroughChannel(Csv.decodeSchema(Person)()),
@@ -103,9 +104,13 @@ const people = Stream.make(new TextEncoder().encode("name,age\nAda,36\n")).pipe(
 Typing notes:
 
 - `toObjects` and `decodeSchema` take `columns: "header" | ReadonlyArray<string>`, defaulting to `"header"`. `"header"` consumes the first row as the header. An explicit list of names consumes no header row; to rename an existing header, `Stream.drop(1)` first. In both cases the schema receives `Readonly<Record<string, string>>`, so use `Schema.Struct`, and decoding goes through `ChannelSchema.decodeUnknown`.
-- `decodeSchema` has a separate overload for `columns: "none"`, which passes raw `Row` values to the schema and requires `S["Encoded"]` to extend `Row` (use `Schema.Tuple`). Pairing a `Schema.Struct` with raw rows is then a type error rather than a runtime `SchemaError`.
+- `decodeSchema` has a separate overload for `columns: "none"`, which passes raw `Row` values to the schema and requires `S["Encoded"]` to extend `Row` (use `Schema.Tuple`). Because the schema comes first in `decodeSchema(schema)(options)`, the overload is chosen by `S["Encoded"]` on the first call, and its options require `columns: "none"`. Pairing a `Schema.Struct` with raw rows, or a `Schema.Tuple` with objects, is then a type error rather than a runtime `SchemaError`.
+- `decodeSchema` decodes each batch with `ChannelSchema.decodeUnknown`, so a value that fails the schema also drops the other values of its upstream chunk. `SchemaError` carries no CSV line; see the row-with-line decoder under [Later](#later).
+- Rows carry no line numbers, so `toObjects` counts lines itself: one per row plus the line breaks inside its fields, with `\r\n` counted once as in the parser. The result is the input line when the rows come straight from `decode` or `decodeString`. Phase 4's `comment` and `skipEmptyLines` break that assumption, so `decodeSchema` will need to take lines from the parser then.
+- `toObjects` with explicit `columns` and `relaxColumnCount: false` fails with `FieldCountMismatch` when a row's field count differs from the number of names. Explicit names that are empty or repeated, or an empty list, are invalid options and die with `IllegalArgumentError`.
+- A `__proto__` column becomes an own property of each object, not a change of prototype.
 - `encodeSchema` has two overloads, chosen by `S["Encoded"]`. When it extends `Readonly<Record<string, string>>`, the pipeline is `ChannelSchema.encode` then `fromObjects` then `encode`. When it extends `Row`, it is `ChannelSchema.encode` then `encode`. A single signature constrained to the union of the two does not compose without a cast, because channel inputs are contravariant. `S["EncodingServices"]` goes on the channel's environment.
-- Non-string values have to be encoded by the schema (for example with `Schema.NumberFromString`). That keeps the raw encoders total: they never fail.
+- Non-string values have to be encoded by the schema (for example with `Schema.FiniteFromString`). That keeps the raw encoders total: they never fail.
 
 ### Decode options
 
@@ -155,7 +160,7 @@ type CsvErrorReason =
   | InvalidQuote        // { line, fieldIndex }           text after a closing quote, or a quote in an unquoted field
   | FieldCountMismatch  // { line, expected, actual }
   | RecordTooLarge      // { line, maxRecordSize }
-  | InvalidHeader       // { line, name, problem: "Empty" | "Duplicate" }
+  | InvalidHeader       // { line, fieldIndex, name, problem: "Empty" | "Duplicate" }
 ```
 
 `line` is the 1-based physical line where the record starts, counting line breaks inside quoted fields. Follow `HttpClientError`: each reason is its own `Data.TaggedError` class, `CsvError` carries a type ID with an `isCsvError` guard, and `message` delegates to the reason. That makes `Effect.catchReason("CsvError", "FieldCountMismatch", ...)` and `Stream.catchReason` work, as long as only `CsvError` (never a bare reason) reaches the error channel. Use `Data.TaggedError` rather than `Schema.TaggedError`, as upstream encoding modules do; these errors are never decoded. Encoding has no `CsvError`: only `encodeSchema` can fail, with `Schema.SchemaError`.
@@ -222,8 +227,8 @@ Each phase ends with `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm format
 
 ### Phase 2: objects and schema decoding
 
-- [ ] `toObjects` with `columns`, and the `InvalidHeader` reason
-- [ ] `decodeSchema`, `decodeSchemaString`
+- [x] `toObjects` with `columns`, and the `InvalidHeader` reason
+- [x] `decodeSchema`, `decodeSchemaString`
 
 ### Phase 3: encoding
 

@@ -69,11 +69,11 @@ const field = Arbitrary.all({
 )
 
 /**
- * Well-formed records in a random dialect followed by an unclosed quote, with
- * the rows and the line of the failing record computed from the generated
+ * Well-formed records with 1 to 4 fields in a random dialect, where quoted
+ * fields may contain line breaks, with the rows computed from the generated
  * structure.
  */
-const document = Arbitrary.all({
+const records = Arbitrary.all({
 	records: Arbitrary.array(Arbitrary.array(field, { minLength: 1, maxLength: 4 }), {
 		maxLength: 6,
 	}),
@@ -86,23 +86,30 @@ const document = Arbitrary.all({
 			escapeChar === '"'
 				? `"${value.replaceAll('"', '""')}"`
 				: `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-		const prefix = records
-			.map(
-				(fields) =>
-					fields.map((f) => (f.quoted ? quote(f.value) : f.value)).join(delimiter) + terminator,
-			)
-			.join('')
 		return {
-			input: `${prefix}"unclosed`,
-			options: {
-				delimiter,
-				escape: escapeChar,
-				relaxColumnCount: true,
-			} satisfies Csv.DecodeOptions,
-			rows: records.map((fields) => fields.map((f) => f.value)),
-			line: 1 + (prefix.match(/\r\n|\r|\n/g)?.length ?? 0),
+			input: records
+				.map(
+					(fields) =>
+						fields.map((f) => (f.quoted ? quote(f.value) : f.value)).join(delimiter) + terminator,
+				)
+				.join(''),
+			options: { delimiter, escape: escapeChar } satisfies Csv.DecodeOptions,
+			rows: records.map((fields): Csv.Row => fields.map((f) => f.value)),
 		}
 	}),
+)
+
+/**
+ * Well-formed records followed by an unclosed quote, with the line of the
+ * failing record computed from the generated structure.
+ */
+const document = records.pipe(
+	Arbitrary.map(({ input, options, rows }) => ({
+		input: `${input}"unclosed`,
+		options: { ...options, relaxColumnCount: true },
+		rows,
+		line: 1 + (input.match(/\r\n|\r|\n/g)?.length ?? 0),
+	})),
 )
 
 const runChannel = Effect.fnUntraced(function* <E>(stream: Stream.Stream<Csv.Row, E>) {
@@ -186,6 +193,25 @@ describe('chunk invariance', () => {
 			assert.deepStrictEqual(outcome, parseChunks([input], options))
 		}),
 		{ arbitrary: { runs: 300, size: 20 } },
+	)
+
+	it.effect.prop(
+		'toObjects reports the rows and the field count mismatch of the strict parser',
+		{ records },
+		Effect.fnUntraced(function* ({ records: { input, options, rows } }) {
+			const [first] = rows
+			if (first === undefined) return
+			const columns = first.map((_, i) => `c${i}`)
+			const outcome = yield* runChannel(
+				Stream.fromIterable(rows).pipe(
+					Stream.rechunk(2),
+					Stream.pipeThroughChannel(Csv.toObjects({ columns })),
+					Stream.map(Object.values),
+				),
+			)
+			assert.deepStrictEqual(outcome, parseChunks([input], options))
+		}),
+		{ arbitrary: { runs: 1000, size: 20 } },
 	)
 
 	it.effect.prop(
