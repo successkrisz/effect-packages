@@ -16,11 +16,13 @@ const BOM = '\uFEFF'
 // including the full-width variants of `=`, `+`, `-` and `@`.
 const formulaStart = /^[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/
 
+const blank = /^\s*$/
+
 /** A regular expression source that matches the UTF-16 code unit `char` literally. */
 const codeUnit = (char: string): string => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
 
 const resolveOptions = (options: EncodeOptions | undefined) => {
-	const { delimiter, quote, escapeChar } = resolveDialect(options, false)
+	const { delimiter, quote, escapeChar, comment } = resolveDialect(options, false)
 	const recordDelimiter = options?.recordDelimiter ?? '\r\n'
 	if (recordDelimiter !== '\r\n' && recordDelimiter !== '\n') {
 		invalidOption('`recordDelimiter` must be "\\n" or "\\r\\n"')
@@ -33,6 +35,7 @@ const resolveOptions = (options: EncodeOptions | undefined) => {
 		delimiter,
 		quote,
 		escapeChar,
+		comment,
 		recordDelimiter,
 		quoteAll: quoteMode === 'all',
 		bom: options?.bom ?? false,
@@ -47,10 +50,14 @@ const resolveOptions = (options: EncodeOptions | undefined) => {
  * @internal
  */
 export const make = (options: EncodeOptions | undefined): Encoder => {
-	const { delimiter, quote, escapeChar, recordDelimiter, quoteAll, bom, escapeFormulae } =
+	const { delimiter, quote, escapeChar, comment, recordDelimiter, quoteAll, bom, escapeFormulae } =
 		resolveOptions(options)
-	// A leading U+FEFF is quoted because decoders remove a byte-order mark at the start of the input.
-	const needsQuotes = new RegExp(`[${codeUnit(delimiter)}${codeUnit(quote)}\\r\\n]|^\\uFEFF`)
+	// A leading U+FEFF is quoted because decoders remove a byte-order mark at the start of the input, and a
+	// comment character at the start, or after whitespace that `trim` would skip, because decoders skip the line.
+	const commentStart = comment === undefined ? '' : `|^\\s*${codeUnit(comment)}`
+	const needsQuotes = new RegExp(
+		`[${codeUnit(delimiter)}${codeUnit(quote)}\\r\\n]|^\\uFEFF${commentStart}`,
+	)
 	const escapable = new RegExp(
 		escapeChar === quote ? codeUnit(quote) : `[${codeUnit(quote)}${codeUnit(escapeChar)}]`,
 		'g',
@@ -61,8 +68,9 @@ export const make = (options: EncodeOptions | undefined): Encoder => {
 
 	const field = (value: string, alone: boolean): string => {
 		const text = escapeFormulae && formulaStart.test(value) ? `'${value}` : value
-		// A lone empty field is quoted, so that decoders that skip blank lines keep its record.
-		return quoteAll || needsQuotes.test(text) || (alone && text === '')
+		// A lone field that is empty or only whitespace is quoted, so that decoders that skip blank lines keep its
+		// record, even when they trim fields.
+		return quoteAll || needsQuotes.test(text) || (alone && blank.test(text))
 			? quote + text.replace(escapable, prefixEscape) + quote
 			: text
 	}

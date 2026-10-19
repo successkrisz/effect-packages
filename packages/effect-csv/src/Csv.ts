@@ -5,6 +5,8 @@
  * by `,`, quoted with `"`, and a quote inside a quoted field is written as
  * `""`. Records may end with `\n`, `\r\n` or `\r`. Malformed input fails with a
  * `CsvError` whose `reason` carries the line on which the record starts.
+ * Relaxations of RFC 4180 are opt-in: `trim`, `comment`, `skipEmptyLines`,
+ * `relaxQuotes` and `relaxColumnCount`.
  *
  * Rows can be converted into objects keyed by a header row with `toObjects`,
  * or decoded into typed values with a `Schema` by `decodeSchema` and
@@ -66,10 +68,11 @@ export type Row = ReadonlyArray<string>
  *
  * **Details**
  *
- * `delimiter`, `quote` and `escape` must each be exactly one UTF-16 code unit
- * other than `\r` and `\n`, and `quote` and `escape` must differ from
- * `delimiter`. `maxRecordSize` must be a positive integer or `Infinity`.
- * Invalid options are defects: the decoding channel or `parse` dies with an
+ * `delimiter`, `quote`, `escape` and `comment` must each be exactly one
+ * UTF-16 code unit other than `\r` and `\n`, `quote` and `escape` must differ
+ * from `delimiter`, and `comment` must differ from `delimiter` and `quote`.
+ * `maxRecordSize` must be a positive integer or `Infinity`. Invalid options
+ * are defects: the decoding channel or `parse` dies with an
  * `IllegalArgumentError` when it starts.
  *
  * @category options
@@ -94,6 +97,16 @@ export interface DecodeOptions {
 	 */
 	readonly escape?: string | undefined
 	/**
+	 * Skips lines that start with this character, such as `"#"`. Defaults to
+	 * none. Only the first character of a line counts, or with `trim` the
+	 * first character after leading whitespace, so the character is text
+	 * anywhere else, including on a line that continues a quoted field.
+	 * A comment line is not a record: it does not set the column count and
+	 * does not count towards `maxRecordSize`, but it does count in the line
+	 * numbers of errors.
+	 */
+	readonly comment?: string | undefined
+	/**
 	 * When `false` (the default), a record whose field count differs from the
 	 * first record fails with `FieldCountMismatch`.
 	 */
@@ -105,6 +118,35 @@ export interface DecodeOptions {
 	 * Defaults to 10 MiB. `Infinity` disables the limit.
 	 */
 	readonly maxRecordSize?: number | undefined
+	/**
+	 * Removes the whitespace around each field. Defaults to `false`.
+	 *
+	 * An unquoted field loses its leading and trailing whitespace. A quoted
+	 * field keeps the whitespace between its quotes, but whitespace between a
+	 * quote and the delimiter or line break is ignored, so `  "a b" ,c` decodes
+	 * as `["a b", "c"]`. Whitespace means the characters that
+	 * `String.prototype.trim` removes, except the delimiter and the quote
+	 * character, so a tab delimiter is never trimmed.
+	 *
+	 * Leading whitespace on a line is ignored too: with `skipEmptyLines`, a
+	 * line of only whitespace is skipped, and with `comment`, whitespace before
+	 * the comment character still makes the line a comment.
+	 */
+	readonly trim?: boolean | undefined
+	/**
+	 * Skips lines that contain no characters, instead of decoding each as a
+	 * record with one empty field. Defaults to `false`. A line that contains
+	 * only `""` is a record, and with `trim`, a line of only whitespace is
+	 * empty.
+	 */
+	readonly skipEmptyLines?: boolean | undefined
+	/**
+	 * Keeps a quote character inside an unquoted field as text instead of
+	 * failing with `InvalidQuote`, so `a"b` decodes as `a"b`. Defaults to
+	 * `false`. A field that starts with a quote is still a quoted field, and
+	 * text after its closing quote still fails.
+	 */
+	readonly relaxQuotes?: boolean | undefined
 }
 
 /**
@@ -153,11 +195,12 @@ export interface ToObjectsOptions {
  *
  * **Details**
  *
- * `delimiter`, `quote` and `escape` follow the rules of `DecodeOptions`, so
- * that the same values decode the output, except that `quote` cannot be
- * `null`: a field that contains the delimiter or a line break could not be
- * written otherwise. Invalid options are defects: the encoding channel dies
- * with an `IllegalArgumentError` when it starts, and `stringify` throws it.
+ * `delimiter`, `quote`, `escape` and `comment` follow the rules of
+ * `DecodeOptions`, so that the same values decode the output, except that
+ * `quote` cannot be `null`: a field that contains the delimiter or a line
+ * break could not be written otherwise. Invalid options are defects: the
+ * encoding channel dies with an `IllegalArgumentError` when it starts, and
+ * `stringify` throws it.
  *
  * @category options
  * @since 0.1.0
@@ -179,6 +222,12 @@ export interface EncodeOptions {
 	 */
 	readonly escape?: string | undefined
 	/**
+	 * Quotes the fields that start with this character, also after leading
+	 * whitespace, so that a decoder with the same `comment` does not skip
+	 * their rows as comments, even with `trim`. Defaults to none.
+	 */
+	readonly comment?: string | undefined
+	/**
 	 * Ends every record, including the last. Defaults to `"\r\n"`, as in
 	 * RFC 4180.
 	 */
@@ -186,8 +235,10 @@ export interface EncodeOptions {
 	/**
 	 * With `"needed"` (the default), a field is quoted only when it contains the
 	 * delimiter, the quote character, `\r` or `\n`, when it starts with U+FEFF,
-	 * or when it is the only field of its row and is empty, so that decoders
-	 * that skip blank lines keep the row. With `"all"`, every field is quoted.
+	 * when it starts with the `comment` character after any whitespace, or when
+	 * it is the only field of its row and is empty or only whitespace, so that
+	 * decoders that skip blank lines keep the row, even when they trim fields.
+	 * With `"all"`, every field is quoted.
 	 */
 	readonly quoteMode?: 'needed' | 'all' | undefined
 	/**
@@ -230,25 +281,15 @@ export interface FromObjectsOptions {
 }
 
 /**
- * Creates a channel that decodes CSV text chunks into rows.
- *
- * **Details**
- *
- * Records, fields and line breaks may span input chunks; the output does not
- * depend on how the input is split. A U+FEFF byte-order mark at the start of
- * the input is removed. A line break at the end of the input does not produce
- * an extra record, but a blank line elsewhere is a record with one empty field.
- *
- * Rows decoded before malformed input are emitted before the channel fails
- * with the `CsvError`.
- *
- * @category decoding
- * @since 0.1.0
+ * Parses text chunks with a parser whose row handler comes from `makeOnRow`,
+ * which receives a function that emits a value. The values emitted while
+ * parsing one upstream batch are emitted as one batch.
  */
-export const decodeString = <IE = never, Done = unknown>(
-	options?: DecodeOptions,
+const parseWith = <A, IE, Done>(
+	options: DecodeOptions | undefined,
+	makeOnRow: (emit: (value: A) => void) => Parser.OnRow,
 ): Channel.Channel<
-	Arr.NonEmptyReadonlyArray<Row>,
+	Arr.NonEmptyReadonlyArray<A>,
 	CsvError | IE,
 	Done,
 	Arr.NonEmptyReadonlyArray<string>,
@@ -257,18 +298,21 @@ export const decodeString = <IE = never, Done = unknown>(
 > =>
 	Channel.fromTransform((upstream, _scope) =>
 		Effect.sync(() => {
-			let rows: Array<Row> = []
+			let values: Array<A> = []
 			let failure: CsvError | undefined
 			let done = Option.none<Done>()
-			const parser = Parser.make(options, (row) => {
-				rows.push(row)
-			})
+			const parser = Parser.make(
+				options,
+				makeOnRow((value) => {
+					values.push(value)
+				}),
+			)
 
-			const pull: Pull.Pull<Arr.NonEmptyReadonlyArray<Row>, CsvError | IE, Done> = Effect.suspend(
+			const pull: Pull.Pull<Arr.NonEmptyReadonlyArray<A>, CsvError | IE, Done> = Effect.suspend(
 				() => {
-					if (Arr.isArrayNonEmpty(rows)) {
-						const out = rows
-						rows = []
+					if (Arr.isArrayNonEmpty(values)) {
+						const out = values
+						values = []
 						return Effect.succeed(out)
 					}
 					if (failure !== undefined) return Effect.fail(failure)
@@ -293,6 +337,51 @@ export const decodeString = <IE = never, Done = unknown>(
 			return pull
 		}),
 	)
+
+/**
+ * Creates a channel that decodes CSV text chunks into rows.
+ *
+ * **Details**
+ *
+ * Records, fields and line breaks may span input chunks; the output does not
+ * depend on how the input is split. A U+FEFF byte-order mark at the start of
+ * the input is removed. A line break at the end of the input does not produce
+ * an extra record, but a blank line elsewhere is a record with one empty
+ * field, unless `skipEmptyLines` is set.
+ *
+ * Rows decoded before malformed input are emitted before the channel fails
+ * with the `CsvError`.
+ *
+ * **Example** (Decoding a commented, padded file)
+ *
+ * ```ts
+ * import { Stream } from 'effect'
+ * import { Csv } from 'effect-csv'
+ *
+ * const rows = Stream.make('# exported 2026-10-19\nname, age\n\nAda , 36\n').pipe(
+ * 	Stream.pipeThroughChannel(Csv.decodeString({ comment: '#', skipEmptyLines: true, trim: true })),
+ * 	Stream.runCollect,
+ * )
+ * // Effect<Array<Csv.Row>, Csv.CsvError> that succeeds with [["name", "age"], ["Ada", "36"]]
+ * ```
+ *
+ * @category decoding
+ * @since 0.1.0
+ */
+export const decodeString = <IE = never, Done = unknown>(
+	options?: DecodeOptions,
+): Channel.Channel<
+	Arr.NonEmptyReadonlyArray<Row>,
+	CsvError | IE,
+	Done,
+	Arr.NonEmptyReadonlyArray<string>,
+	IE,
+	Done
+> =>
+	parseWith(options, (emit) => (row) => {
+		emit(row)
+		return undefined
+	})
 
 /**
  * Creates a channel that decodes CSV bytes into rows.
@@ -333,8 +422,10 @@ export const decode = <IE = never, Done = unknown>(
  * Errors carry the line on which the failing row starts, counted from the
  * first row the channel receives, including line breaks inside fields. That
  * is the input line when the rows come straight from `decode` or
- * `decodeString`. Objects converted before an invalid row are emitted before
- * the channel fails.
+ * `decodeString` and no lines were skipped as comments or empty lines;
+ * `decodeSchema` and `decodeSchemaString` report the input line in every
+ * case. Objects converted before an invalid row are emitted before the
+ * channel fails.
  *
  * **Example** (Decoding CSV text into objects)
  *
@@ -370,6 +461,8 @@ export const toObjects = <IE = never, Done = unknown>(
 			const objects = Objects.make(options, (record) => {
 				records.push(record)
 			})
+			// With `relaxColumnCount`, only the header can fail, and it is always the first row.
+			const lineOf = options?.relaxColumnCount === true ? () => 1 : Objects.makeLineCounter()
 
 			const pull: Pull.Pull<
 				Arr.NonEmptyReadonlyArray<Readonly<Record<string, string>>>,
@@ -384,7 +477,7 @@ export const toObjects = <IE = never, Done = unknown>(
 				if (failure !== undefined) return Effect.fail(failure)
 				return Effect.flatMap(upstream, (rows) => {
 					for (const row of rows) {
-						failure = objects.feed(row)
+						failure = objects.feed(row, lineOf(row))
 						if (failure !== undefined) break
 					}
 					return pull
@@ -394,24 +487,35 @@ export const toObjects = <IE = never, Done = unknown>(
 		}),
 	)
 
-const decodeRowsSchema = <S extends Schema.Constraint, IE, Done>(
+/**
+ * Decodes text chunks into values of a schema. Unlike `decodeString` piped
+ * into `toObjects`, the objects are converted as the parser emits each row,
+ * so their errors carry the input line even when lines were skipped.
+ */
+const decodeStringSchema = <S extends Schema.Constraint, IE, Done>(
 	schema: S,
-	options: ToObjectsOptions | { readonly columns: 'none' } | undefined,
+	options: (DecodeOptions & (ToObjectsOptions | { readonly columns: 'none' })) | undefined,
 ): Channel.Channel<
 	Arr.NonEmptyReadonlyArray<S['Type']>,
 	CsvError | Schema.SchemaError | IE,
 	Done,
-	Arr.NonEmptyReadonlyArray<Row>,
-	CsvError | IE,
+	Arr.NonEmptyReadonlyArray<string>,
+	IE,
 	Done,
 	S['DecodingServices']
-> =>
-	options?.columns === 'none'
-		? ChannelSchema.decodeUnknown(schema)<CsvError | IE, Done>()
-		: Channel.pipeTo(
-				toObjects<CsvError | IE, Done>(options),
-				ChannelSchema.decodeUnknown(schema)<CsvError | IE, Done>(),
-			)
+> => {
+	const values: Channel.Channel<
+		Arr.NonEmptyReadonlyArray<unknown>,
+		CsvError | IE,
+		Done,
+		Arr.NonEmptyReadonlyArray<string>,
+		IE,
+		Done
+	> = options?.columns === 'none'
+		? decodeString(options)
+		: parseWith(options, (emit) => Objects.make(options, emit).feed)
+	return Channel.pipeTo(values, ChannelSchema.decodeUnknown(schema)<CsvError | IE, Done>())
+}
 
 /**
  * Creates a channel that decodes CSV text chunks into values of a schema.
@@ -427,9 +531,10 @@ const decodeRowsSchema = <S extends Schema.Constraint, IE, Done>(
  * selected by a schema whose encoded type is an array of strings, such as a
  * `Schema.Tuple`, and requires the option.
  *
- * A value that does not match the schema fails the channel with a
- * `SchemaError`, and the other values decoded from the same upstream chunk are
- * not emitted.
+ * A `CsvError` carries the input line on which the failing record starts,
+ * counting lines skipped by `comment` and `skipEmptyLines`. A value that does
+ * not match the schema fails the channel with a `SchemaError`, and the other
+ * values decoded from the same upstream chunk are not emitted.
  *
  * **Example** (Decoding rows into tuples)
  *
@@ -481,7 +586,7 @@ export const decodeSchemaString: {
 	<IE = never, Done = unknown>(
 		options?: DecodeOptions & (ToObjectsOptions | { readonly columns: 'none' }),
 	) =>
-		Channel.pipeTo(decodeString<IE, Done>(options), decodeRowsSchema<S, IE, Done>(schema, options))
+		decodeStringSchema<S, IE, Done>(schema, options)
 
 /**
  * Creates a channel that decodes CSV bytes into values of a schema.
@@ -541,7 +646,10 @@ export const decodeSchema: {
 	<IE = never, Done = unknown>(
 		options?: DecodeBytesOptions & (ToObjectsOptions | { readonly columns: 'none' }),
 	) =>
-		Channel.pipeTo(decode<IE, Done>(options), decodeRowsSchema<S, IE, Done>(schema, options))
+		Channel.pipeTo(
+			Channel.decodeText<IE, Done>(options?.encoding, { ignoreBOM: true }),
+			decodeStringSchema<S, IE, Done>(schema, options),
+		)
 
 /**
  * Parses a complete CSV string into rows.
@@ -576,6 +684,7 @@ export const parse = (
 		const rows: Array<Row> = []
 		const parser = Parser.make(options, (row) => {
 			rows.push(row)
+			return undefined
 		})
 		const failure = parser.feed(input) ?? parser.end()
 		return failure === undefined ? Effect.succeed(rows) : Effect.fail(failure)

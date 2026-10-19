@@ -218,6 +218,20 @@ describe('parser', () => {
 			})
 		})
 
+		it.each([
+			['#a\r\n"b\nc",d\n\n#e\rf', 6],
+			['\r\n#a,b\n"c\r\n\rd",e\r#\n\r\nf', 8],
+			['  \n#\n x,y\n\t\n f', 5],
+		] as const)('counts skipped lines: %j fails on line %i', (input, line) => {
+			const outcome = parseChunks([input], { comment: '#', skipEmptyLines: true, trim: true })
+			assert.deepStrictEqual(outcome.error, {
+				_tag: 'FieldCountMismatch',
+				line,
+				expected: 2,
+				actual: 1,
+			})
+		})
+
 		it('counts a quoted LF after a chunk that ends with a CR terminator', () => {
 			const outcome = parseChunks(['a,b\r', '"\nc",d\ne'])
 			assert.deepStrictEqual(outcome.error, {
@@ -460,11 +474,327 @@ describe('parser', () => {
 				})
 			})
 		})
+
+		describe('trim', () => {
+			const trim = { trim: true } as const
+			it.each<Case>([
+				{ name: 'unquoted fields', input: '  a  , b ,c', options: trim, rows: [['a', 'b', 'c']] },
+				{ name: 'keeps inner whitespace', input: ' a b ', options: trim, rows: [['a b']] },
+				{
+					name: 'around quoted fields',
+					input: '  " a , b "  ,c',
+					options: trim,
+					rows: [[' a , b ', 'c']],
+				},
+				{
+					name: 'after a closing quote before a line break',
+					input: '"a"  \n"b" \r\n c',
+					options: trim,
+					rows: [['a'], ['b'], ['c']],
+				},
+				{ name: 'after a closing quote at the end', input: '"a"  ', options: trim, rows: [['a']] },
+				{ name: 'empty fields', input: ' , ', options: trim, rows: [['', '']] },
+				{
+					name: 'a tab delimiter is not whitespace',
+					input: ' a \t b ',
+					options: { trim: true, delimiter: '\t' },
+					rows: [['a', 'b']],
+				},
+				{ name: 'tabs', input: 'a\t,\tb', options: trim, rows: [['a', 'b']] },
+				{
+					name: 'Unicode whitespace',
+					input: '\u00A0a\u3000,\u2003b\uFEFF',
+					options: trim,
+					rows: [['a', 'b']],
+				},
+				{
+					name: 'a line of only whitespace is a record',
+					input: 'a\n \t \nb',
+					options: trim,
+					rows: [['a'], [''], ['b']],
+				},
+				{
+					name: 'a whitespace quote is not trimmed',
+					input: ' a ,\tb\t',
+					options: { trim: true, quote: ' ' },
+					rows: [['a', 'b']],
+				},
+				{
+					name: 'a whitespace quote kept by relaxQuotes is not trimmed',
+					input: '\ta \t',
+					options: { trim: true, quote: ' ', relaxQuotes: true },
+					rows: [['a ']],
+				},
+				{
+					name: 'a whitespace quote after a closing quote is not trimmed',
+					input: ' a \t ',
+					options: { trim: true, quote: ' ', escape: '\\' },
+					error: { _tag: 'InvalidQuote', line: 1, fieldIndex: 0 },
+				},
+				{
+					name: 'a quote after leading whitespace opens a quoted field',
+					input: 'a, "b,c"',
+					options: trim,
+					rows: [['a', 'b,c']],
+				},
+				{
+					name: 'whitespace across chunks',
+					input: ['  ', ' "a', '"  ', '  ,b  ', ' '],
+					options: trim,
+					rows: [['a', 'b']],
+				},
+				{
+					name: 'text after a closing quote still fails',
+					input: '"a" b',
+					options: trim,
+					error: { _tag: 'InvalidQuote', line: 1, fieldIndex: 0 },
+				},
+				{
+					name: 'a quote after whitespace after a closing quote is not an escape',
+					input: 'x,"a" ""',
+					options: trim,
+					error: { _tag: 'InvalidQuote', line: 1, fieldIndex: 1 },
+				},
+				{
+					name: 'skipped whitespace counts towards maxRecordSize',
+					input: '    a',
+					options: { trim: true, maxRecordSize: 3 },
+					error: { _tag: 'RecordTooLarge', line: 1, maxRecordSize: 3 },
+				},
+				{
+					name: 'a line of only whitespace counts towards maxRecordSize',
+					input: 'a\n    \nb',
+					options: { trim: true, maxRecordSize: 3 },
+					rows: [['a']],
+					error: { _tag: 'RecordTooLarge', line: 2, maxRecordSize: 3 },
+				},
+				{
+					name: 'whitespace at the end of the input counts towards maxRecordSize',
+					input: 'a,    ',
+					options: { trim: true, maxRecordSize: 3 },
+					error: { _tag: 'RecordTooLarge', line: 1, maxRecordSize: 3 },
+				},
+				{
+					name: 'whitespace after a closing quote counts towards maxRecordSize',
+					input: '"a"  ',
+					options: { trim: true, maxRecordSize: 4 },
+					error: { _tag: 'RecordTooLarge', line: 1, maxRecordSize: 4 },
+				},
+				{
+					name: 'a line of only whitespace at the limit',
+					input: '   \nb',
+					options: { trim: true, maxRecordSize: 3 },
+					rows: [[''], ['b']],
+				},
+			])('$name', check)
+		})
+
+		describe('comment', () => {
+			const hash = { comment: '#' } as const
+			it.each<Case>([
+				{
+					name: 'skips lines that start with the comment character',
+					input: '#x\na\n#y,"z\nb',
+					options: hash,
+					rows: [['a'], ['b']],
+				},
+				{
+					name: 'only at the start of a line',
+					input: 'a#b,#c',
+					options: hash,
+					rows: [['a#b', '#c']],
+				},
+				{
+					name: 'not on a line inside a quoted field',
+					input: '"a\n#b"',
+					options: hash,
+					rows: [['a\n#b']],
+				},
+				{
+					name: 'not after leading whitespace',
+					input: ' #x',
+					options: hash,
+					rows: [[' #x']],
+				},
+				{ name: 'at the end of the input', input: 'a\n#b', options: hash, rows: [['a']] },
+				{ name: 'alone', input: '#a\r\n#b\r', options: hash, rows: [] },
+				{ name: 'empty comment lines', input: '#\n#\ra', options: hash, rows: [['a']] },
+				{
+					name: 'CRLF after a comment across chunks',
+					input: ['#a\r', '\nb'],
+					options: hash,
+					rows: [['b']],
+				},
+				{ name: 'after a byte-order mark', input: '\uFEFF#x\na', options: hash, rows: [['a']] },
+				{
+					name: 'does not set the column count',
+					input: '#x\na,b\n#y\nc,d',
+					options: hash,
+					rows: [
+						['a', 'b'],
+						['c', 'd'],
+					],
+				},
+				{
+					name: 'does not count towards maxRecordSize',
+					input: ['#xxx', 'xxx\nab'],
+					options: { comment: '#', maxRecordSize: 2 },
+					rows: [['ab']],
+				},
+				{
+					name: 'counts in line numbers',
+					input: 'a,b\n#x\r\n#y\nc',
+					options: hash,
+					rows: [['a', 'b']],
+					error: { _tag: 'FieldCountMismatch', line: 4, expected: 2, actual: 1 },
+				},
+				{
+					name: 'with trim, after leading whitespace',
+					input: ' \t#x\na',
+					options: { comment: '#', trim: true },
+					rows: [['a']],
+				},
+				{
+					name: 'with trim, not after a delimiter',
+					input: 'a, #b\n #c',
+					options: { comment: '#', trim: true },
+					rows: [['a', '#b']],
+				},
+				{
+					name: 'with trim, leading whitespace does not count towards maxRecordSize',
+					input: '     #x\na',
+					options: { comment: '#', trim: true, maxRecordSize: 2 },
+					rows: [['a']],
+				},
+				{
+					name: 'the escape character',
+					input: '\\x\n"a\\"b"',
+					options: { comment: '\\', escape: '\\' },
+					rows: [['a"b']],
+				},
+				{
+					name: 'the quote character when quoting is disabled',
+					input: '"x\na"',
+					options: { comment: '"', quote: null },
+					rows: [['a"']],
+				},
+			])('$name', check)
+		})
+
+		describe('skipEmptyLines', () => {
+			const skip = { skipEmptyLines: true } as const
+			it.each<Case>([
+				{
+					name: 'skips lines without characters',
+					input: '\na,b\n\r\n\rc,d\n\n',
+					options: skip,
+					rows: [
+						['a', 'b'],
+						['c', 'd'],
+					],
+				},
+				{ name: 'only empty lines', input: '\n\r\n\r', options: skip, rows: [] },
+				{
+					name: 'a quoted empty field is a record',
+					input: '""\n\n""',
+					options: skip,
+					rows: [[''], ['']],
+				},
+				{ name: 'a delimiter is a record', input: ',\n\n', options: skip, rows: [['', '']] },
+				{
+					name: 'a line of only whitespace is a record',
+					input: ' \n\t',
+					options: skip,
+					rows: [[' '], ['\t']],
+				},
+				{
+					name: 'with trim, skips lines of only whitespace',
+					input: 'a\n \t \nb\n  ',
+					options: { skipEmptyLines: true, trim: true },
+					rows: [['a'], ['b']],
+				},
+				{
+					name: 'with trim, long lines of only whitespace are not records',
+					input: 'a\n     \nb',
+					options: { skipEmptyLines: true, trim: true, maxRecordSize: 2 },
+					rows: [['a'], ['b']],
+				},
+				{
+					name: 'line breaks across chunks',
+					input: ['a\r', '\n', '\r', '\nb'],
+					options: skip,
+					rows: [['a'], ['b']],
+				},
+				{
+					name: 'does not set the column count',
+					input: '\n\na,b',
+					options: skip,
+					rows: [['a', 'b']],
+				},
+				{
+					name: 'counts in line numbers',
+					input: 'a,b\n\r\n\rc',
+					options: skip,
+					rows: [['a', 'b']],
+					error: { _tag: 'FieldCountMismatch', line: 4, expected: 2, actual: 1 },
+				},
+			])('$name', check)
+		})
+
+		describe('relaxQuotes', () => {
+			const relax = { relaxQuotes: true } as const
+			it.each<Case>([
+				{
+					name: 'keeps quotes inside unquoted fields',
+					input: 'a"b,c""d"',
+					options: relax,
+					rows: [['a"b', 'c""d"']],
+				},
+				{
+					name: 'a quote after leading whitespace',
+					input: ' "a" ,b',
+					options: relax,
+					rows: [[' "a" ', 'b']],
+				},
+				{ name: 'across chunks', input: ['a"', '"b'], options: relax, rows: [['a""b']] },
+				{
+					name: 'a field that starts with a quote is quoted',
+					input: '"a,b",c',
+					options: relax,
+					rows: [['a,b', 'c']],
+				},
+				{
+					name: 'text after a closing quote still fails',
+					input: '"a"b',
+					options: relax,
+					error: { _tag: 'InvalidQuote', line: 1, fieldIndex: 0 },
+				},
+				{
+					name: 'an unclosed quote still fails',
+					input: 'a"\n"b',
+					options: relax,
+					rows: [['a"']],
+					error: { _tag: 'UnclosedQuote', line: 2 },
+				},
+				{
+					name: 'a quote is content for maxRecordSize',
+					input: 'ab"',
+					options: { relaxQuotes: true, maxRecordSize: 2 },
+					error: { _tag: 'RecordTooLarge', line: 1, maxRecordSize: 2 },
+				},
+				{
+					name: 'with trim',
+					input: ' a"b ,  "c" ',
+					options: { relaxQuotes: true, trim: true },
+					rows: [['a"b', 'c']],
+				},
+			])('$name', check)
+		})
 	})
 
 	describe('lifecycle', () => {
 		it('keeps returning the first error', () => {
-			const parser = Parser.make(undefined, () => {})
+			const parser = Parser.make(undefined, () => undefined)
 			const error = parser.feed('"a"b')
 			assert.strictEqual(error?.reason._tag, 'InvalidQuote')
 			assert.strictEqual(parser.feed('c\n'), error)
@@ -475,6 +805,7 @@ describe('parser', () => {
 			const rows: Array<Csv.Row> = []
 			const parser = Parser.make(undefined, (row) => {
 				rows.push(row)
+				return undefined
 			})
 			parser.feed('a,b')
 			assert.strictEqual(parser.end(), undefined)
@@ -508,10 +839,27 @@ describe('parser', () => {
 			['negative maxRecordSize', { maxRecordSize: -1 }, /`maxRecordSize`/],
 			['fractional maxRecordSize', { maxRecordSize: 1.5 }, /`maxRecordSize`/],
 			['NaN maxRecordSize', { maxRecordSize: Number.NaN }, /`maxRecordSize`/],
+			['empty comment', { comment: '' }, /`comment` must be one/],
+			['long comment', { comment: '##' }, /`comment` must be one/],
+			['LF comment', { comment: '\n' }, /`comment` must be one/],
+			// @ts-expect-error JavaScript callers can pass any value
+			['null comment', { comment: null }, /`comment` must be one/],
+			['comment equal to the delimiter', { comment: ',' }, /`comment` must differ/],
+			[
+				'comment equal to a custom delimiter',
+				{ delimiter: ';', comment: ';' },
+				/`comment` must differ/,
+			],
+			['comment equal to the quote', { comment: '"' }, /`comment` must differ/],
+			['comment equal to a custom quote', { quote: "'", comment: "'" }, /`comment` must differ/],
 		]
 
 		it.each(invalid)('rejects %s', (_, options, message) => {
-			assert.throws(() => Parser.make(options, () => {}), Cause.IllegalArgumentError, message)
+			assert.throws(
+				() => Parser.make(options, () => undefined),
+				Cause.IllegalArgumentError,
+				message,
+			)
 		})
 
 		it.each<readonly [string, Csv.DecodeOptions]>([
@@ -519,8 +867,10 @@ describe('parser', () => {
 			['quote null with the delimiter as escape', { quote: null, delimiter: ';', escape: ';' }],
 			['escape equal to the quote', { quote: "'", escape: "'" }],
 			['Infinity maxRecordSize', { maxRecordSize: Number.POSITIVE_INFINITY }],
+			['comment equal to the escape', { escape: '\\', comment: '\\' }],
+			['comment equal to the quote when quoting is disabled', { quote: null, comment: '"' }],
 		])('accepts %s', (_, options) => {
-			Parser.make(options, () => {})
+			Parser.make(options, () => undefined)
 		})
 	})
 })

@@ -17,6 +17,7 @@ export const parseChunks = (chunks: Iterable<string>, options?: Csv.DecodeOption
 	const rows: Array<Csv.Row> = []
 	const parser = Parser.make(options, (row) => {
 		rows.push(row)
+		return undefined
 	})
 	let error: Csv.CsvError | undefined
 	for (const chunk of chunks) {

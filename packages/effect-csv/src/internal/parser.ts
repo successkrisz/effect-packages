@@ -18,13 +18,25 @@ export interface Parser {
 	readonly end: () => CsvError | undefined
 }
 
+/**
+ * Receives each record with the line on which it starts. Returning an error
+ * fails the parser with it.
+ *
+ * @internal
+ */
+export type OnRow = (row: Row, line: number) => CsvError | undefined
+
 const CR = 13
 const LF = 10
 const BOM = 0xfeff
 
-// No field of the current record has been seen yet.
+// The characters that `String.prototype.trim` removes.
+const whitespace = /\s/
+
+// Nothing of the current line has been seen yet.
 const RecordStart = 0
-// A delimiter just ended a field, so an empty field is pending.
+// A field is about to start: either a delimiter just ended a field, so an empty field is pending, or no field of the
+// line has been seen yet, apart from whitespace skipped by `trim`.
 const FieldStart = 1
 const Unquoted = 2
 const Quoted = 3
@@ -32,8 +44,12 @@ const Quoted = 3
 const QuoteInQuoted = 4
 // An escape character (other than the quote) inside a quoted field.
 const EscapeInQuoted = 5
-// A `\r` ended a record, so a following `\n` belongs to the same line break.
-const AfterCR = 6
+// Whitespace after the closing quote of a field, which `trim` skips.
+const AfterQuoted = 6
+// A `\r` ended a line, so a following `\n` belongs to the same line break.
+const AfterCR = 7
+// A line that starts with the comment character, up to its line break.
+const Comment = 8
 
 type State =
 	| typeof RecordStart
@@ -42,11 +58,12 @@ type State =
 	| typeof Quoted
 	| typeof QuoteInQuoted
 	| typeof EscapeInQuoted
+	| typeof AfterQuoted
 	| typeof AfterCR
+	| typeof Comment
 
 const resolveOptions = (options: DecodeOptions | undefined) => {
-	const { delimiter, quote, escapeChar } = resolveDialect(options, true)
-	const relaxColumnCount = options?.relaxColumnCount ?? false
+	const { delimiter, quote, escapeChar, comment } = resolveDialect(options, true)
 	const maxRecordSize = options?.maxRecordSize ?? defaultMaxRecordSize
 	if (
 		!(Number.isInteger(maxRecordSize) && maxRecordSize > 0) &&
@@ -54,26 +71,49 @@ const resolveOptions = (options: DecodeOptions | undefined) => {
 	) {
 		invalidOption('`maxRecordSize` must be a positive integer or Infinity')
 	}
-	return { delimiter, quote, escapeChar, relaxColumnCount, maxRecordSize }
+	return {
+		delimiter,
+		quote,
+		escapeChar,
+		comment,
+		maxRecordSize,
+		relaxColumnCount: options?.relaxColumnCount ?? false,
+		trim: options?.trim ?? false,
+		skipEmptyLines: options?.skipEmptyLines ?? false,
+		relaxQuotes: options?.relaxQuotes ?? false,
+	}
 }
 
 /**
  * Creates a CSV parser that calls `onRow` for each complete record.
  *
- * `feed` and `end` return the `CsvError` for malformed input instead of
- * throwing; after an error, both keep returning it. Invalid options throw an
- * `IllegalArgumentError` here, which callers run inside an Effect so that it
- * surfaces as a defect.
+ * `feed` and `end` return the `CsvError` for malformed input, or the error
+ * returned by `onRow`, instead of throwing; after an error, both keep
+ * returning it. Invalid options throw an `IllegalArgumentError` here, which
+ * callers run inside an Effect so that it surfaces as a defect.
  *
  * @internal
  */
-export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => void): Parser => {
-	const { delimiter, quote, escapeChar, relaxColumnCount, maxRecordSize } = resolveOptions(options)
+export const make = (options: DecodeOptions | undefined, onRow: OnRow): Parser => {
+	const {
+		delimiter,
+		quote,
+		escapeChar,
+		comment,
+		maxRecordSize,
+		relaxColumnCount,
+		trim,
+		skipEmptyLines,
+		relaxQuotes,
+	} = resolveOptions(options)
 	const quoting = quote !== null
 	const delimiterCode = delimiter.charCodeAt(0)
 	const quoteCode = quoting ? quote.charCodeAt(0) : -1
 	const escapeCode = quoting ? escapeChar.charCodeAt(0) : -1
+	const commentCode = comment === undefined ? -1 : comment.charCodeAt(0)
 	const escapeIsQuote = escapeCode === quoteCode
+	// Whether a quote ends the text of an unquoted field, to fail with `InvalidQuote`.
+	const quoteEndsUnquoted = quoting && !relaxQuotes
 
 	let state: State = RecordStart
 	let atStreamStart = true
@@ -99,6 +139,18 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 		return field
 	}
 
+	// The delimiter and the quote keep their meaning with `trim`, even when they are whitespace.
+	const isTrimmable = (code: number, char: string): boolean =>
+		code !== delimiterCode && code !== quoteCode && whitespace.test(char)
+
+	// Leading whitespace never reaches an unquoted field, because `FieldStart` skips it.
+	const unquotedField = (field: string): string => {
+		if (!trim) return field
+		let end = field.length
+		while (end > 0 && isTrimmable(field.charCodeAt(end - 1), field.charAt(end - 1))) end--
+		return end === field.length ? field : field.slice(0, end)
+	}
+
 	const endRecord = (): CsvError | undefined => {
 		const record = fields
 		fields = []
@@ -113,8 +165,8 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 				}),
 			)
 		}
-		onRow(record)
-		return undefined
+		failure = onRow(record, recordLine)
+		return failure
 	}
 
 	const feed = (chunk: string): CsvError | undefined => {
@@ -148,10 +200,14 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 
 		const tooLarge = () => fail(new RecordTooLarge({ line: recordLine, maxRecordSize }))
 
-		const endRecordAt = (code: number): CsvError | undefined => {
-			const error = endRecord()
+		const endLine = (code: number) => {
 			line++
 			state = code === CR ? AfterCR : RecordStart
+		}
+
+		const endRecordAt = (code: number): CsvError | undefined => {
+			const error = endRecord()
+			endLine(code)
 			return error
 		}
 
@@ -171,11 +227,25 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 				}
 				case FieldStart: {
 					const code = chunk.charCodeAt(i)
+					// No field before this one, so the line is empty so far, or holds only whitespace that `trim` skipped.
+					const lineStart = fields.length === 0
 					if (code === CR || code === LF) {
-						fields.push('')
+						if (lineStart && skipEmptyLines) {
+							i++
+							endLine(code)
+						} else {
+							// Whitespace that `trim` skipped is checked here, once the line turns out to be a record.
+							if (i > limit) return tooLarge()
+							fields.push('')
+							i++
+							const error = endRecordAt(code)
+							if (error !== undefined) return error
+						}
+					} else if (lineStart && code === commentCode) {
+						state = Comment
 						i++
-						const error = endRecordAt(code)
-						if (error !== undefined) return error
+					} else if (trim && isTrimmable(code, chunk.charAt(i))) {
+						i++
 					} else if (i >= limit) {
 						return tooLarge()
 					} else if (code === delimiterCode) {
@@ -195,8 +265,13 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 					if (nextDelimiter < i) nextDelimiter = find(delimiter, i)
 					if (nextCR < i) nextCR = find('\r', i)
 					if (nextLF < i) nextLF = find('\n', i)
-					if (nextQuote < i) nextQuote = find(quote ?? '', i)
-					const end = Math.min(nextDelimiter, nextCR, nextLF, nextQuote)
+					if (quoteEndsUnquoted && nextQuote < i) nextQuote = find(quote ?? '', i)
+					const end = Math.min(
+						nextDelimiter,
+						nextCR,
+						nextLF,
+						quoteEndsUnquoted ? nextQuote : length,
+					)
 					const code = end === length ? -1 : chunk.charCodeAt(end)
 					const isLineBreak = code === CR || code === LF
 					// A line break ends the record, so it is the only special character that is not content.
@@ -211,10 +286,10 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 					}
 					const span = chunk.slice(segmentStart, end)
 					if (parts.length === 0) {
-						fields.push(span)
+						fields.push(unquotedField(span))
 					} else {
 						parts.push(span)
-						fields.push(takeParts())
+						fields.push(unquotedField(takeParts()))
 					}
 					i = end + 1
 					if (isLineBreak) {
@@ -250,7 +325,8 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 					i = end + 1
 					break
 				}
-				case QuoteInQuoted: {
+				case QuoteInQuoted:
+				case AfterQuoted: {
 					const code = chunk.charCodeAt(i)
 					if (code === CR || code === LF) {
 						fields.push(takeParts())
@@ -259,13 +335,16 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 						if (error !== undefined) return error
 					} else if (i >= limit) {
 						return tooLarge()
-					} else if (code === quoteCode && escapeIsQuote) {
+					} else if (state === QuoteInQuoted && code === quoteCode && escapeIsQuote) {
 						state = Quoted
 						segmentStart = i
 						i++
 					} else if (code === delimiterCode) {
 						fields.push(takeParts())
 						state = FieldStart
+						i++
+					} else if (trim && isTrimmable(code, chunk.charAt(i))) {
+						state = AfterQuoted
 						i++
 					} else {
 						return fail(new InvalidQuote({ line: recordLine, fieldIndex: fields.length }))
@@ -284,6 +363,18 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 					}
 					break
 				}
+				case Comment: {
+					if (nextCR < i) nextCR = find('\r', i)
+					if (nextLF < i) nextLF = find('\n', i)
+					const end = Math.min(nextCR, nextLF)
+					if (end === length) {
+						i = length
+					} else {
+						i = end + 1
+						endLine(chunk.charCodeAt(end))
+					}
+					break
+				}
 			}
 		}
 
@@ -291,29 +382,40 @@ export const make = (options: DecodeOptions | undefined, onRow: (row: Row) => vo
 		if ((state === Unquoted || state === Quoted) && segmentStart < length) {
 			parts.push(chunk.slice(segmentStart, length))
 		}
-		recordSize = state === RecordStart || state === AfterCR ? 0 : length - recordStart
+		recordSize =
+			state === RecordStart || state === AfterCR || state === Comment ? 0 : length - recordStart
 		previousChunkEndsWithCR = chunk.charCodeAt(length - 1) === CR
 		return undefined
 	}
 
 	const end = (): CsvError | undefined => {
 		if (failure !== undefined) return failure
-		switch (state) {
+		const last = state
+		state = RecordStart
+		switch (last) {
 			case RecordStart:
 			case AfterCR:
+			case Comment:
 				return undefined
 			case Quoted:
 			case EscapeInQuoted:
 				return fail(new UnclosedQuote({ line: recordLine }))
 			case FieldStart:
+				if (fields.length === 0 && skipEmptyLines) return undefined
+				// Whitespace that `trim` skipped at the end of the input has not been checked yet.
+				if (recordSize > maxRecordSize) {
+					return fail(new RecordTooLarge({ line: recordLine, maxRecordSize }))
+				}
 				fields.push('')
 				break
 			case Unquoted:
+				fields.push(unquotedField(takeParts()))
+				break
 			case QuoteInQuoted:
+			case AfterQuoted:
 				fields.push(takeParts())
 				break
 		}
-		state = RecordStart
 		return endRecord()
 	}
 

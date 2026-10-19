@@ -8,7 +8,8 @@ export type CsvRecord = Readonly<Record<string, string>>
 
 /** @internal */
 export interface Objects {
-	readonly feed: (row: Row) => CsvError | undefined
+	/** Converts a row that starts on `line`. */
+	readonly feed: (row: Row, line: number) => CsvError | undefined
 }
 
 const CR = 13
@@ -63,6 +64,25 @@ const lineBreaks = (row: Row): number => {
 	return count
 }
 
+/**
+ * Creates a function that returns the line on which each successive row
+ * starts, for rows that carry no line numbers.
+ *
+ * Lines are counted from the first row: one per row, plus the line breaks
+ * inside its fields. That is the input line when no lines were skipped
+ * before the rows were decoded.
+ *
+ * @internal
+ */
+export const makeLineCounter = (): ((row: Row) => number) => {
+	let line = 1
+	return (row) => {
+		const rowLine = line
+		line += 1 + lineBreaks(row)
+		return rowLine
+	}
+}
+
 const toRecord = (names: ReadonlyArray<string>, row: Row, length: number): CsvRecord => {
 	const record: Record<string, string> = {}
 	for (let i = 0; i < length; i++) {
@@ -90,9 +110,6 @@ const toRecord = (names: ReadonlyArray<string>, row: Row, length: number): CsvRe
  * Invalid options throw an `IllegalArgumentError` here, which callers run
  * inside an Effect so that it surfaces as a defect.
  *
- * Rows carry no line numbers, so the line of each row is counted from the
- * first row, including the line breaks inside its fields.
- *
  * @internal
  */
 export const make = (
@@ -101,7 +118,6 @@ export const make = (
 ): Objects => {
 	const relaxColumnCount = options?.relaxColumnCount ?? false
 	let names = resolveColumns(options?.columns)
-	let line = 1
 	let failure: CsvError | undefined
 
 	const fail = (reason: CsvErrorReason): CsvError => {
@@ -109,23 +125,18 @@ export const make = (
 		return failure
 	}
 
-	const feed = (row: Row): CsvError | undefined => {
+	const feed = (row: Row, line: number): CsvError | undefined => {
 		if (failure !== undefined) return failure
-		const rowLine = line
-		// With `relaxColumnCount`, only the header can fail, and it is always the first row.
-		if (!relaxColumnCount) line += 1 + lineBreaks(row)
 		if (names === undefined) {
 			const invalid = findInvalidName(row)
 			if (invalid !== undefined) {
-				return fail(new InvalidHeader({ line: rowLine, name: row[invalid.fieldIndex], ...invalid }))
+				return fail(new InvalidHeader({ line, name: row[invalid.fieldIndex], ...invalid }))
 			}
 			names = row
 			return undefined
 		}
 		if (row.length !== names.length && !relaxColumnCount) {
-			return fail(
-				new FieldCountMismatch({ line: rowLine, expected: names.length, actual: row.length }),
-			)
+			return fail(new FieldCountMismatch({ line, expected: names.length, actual: row.length }))
 		}
 		onRecord(toRecord(names, row, Math.min(row.length, names.length)))
 		return undefined

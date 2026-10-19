@@ -92,6 +92,34 @@ describe('decodeString', () => {
 		}),
 	)
 
+	it.effect('decodes a commented, padded file with the dialect options', () =>
+		Effect.gen(function* () {
+			const rows = yield* Stream.make('# exported 2026-10-19\nname, age\n\nAda , 36\n').pipe(
+				Stream.pipeThroughChannel(
+					Csv.decodeString({ comment: '#', skipEmptyLines: true, trim: true }),
+				),
+				Stream.runCollect,
+			)
+			assert.deepStrictEqual(rows, [
+				['name', 'age'],
+				['Ada', '36'],
+			])
+		}),
+	)
+
+	it.effect('keeps quotes inside unquoted fields with relaxQuotes', () =>
+		Effect.gen(function* () {
+			const rows = yield* Stream.make('size,note\n12",a "b"\n').pipe(
+				Stream.pipeThroughChannel(Csv.decodeString({ relaxQuotes: true })),
+				Stream.runCollect,
+			)
+			assert.deepStrictEqual(rows, [
+				['size', 'note'],
+				['12"', 'a "b"'],
+			])
+		}),
+	)
+
 	it.effect('emits the rows before malformed input, then fails', () =>
 		Effect.gen(function* () {
 			const { rows, exit } = yield* collect(
@@ -148,13 +176,14 @@ describe('decodeString', () => {
 
 	it.effect('dies when it starts with invalid options', () =>
 		Effect.gen(function* () {
-			const channel = Csv.decodeString({ delimiter: ',,' })
-			const exit = yield* Stream.make('a').pipe(
-				Stream.pipeThroughChannel(channel),
-				Stream.runCollect,
-				Effect.exit,
-			)
-			assertDefect(exit, Cause.isIllegalArgumentError)
+			for (const options of [{ delimiter: ',,' }, { comment: ',' }]) {
+				const exit = yield* Stream.make('a').pipe(
+					Stream.pipeThroughChannel(Csv.decodeString(options)),
+					Stream.runCollect,
+					Effect.exit,
+				)
+				assertDefect(exit, Cause.isIllegalArgumentError)
+			}
 		}),
 	)
 })
@@ -345,6 +374,24 @@ describe('toObjects', () => {
 				line: 4,
 				expected: 2,
 				actual: 1,
+			})
+		}),
+	)
+
+	it.effect('counts lines from the rows it receives, not lines skipped before them', () =>
+		Effect.gen(function* () {
+			const { exit } = yield* collect(
+				Stream.make('# note\n\na,a\n').pipe(
+					Stream.pipeThroughChannel(Csv.decodeString({ comment: '#', skipEmptyLines: true })),
+					Stream.pipeThroughChannel(Csv.toObjects()),
+				),
+			)
+			assertCsvError(exit, {
+				_tag: 'InvalidHeader',
+				line: 1,
+				fieldIndex: 1,
+				name: 'a',
+				problem: 'Duplicate',
 			})
 		}),
 	)
@@ -562,6 +609,64 @@ describe('decodeSchemaString', () => {
 		}),
 	)
 
+	it.effect('reports the input line after skipped comment and empty lines', () =>
+		Effect.gen(function* () {
+			const options = { comment: '#', skipEmptyLines: true } as const
+			const header = yield* collect(
+				Stream.make('# note\n\nname,name\n').pipe(
+					Stream.pipeThroughChannel(Csv.decodeSchemaString(Person)(options)),
+				),
+			)
+			assertCsvError(header.exit, {
+				_tag: 'InvalidHeader',
+				line: 3,
+				fieldIndex: 1,
+				name: 'name',
+				problem: 'Duplicate',
+			})
+
+			const columns = yield* collect(
+				Stream.make('# note\n\nAda,36\n').pipe(
+					Stream.pipeThroughChannel(
+						Csv.decodeSchemaString(Person)({ ...options, columns: ['name', 'age', 'note'] }),
+					),
+				),
+			)
+			assertCsvError(columns.exit, {
+				_tag: 'FieldCountMismatch',
+				line: 3,
+				expected: 3,
+				actual: 2,
+			})
+		}),
+	)
+
+	it.effect('fails with the first error in input order', () =>
+		Effect.gen(function* () {
+			const { rows, exit } = yield* collect(
+				Stream.make('Ada,36\n"Bob').pipe(
+					Stream.pipeThroughChannel(
+						Csv.decodeSchemaString(Person)({ columns: ['name', 'age', 'note'] }),
+					),
+				),
+			)
+			assert.deepStrictEqual(rows, [])
+			assertCsvError(exit, { _tag: 'FieldCountMismatch', line: 1, expected: 3, actual: 2 })
+		}),
+	)
+
+	it.effect('decodes raw rows with comments and columns "none"', () =>
+		Effect.gen(function* () {
+			const points = yield* Stream.make('# x,y\n1, 2\n').pipe(
+				Stream.pipeThroughChannel(
+					Csv.decodeSchemaString(Point)({ columns: 'none', comment: '#', trim: true }),
+				),
+				Stream.runCollect,
+			)
+			assert.deepStrictEqual(points, [[1, 2]])
+		}),
+	)
+
 	it.effect('provides the decoding services of the schema', () =>
 		Effect.gen(function* () {
 			class Scale extends Context.Service<Scale, number>()('effect-csv/test/decode.test/Scale') {}
@@ -643,6 +748,25 @@ describe('decodeSchema', () => {
 		}),
 	)
 
+	it.effect('reports the input line of bytes after skipped lines', () =>
+		Effect.gen(function* () {
+			const { exit } = yield* collect(
+				Stream.make(encodeText('\uFEFF# note\r\n\r\nname,\r\n')).pipe(
+					Stream.pipeThroughChannel(
+						Csv.decodeSchema(Person)({ comment: '#', skipEmptyLines: true }),
+					),
+				),
+			)
+			assertCsvError(exit, {
+				_tag: 'InvalidHeader',
+				line: 3,
+				fieldIndex: 1,
+				name: '',
+				problem: 'Empty',
+			})
+		}),
+	)
+
 	it.effect('decodes raw rows with columns "none"', () =>
 		Effect.gen(function* () {
 			const Point = Schema.Tuple([Schema.String, Schema.FiniteFromString])
@@ -659,7 +783,7 @@ describe('decodeSchema', () => {
 
 	it.effect('dies when it starts with invalid options', () =>
 		Effect.gen(function* () {
-			for (const options of [{ delimiter: '' }, { columns: [] }]) {
+			for (const options of [{ delimiter: '' }, { columns: [] }, { comment: '"' }]) {
 				const exit = yield* Stream.make(encodeText('a')).pipe(
 					Stream.pipeThroughChannel(Csv.decodeSchema(Person)(options)),
 					Stream.runCollect,
@@ -697,6 +821,18 @@ describe('parse', () => {
 				['name', 'age'],
 				['Doe, Jane', '36'],
 			])
+		}),
+	)
+
+	it.effect('parses with the dialect options', () =>
+		Effect.gen(function* () {
+			const rows = yield* Csv.parse(';a\n\n "b" , c"d \n', {
+				comment: ';',
+				skipEmptyLines: true,
+				trim: true,
+				relaxQuotes: true,
+			})
+			assert.deepStrictEqual(rows, [['b', 'c"d']])
 		}),
 	)
 

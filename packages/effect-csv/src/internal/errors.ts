@@ -27,8 +27,10 @@ export class UnclosedQuote extends Data.TaggedError('UnclosedQuote')<{
  * **Details**
  *
  * That is either a character other than a delimiter or line break after a
- * closing quote, or a quote inside an unquoted field. `fieldIndex` is the
- * 0-based index of the field within its record.
+ * closing quote, or a quote inside an unquoted field. With `trim`, whitespace
+ * other than the quote character is allowed after a closing quote, and with
+ * `relaxQuotes`, a quote inside an unquoted field is kept as text. `fieldIndex` is the 0-based index of the
+ * field within its record.
  *
  * @category errors
  * @since 0.1.0

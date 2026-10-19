@@ -92,6 +92,49 @@ describe('encodeString', () => {
 		}),
 	)
 
+	it.effect(
+		'quotes fields that start with the comment character, so that decoding keeps them',
+		() =>
+			Effect.gen(function* () {
+				const rows = [
+					['#a', 'b#', '#'],
+					[' \t#x', '#y', ''],
+				]
+				const text = yield* encodeRows(rows, { comment: '#', recordDelimiter: '\n' })
+				assert.strictEqual(text, '"#a",b#,"#"\n" \t#x","#y",\n')
+				assert.deepStrictEqual(yield* Csv.parse(text, { comment: '#' }), rows)
+				assert.deepStrictEqual(yield* Csv.parse(text, { comment: '#', trim: true }), rows)
+			}),
+	)
+
+	it.effect('quotes a lone field of only whitespace, so that decoders that trim keep it', () =>
+		Effect.gen(function* () {
+			const rows = [[' '], ['\t\u00A0'], ['a ']]
+			const text = yield* encodeRows(rows, { recordDelimiter: '\n' })
+			assert.strictEqual(text, '" "\n"\t\u00A0"\na \n')
+			assert.deepStrictEqual(yield* Csv.parse(text, { trim: true, skipEmptyLines: true }), [
+				[' '],
+				['\t\u00A0'],
+				['a'],
+			])
+		}),
+	)
+
+	it.effect('writes fields that start with a comment character as they are without comment', () =>
+		Effect.gen(function* () {
+			assert.strictEqual(yield* encodeRows([['#a', ';b']], { delimiter: '\t' }), '#a\t;b\r\n')
+		}),
+	)
+
+	it.effect('quotes a field whose formula prefix is the comment character', () =>
+		Effect.gen(function* () {
+			const options = { comment: "'", escapeFormulae: true } as const
+			const text = yield* encodeRows([['=1', 'a']], options)
+			assert.strictEqual(text, `"'=1",a\r\n`)
+			assert.deepStrictEqual(yield* Csv.parse(text, options), [["'=1", 'a']])
+		}),
+	)
+
 	it.effect('quotes every field with quoteMode "all"', () =>
 		Effect.gen(function* () {
 			const text = yield* encodeRows(
@@ -293,6 +336,10 @@ describe('stringify', () => {
 			['CR recordDelimiter', { recordDelimiter: '\r' }, /`recordDelimiter`/],
 			// @ts-expect-error JavaScript callers can pass any value
 			['unknown quoteMode', { quoteMode: 'minimal' }, /`quoteMode`/],
+			['empty comment', { comment: '' }, /`comment` must be one/],
+			['CR comment', { comment: '\r' }, /`comment` must be one/],
+			['comment equal to the delimiter', { delimiter: ';', comment: ';' }, /`comment` must differ/],
+			['comment equal to the quote', { quote: "'", comment: "'" }, /`comment` must differ/],
 		]
 
 		it.each(invalid)('throws an IllegalArgumentError for %s', (_, options, message) => {
@@ -527,10 +574,12 @@ describe('encodeSchemaString', () => {
 			const people = [
 				{ name: 'Ada "the first"', age: 36 },
 				{ name: 'Alan\r\nTuring', age: 41 },
+				{ name: '#3', age: 0 },
 			]
+			const options = { delimiter: '\t', comment: '#' } as const
 			const decoded = yield* Stream.fromIterable(people).pipe(
-				Stream.pipeThroughChannel(Csv.encodeSchemaString(Person)({ delimiter: '\t' })),
-				Stream.pipeThroughChannel(Csv.decodeSchemaString(Person)({ delimiter: '\t' })),
+				Stream.pipeThroughChannel(Csv.encodeSchemaString(Person)(options)),
+				Stream.pipeThroughChannel(Csv.decodeSchemaString(Person)(options)),
 				Stream.runCollect,
 			)
 			assert.deepStrictEqual(decoded, people)

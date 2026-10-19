@@ -1,18 +1,22 @@
 import { assert, describe, it } from '@effect/vitest'
 import { Arbitrary, Cause, Effect, Exit, Result, Schema, Stream } from 'effect'
 import * as Csv from '../src/Csv.ts'
+import * as Parser from '../src/internal/parser.ts'
 import { type Outcome, parseChunks, reasonFields } from './utils.ts'
 
-// Every character that is special in some generated dialect, plus ordinary text and a surrogate pair.
+// Every character that is special in some generated dialect, plus ordinary text, whitespace and a surrogate pair.
 const Token = Schema.Literals([
 	'a',
 	'b',
+	' ',
+	'\u00A0',
 	',',
 	';',
 	'\t',
 	'"',
 	"'",
 	'\\',
+	'#',
 	'\r',
 	'\n',
 	'\uFEFF',
@@ -26,14 +30,21 @@ const text = (maxLength: number) =>
 
 const chunks = Arbitrary.array(text(8), { maxLength: 12 })
 
+const boolean = Arbitrary.schema(Schema.Boolean)
+
+/** Every decoding option, in every valid combination of the characters above. */
 const dialect: Arbitrary.Arbitrary<Csv.DecodeOptions> = Arbitrary.all({
 	delimiter: Arbitrary.schema(Schema.Literals([',', ';', '\t'])),
 	quote: Arbitrary.schema(Schema.NullOr(Schema.Literals(['"', "'"]))),
 	escape: Arbitrary.schema(Schema.UndefinedOr(Schema.Literal('\\'))),
-	relaxColumnCount: Arbitrary.schema(Schema.Boolean),
+	comment: Arbitrary.schema(Schema.UndefinedOr(Schema.Literals(['#', '\\']))),
+	relaxColumnCount: boolean,
 	maxRecordSize: Arbitrary.schema(
 		Schema.UndefinedOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 12 }))),
 	),
+	trim: boolean,
+	skipEmptyLines: boolean,
+	relaxQuotes: boolean,
 })
 
 const cuts = Arbitrary.schema(
@@ -58,59 +69,133 @@ const joined = (alphabet: ReadonlyArray<string>, maxLength: number) =>
 	)
 
 const field = Arbitrary.all({
-	quoted: Arbitrary.schema(Schema.Boolean),
+	quoted: boolean,
 	unquoted: joined(['a', 'b', ' ', '😀'], 4),
-	quotedValue: joined(['a', ',', ';', '\t', '"', '\\', '\r', '\n'], 6),
+	quotedValue: joined(['a', ' ', ',', ';', '\t', '"', '\\', '#', '\r', '\n'], 6),
+	// Whitespace written around the field when `trim` is on.
+	before: joined([' ', '\u00A0'], 2),
+	after: joined([' ', '\u00A0'], 2),
 }).pipe(
-	Arbitrary.map(({ quoted, unquoted, quotedValue }) => ({
+	Arbitrary.map(({ quoted, unquoted, quotedValue, before, after }) => ({
 		quoted,
 		value: quoted ? quotedValue : unquoted,
+		before,
+		after,
 	})),
 )
 
+const documentLine = Arbitrary.all({
+	kind: Arbitrary.schema(Schema.Literals(['record', 'comment', 'empty'])),
+	fields: Arbitrary.array(field, { minLength: 1, maxLength: 4 }),
+	// Whitespace written before a comment or on an empty line when `trim` is on.
+	indent: joined([' ', '\u00A0'], 2),
+	commentText: joined(['a', ',', '"', '#', ' '], 4),
+})
+
+const lineBreakCount = (text: string) => text.match(/\r\n|\r|\n/g)?.length ?? 0
+
 /**
  * Well-formed records with 1 to 4 fields in a random dialect, where quoted
- * fields may contain line breaks, with the rows computed from the generated
- * structure.
+ * fields may contain line breaks, with the rows and the line on which each row
+ * starts computed from the generated structure.
+ *
+ * With `withLineOptions`, the dialect also has random `trim`, `comment` and
+ * `skipEmptyLines` options, and the document has comment lines, empty lines
+ * and whitespace around fields.
  */
-const records = Arbitrary.all({
-	records: Arbitrary.array(Arbitrary.array(field, { minLength: 1, maxLength: 4 }), {
-		maxLength: 6,
-	}),
-	terminator: Arbitrary.schema(Schema.Literals(['\n', '\r\n', '\r'])),
-	delimiter: Arbitrary.schema(Schema.Literals([',', ';', '\t'])),
-	escape: Arbitrary.schema(Schema.Literals(['"', '\\'])),
-}).pipe(
-	Arbitrary.map(({ records, terminator, delimiter, escape: escapeChar }) => {
-		const quote = (value: string) =>
-			escapeChar === '"'
-				? `"${value.replaceAll('"', '""')}"`
-				: `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-		return {
-			input: records
-				.map(
-					(fields) =>
-						fields.map((f) => (f.quoted ? quote(f.value) : f.value)).join(delimiter) + terminator,
-				)
-				.join(''),
-			options: { delimiter, escape: escapeChar } satisfies Csv.DecodeOptions,
-			rows: records.map((fields): Csv.Row => fields.map((f) => f.value)),
-		}
-	}),
-)
+const makeRecords = (withLineOptions: boolean) =>
+	Arbitrary.all({
+		lines: Arbitrary.array(documentLine, { maxLength: 8 }),
+		terminator: Arbitrary.schema(Schema.Literals(['\n', '\r\n', '\r'])),
+		delimiter: Arbitrary.schema(Schema.Literals([',', ';', '\t'])),
+		escape: Arbitrary.schema(Schema.Literals(['"', '\\'])),
+		trim: withLineOptions ? boolean : Arbitrary.Constant(false),
+		comment: withLineOptions ? boolean : Arbitrary.Constant(false),
+		skipEmptyLines: withLineOptions ? boolean : Arbitrary.Constant(false),
+	}).pipe(
+		Arbitrary.map(({ lines, terminator, delimiter, escape: escapeChar, trim, ...flags }) => {
+			const comment = flags.comment ? '#' : undefined
+			const quote = (value: string) =>
+				escapeChar === '"'
+					? `"${value.replaceAll('"', '""')}"`
+					: `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+			const pad = (whitespace: string) => (trim ? whitespace : '')
+			let input = ''
+			const rows: Array<Csv.Row> = []
+			const rowLines: Array<number> = []
+			for (const { kind, fields, indent, commentText } of lines) {
+				const rowLine = 1 + lineBreakCount(input)
+				if (kind === 'comment' && comment !== undefined) {
+					input += pad(indent) + comment + commentText + terminator
+					continue
+				}
+				const record = withLineOptions ? kind === 'record' : true
+				input += record
+					? fields
+							.map((f) => pad(f.before) + (f.quoted ? quote(f.value) : f.value) + pad(f.after))
+							.join(delimiter)
+					: pad(indent)
+				input += terminator
+				const row = record
+					? fields.map((f) => (trim && !f.quoted ? f.value.trim() : f.value))
+					: ['']
+				// A line that holds one unquoted field, empty after trimming, has no characters other than whitespace.
+				const quotedFirst = record && fields[0]?.quoted === true
+				const isEmptyLine = !quotedFirst && row.length === 1 && row[0] === ''
+				if (!(isEmptyLine && flags.skipEmptyLines)) {
+					rows.push(row)
+					rowLines.push(rowLine)
+				}
+			}
+			return {
+				input,
+				options: {
+					delimiter,
+					escape: escapeChar,
+					comment,
+					trim,
+					skipEmptyLines: flags.skipEmptyLines,
+				} satisfies Csv.DecodeOptions,
+				rows,
+				lines: rowLines,
+			}
+		}),
+	)
+
+const records = makeRecords(false)
+
+const dialectRecords = makeRecords(true)
 
 /**
  * Well-formed records followed by an unclosed quote, with the line of the
  * failing record computed from the generated structure.
  */
-const document = records.pipe(
+const document = dialectRecords.pipe(
 	Arbitrary.map(({ input, options, rows }) => ({
 		input: `${input}"unclosed`,
 		options: { ...options, relaxColumnCount: true },
 		rows,
-		line: 1 + (input.match(/\r\n|\r|\n/g)?.length ?? 0),
+		line: 1 + lineBreakCount(input),
 	})),
 )
+
+/** Runs the pure parser over `chunks`, collecting each row with the line on which it starts. */
+const parseLines = (chunks: Iterable<string>, options: Csv.DecodeOptions) => {
+	const rows: Array<Csv.Row> = []
+	const lines: Array<number> = []
+	const parser = Parser.make(options, (row, line) => {
+		rows.push(row)
+		lines.push(line)
+		return undefined
+	})
+	let error: Csv.CsvError | undefined
+	for (const chunk of chunks) {
+		error = parser.feed(chunk)
+		if (error !== undefined) break
+	}
+	error ??= parser.end()
+	return { rows, lines, error: error === undefined ? undefined : reasonFields(error) }
+}
 
 const runChannel = Effect.fnUntraced(function* <E>(stream: Stream.Stream<Csv.Row, E>) {
 	const rows: Array<Csv.Row> = []
@@ -143,6 +228,19 @@ describe('chunk invariance', () => {
 			assert.deepStrictEqual(parseChunks([input], options), expected)
 			assert.deepStrictEqual(parseChunks(input.split(''), options), expected)
 			assert.deepStrictEqual(parseChunks(splitString(input, cuts), options), expected)
+		},
+		{ arbitrary: { runs: 1000, size: 20 } },
+	)
+
+	it.prop(
+		'reports the line on which each record starts, counting skipped lines, for any split',
+		{ records: dialectRecords, cuts },
+		({ records: { input, options, rows, lines }, cuts }) => {
+			const relaxed = { ...options, relaxColumnCount: true }
+			const expected = { rows, lines, error: undefined }
+			assert.deepStrictEqual(parseLines([input], relaxed), expected)
+			assert.deepStrictEqual(parseLines(input.split(''), relaxed), expected)
+			assert.deepStrictEqual(parseLines(splitString(input, cuts), relaxed), expected)
 		},
 		{ arbitrary: { runs: 1000, size: 20 } },
 	)
@@ -237,7 +335,7 @@ describe('chunk invariance', () => {
 
 // Every character that is special in some generated encoding dialect, plus ordinary text, a formula start and a surrogate pair.
 const encodedField = joined(
-	['a', ' ', '=', ',', ';', '\t', '|', '"', "'", '$', '\\', '\r', '\n', '\uFEFF', '😀'],
+	['a', ' ', '=', ',', ';', '\t', '|', '"', "'", '$', '\\', '#', '\r', '\n', '\uFEFF', '😀'],
 	5,
 )
 
@@ -257,22 +355,50 @@ const encodeDialect: Arbitrary.Arbitrary<Csv.EncodeOptions> = Arbitrary.all({
 	escape: Arbitrary.schema(Schema.UndefinedOr(Schema.Literal('\\'))),
 	recordDelimiter: Arbitrary.schema(Schema.Literals(['\n', '\r\n'])),
 	quoteMode: Arbitrary.schema(Schema.Literals(['needed', 'all'])),
-	bom: Arbitrary.schema(Schema.Boolean),
+	bom: boolean,
+	comment: Arbitrary.schema(Schema.UndefinedOr(Schema.Literals(['#', '=']))),
 })
 
-const decodeOptions = ({
-	delimiter,
-	quote,
-	escape: escapeChar,
-}: Csv.EncodeOptions): Csv.DecodeOptions => ({ delimiter, quote, escape: escapeChar })
+/**
+ * Decoding options that cannot change the rows of encoded output: the encoder
+ * quotes lone fields that are empty or only whitespace, fields that contain a
+ * quote, and, with the same `comment`, fields that start with the comment
+ * character after any whitespace. `trim` is lossy, so it has its own property.
+ */
+const losslessDecodeOptions = Arbitrary.all({
+	skipEmptyLines: boolean,
+	relaxQuotes: boolean,
+})
+
+const decodeOptions = (
+	{ delimiter, quote, escape: escapeChar, comment }: Csv.EncodeOptions,
+	lossless: Csv.DecodeOptions,
+): Csv.DecodeOptions => ({ ...lossless, delimiter, quote, escape: escapeChar, comment })
 
 describe('round trip', () => {
 	it.prop(
 		'parsing the output of stringify gives back the rows in any dialect',
-		{ rows: table, options: encodeDialect },
-		({ rows, options }) => {
-			const outcome = parseChunks([Csv.stringify(rows, options)], decodeOptions(options))
+		{ rows: table, options: encodeDialect, lossless: losslessDecodeOptions },
+		({ rows, options, lossless }) => {
+			const outcome = parseChunks([Csv.stringify(rows, options)], decodeOptions(options, lossless))
 			assert.deepStrictEqual(outcome, { rows, error: undefined })
+		},
+		{ arbitrary: { runs: 3000, size: 20 } },
+	)
+
+	it.prop(
+		'decoding the output of stringify with trim keeps every row and only trims unquoted fields',
+		{ rows: table, options: encodeDialect, lossless: losslessDecodeOptions },
+		({ rows, options, lossless }) => {
+			const outcome = parseChunks([Csv.stringify(rows, options)], {
+				...decodeOptions(options, lossless),
+				trim: true,
+			})
+			// A field is either quoted and kept, or unquoted and trimmed; map trimmed fields back to the original.
+			const untrimmed = outcome.rows.map((row, i) =>
+				row.map((value, j) => (value === rows[i]?.[j]?.trim() ? rows[i]?.[j] : value)),
+			)
+			assert.deepStrictEqual({ rows: untrimmed, error: outcome.error }, { rows, error: undefined })
 		},
 		{ arbitrary: { runs: 3000, size: 20 } },
 	)
@@ -297,8 +423,8 @@ describe('round trip', () => {
 
 	it.effect.prop(
 		'decode gives back the rows encoded by encode for any byte split',
-		{ rows: table, options: encodeDialect, cuts },
-		Effect.fnUntraced(function* ({ rows, options, cuts }) {
+		{ rows: table, options: encodeDialect, lossless: losslessDecodeOptions, cuts },
+		Effect.fnUntraced(function* ({ rows, options, lossless, cuts }) {
 			const chunks = yield* Stream.fromIterable(rows).pipe(
 				Stream.pipeThroughChannel(Csv.encode(options)),
 				Stream.runCollect,
@@ -307,7 +433,7 @@ describe('round trip', () => {
 			const outcome = yield* runChannel(
 				Stream.fromIterable(splitBytes(bytes, cuts)).pipe(
 					Stream.rechunk(1),
-					Stream.pipeThroughChannel(Csv.decode(decodeOptions(options))),
+					Stream.pipeThroughChannel(Csv.decode(decodeOptions(options, lossless))),
 				),
 			)
 			assert.deepStrictEqual(outcome, { rows, error: undefined })
