@@ -12,7 +12,7 @@
 		"stream",
 		"schema"
 	],
-	"private": true,
+	"private": false,
 	"license": "MIT",
 	"author": {
 		"name": "Krisztian Balla",

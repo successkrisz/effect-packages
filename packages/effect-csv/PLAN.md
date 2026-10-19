@@ -253,11 +253,11 @@ Each phase ends with `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm format
 
 ### Phase 5: release
 
-- [ ] Package README with API docs, and a quickstart in the root README
-- [ ] Add `effect-csv` to `fixtures/portability` (a dependency plus usage in `src/root.ts` and `src/subpath.ts`) so `pnpm pack:portability` checks its published types
-- [ ] Benchmark results in the README
-- [ ] Set `private: false` and add a `minor` changeset (0.0.0 to 0.1.0)
-- [ ] Configure npm trusted publishing for `effect-csv` (repository `successkrisz/effect-packages`, workflow `release.yml`). If npm still requires a package to exist before a trusted publisher can be added, do the first publish manually.
+- [x] Package README with API docs, and a quickstart in the root README
+- [x] Add `effect-csv` to `fixtures/portability` (a dependency plus usage in `src/root.ts` and `src/subpath.ts`) so `pnpm pack:portability` checks its published types
+- [x] Benchmark results in the README
+- [x] Set `private: false` and add a `minor` changeset (0.0.0 to 0.1.0)
+- [x] Configure npm trusted publishing for `effect-csv` (repository `successkrisz/effect-packages`, workflow `release.yml`). If npm still requires a package to exist before a trusted publisher can be added, do the first publish manually.
 
 ### Later
 

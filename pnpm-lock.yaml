@@ -226,6 +226,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.3
+      effect-csv:
+        specifier: workspace:*
+        version: link:../../packages/effect-csv
       effect-lambda:
         specifier: workspace:*
         version: link:../../packages/effect-lambda

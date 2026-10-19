@@ -1,5 +1,6 @@
 import * as HttpApiProblemDetail from '@ballatech/effect-problem-json/HttpApiProblemDetail'
-import { Console, Effect, Layer } from 'effect'
+import { Console, Effect, Layer, Schema, Stream } from 'effect'
+import * as Csv from 'effect-csv/Csv'
 import * as CustomAuthorizer from 'effect-lambda/CustomAuthorizer'
 import * as DynamoDb from 'effect-lambda/DynamoDb'
 import * as HttpApi from 'effect-lambda/HttpApi'
@@ -43,3 +44,22 @@ export const authorizerHandler = CustomAuthorizer.toLambdaHandler(
 )
 
 export const notFound = new HttpApiProblemDetail.NotFound({ detail: 'missing' })
+
+const Point = Schema.Tuple([Schema.FiniteFromString, Schema.FiniteFromString])
+
+export const csvPoints = Stream.make('1,2\n3,4\n').pipe(
+	Stream.pipeThroughChannel(Csv.decodeSchemaString(Point)({ columns: 'none' })),
+	Stream.runCollect,
+)
+
+export const csvDecoded = Stream.make('a,b\n1,2\n').pipe(
+	Stream.pipeThroughChannel(Csv.decodeString({ delimiter: ',' })),
+	Stream.runCollect,
+)
+
+export const csvEncoded = Stream.make(['a', 'b'], ['1', '2']).pipe(
+	Stream.pipeThroughChannel(Csv.encode()),
+	Stream.runCollect,
+)
+
+export const csvError = (u: unknown) => (Csv.isCsvError(u) ? u.reason._tag : undefined)

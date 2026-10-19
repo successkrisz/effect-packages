@@ -9,7 +9,7 @@ Useful Effect libraries
 - [`effect-lambda`](packages/effect-lambda/README.md) -- Effect-friendly AWS Lambda wrappers and utilities.
 - [`effect-oauth-client`](packages/effect-oauth-client/README.md) -- OAuth 2.0 Client Credentials `HttpClient` wrapper for Effect v4 HTTP.
 - [`effect-problem-json`](packages/effect-problem-json/README.md) -- RFC 9457 problem details (`application/problem+json`) for Effect v4 `HttpApi`.
-- [`effect-csv`](packages/effect-csv/README.md) -- Streaming CSV parsing and writing for Effect v4 with `Schema`-typed rows (in development, not yet published).
+- [`effect-csv`](packages/effect-csv/README.md) -- Streaming CSV parsing and writing for Effect v4 with `Schema`-typed rows.
 
 ### effect-lambda quickstart
 
@@ -39,6 +39,20 @@ const program = Effect.gen(function* () {
 })
 
 Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
+```
+
+### effect-csv quickstart
+
+```ts
+import { Schema, Stream } from "effect"
+import { Csv } from "effect-csv"
+
+const Person = Schema.Struct({ name: Schema.String, age: Schema.FiniteFromString })
+
+const people = Stream.make(new TextEncoder().encode("name,age\nAda,36\n")).pipe(
+  Stream.pipeThroughChannel(Csv.decodeSchema(Person)()),
+  Stream.runCollect,
+)
 ```
 
 ### effect-problem-json quickstart
