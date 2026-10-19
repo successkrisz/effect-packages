@@ -1,6 +1,7 @@
 import { OAuthHttpClient } from '@ballatech/effect-oauth-client'
 import { HttpApiProblemDetail } from '@ballatech/effect-problem-json'
-import { Config, Effect, Layer, Schema } from 'effect'
+import { Config, Effect, Layer, Schema, Stream } from 'effect'
+import { Csv } from 'effect-csv'
 import {
 	applyMiddleware,
 	CustomAuthorizer,
@@ -57,3 +58,26 @@ export class DuplicateTitle extends HttpApiProblemDetail.ProblemError(
 }) {}
 
 export const problemMiddleware = HttpApiProblemDetail.middleware()
+
+const Person = Schema.Struct({ name: Schema.String, age: Schema.FiniteFromString })
+
+export const csvPeople = Stream.make(new TextEncoder().encode('name,age\nAda,36\n')).pipe(
+	Stream.pipeThroughChannel(Csv.decodeSchema(Person)()),
+	Stream.runCollect,
+)
+
+export const csvRows = Csv.parse('name,age\nAda,36\n')
+
+export const csvText = Csv.stringify(
+	[
+		['name', 'age'],
+		['Ada', '36'],
+	],
+	{ recordDelimiter: '\n' },
+)
+
+export const csvObjects = Stream.make({ name: 'Ada', age: '36' }).pipe(
+	Stream.pipeThroughChannel(Csv.fromObjects({ columns: ['name', 'age'] })),
+	Stream.pipeThroughChannel(Csv.encodeString()),
+	Stream.mkString,
+)

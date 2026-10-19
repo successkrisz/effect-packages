@@ -6,6 +6,7 @@
 		"@ballatech/effect-oauth-client": "workspace:*",
 		"@ballatech/effect-problem-json": "workspace:*",
 		"effect": "catalog:",
+		"effect-csv": "workspace:*",
 		"effect-lambda": "workspace:*"
 	},
 	"devDependencies": {

@@ -226,6 +226,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.3
+      effect-csv:
+        specifier: workspace:*
+        version: link:../../packages/effect-csv
       effect-lambda:
         specifier: workspace:*
         version: link:../../packages/effect-lambda
@@ -233,6 +236,24 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
+
+  packages/effect-csv:
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.0.3(effect@4.0.3)(redis@6.2.1)
+      '@effect/platform-node-shared':
+        specifier: 'catalog:'
+        version: 4.0.3(effect@4.0.3)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      csv-spectrum:
+        specifier: 2.0.0
+        version: 2.0.0
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.3
 
   packages/effect-lambda:
     dependencies:
@@ -975,6 +996,9 @@ packages:
   cluster-key-slot@1.1.2:
     resolution: {integrity: sha512-RMr0FhtfXemyinomL4hrWcYJxmX6deFdCxpJzhDttxgO1+bcCnkk+9drydLVDmAMG7NE6aN/fl4F7ucU/90gAA==}
     engines: {node: '>=0.10.0'}
+
+  csv-spectrum@2.0.0:
+    resolution: {integrity: sha512-gjW9YEAkcrJo4AEdrV9+4lkUXlOyYyC+1Ap3efzMiUUs1OTdZ29VraBZNBBKZK7iiUkbMNkUmfKp/jnayzHxAA==}
 
   dataloader@2.2.3:
     resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
@@ -1860,6 +1884,8 @@ snapshots:
   chai@6.2.2: {}
 
   cluster-key-slot@1.1.2: {}
+
+  csv-spectrum@2.0.0: {}
 
   dataloader@2.2.3: {}
 
