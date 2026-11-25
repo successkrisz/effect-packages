@@ -296,10 +296,30 @@ const fromNumber = (
 	nonNegativeFinite.pipe(
 		schema.decodeTo(
 			Schema,
-			SchemaTransformation.transform({
-				// Every value accepted by the numeric schema is a valid constructor input.
-				decode: (value) => Option.getOrThrow(construct(value)),
-				encode: convert,
+			SchemaTransformation.transformEffect({
+				decode: (value, options) =>
+					Effect.fromOption(
+						construct(value),
+						() =>
+							new SchemaIssue.InvalidValue(
+								{ expected: 'a finite, nonnegative number' },
+								value,
+								options,
+							),
+					),
+				encode: (self, options) => {
+					const value = convert(self)
+					if (Number.isFinite(value)) {
+						return Effect.succeed(value)
+					}
+					return Effect.fail(
+						new SchemaIssue.InvalidValue(
+							{ expected: 'a finite distance in the requested unit' },
+							value,
+							options,
+						),
+					)
+				},
 			}),
 		),
 	)
@@ -334,10 +354,10 @@ export const FromKilometers: schema.decodeTo<typeof Schema, schema.Finite> = fro
 	toKilometers,
 )
 
+const unsignedDecimalPattern = /^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u
+const expectedUnsignedDecimal = { expected: 'an unsigned decimal string' }
 const unsignedDecimalString = schema.String.check(
-	schema.isPattern(/^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u, {
-		expected: 'an unsigned decimal string',
-	}),
+	schema.isPattern(unsignedDecimalPattern, expectedUnsignedDecimal),
 )
 
 const minWireScale = -1_000
@@ -357,6 +377,10 @@ const decimalStringTransformation = (
 ): SchemaTransformation.Transformation<Distance, string> =>
 	SchemaTransformation.makeTransformation({
 		decode: SchemaGetter.transformEffect((text: string, options) => {
+			// The wire schema normally checks the syntax before this transformation.
+			if (options.disableChecks === true && !unsignedDecimalPattern.test(text)) {
+				return Effect.fail(new SchemaIssue.InvalidValue(expectedUnsignedDecimal, text, options))
+			}
 			const decimal = BigDecimal.fromString(text)
 			if (
 				Option.isNone(decimal) ||
