@@ -273,6 +273,14 @@ const fromNumber = (
 	)
 
 /**
+ * Codec for finite, nonnegative numbers in miles. Encoding may round or
+ * underflow to zero and fails if conversion produces infinity.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const FromMiles: schema.decodeTo<typeof Schema, schema.Finite> = fromNumber(miles, toMiles)
+
+/**
  * Codec for finite, nonnegative numbers in meters. Encoding may round and
  * fails if conversion produces infinity.
  * @category schemas
