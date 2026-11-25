@@ -5,7 +5,9 @@
  */
 import {
 	BigDecimal,
+	Combiner,
 	Equal,
+	type Equivalence as equivalence,
 	Hash,
 	Option,
 	Order as order,
@@ -211,11 +213,33 @@ export const subtract: {
 export const ReducerSum: Reducer.Reducer<Distance> = Reducer.make(sum, zero)
 
 /**
+ * Compares distances for exact decimal equality across units.
+ * @category equivalence
+ * @since 0.1.0
+ */
+export const Equivalence: equivalence.Equivalence<Distance> = equals
+
+/**
  * Orders distances by ascending decimal meter value.
  * @category ordering
  * @since 0.1.0
  */
 export const Order: order.Order<Distance> = order.make(DistanceValue.compare)
+
+/**
+ * Folds an iterable to its largest distance, starting from zero.
+ * @category math
+ * @since 0.1.0
+ */
+export const ReducerMax: Reducer.Reducer<Distance> = Reducer.make(order.max(Order), zero)
+
+/**
+ * Keeps the smaller of two distances. Use `Option.makeReducer` to fold with
+ * `None` as the empty result.
+ * @category math
+ * @since 0.1.0
+ */
+export const CombinerMin: Combiner.Combiner<Distance> = Combiner.min(Order)
 
 /**
  * Returns whether an unknown value is a distance constructed by this module.
