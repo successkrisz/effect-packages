@@ -8,6 +8,9 @@ import * as HttpResponse from 'effect-lambda/HttpResponse'
 import * as RestApi from 'effect-lambda/RestApi'
 import * as Sns from 'effect-lambda/Sns'
 import * as Sqs from 'effect-lambda/Sqs'
+import * as Distance from 'effect-measure/Distance'
+
+export const distanceInMiles = Distance.miles(1)
 
 export const restApiHandler = RestApi.toLambdaHandler(
 	RestApi.normalizedEvent.pipe(Effect.flatMap((event) => HttpResponse.ok({ body: event.headers }))),

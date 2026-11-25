@@ -1,0 +1,14 @@
+{
+	"extends": "../../tsconfigs/tsconfig.lib.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"rootDir": "src",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"emitDeclarationOnly": false,
+		"rewriteRelativeImportExtensions": true,
+		"erasableSyntaxOnly": true,
+		"types": []
+	},
+	"include": ["src"]
+}

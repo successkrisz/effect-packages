@@ -25,7 +25,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 	it('installs and runs in CJS/ESM and type-checks in TS', async () => {
 		// This can take a while due to packing and installs
 
-		// 1) Build and pack both packages into ./.pack
+		// 1) Build and pack the workspace packages into ./.pack
 		run('pnpm -w run build', rootDir)
 		run('pnpm -w run pack:check', rootDir)
 
@@ -34,12 +34,16 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 
 		const lambdaTar = files.find((f) => /^effect-lambda-.*\.tgz$/.test(f))
 		const oauthTar = files.find((f) => /^ballatech-effect-oauth-client-.*\.tgz$/.test(f))
+		const measureTar = files.find((f) => /^effect-measure-.*\.tgz$/.test(f))
 
 		expect(lambdaTar, 'effect-lambda tarball not found').toBeTruthy()
 		expect(oauthTar, 'effect-oauth-client tarball not found').toBeTruthy()
+		expect(measureTar, 'effect-measure tarball not found').toBeTruthy()
 
 		const lambdaTarPath = path.join(packDir, lambdaTar as string)
 		const oauthTarPath = path.join(packDir, oauthTar as string)
+		const measureTarPath = path.join(packDir, measureTar as string)
+		const installTarballs = `pnpm add ${lambdaTarPath} ${oauthTarPath} ${measureTarPath}`
 
 		// Prepare a base temp folder
 		const baseTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'effect-packages-compat-'))
@@ -56,14 +60,16 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 
 			// install peers and tarballs
 			run('pnpm add effect', proj)
-			run(`pnpm add ${lambdaTarPath} ${oauthTarPath}`.trim(), proj)
+			run(installTarballs, proj)
 
 			fs.writeFileSync(
 				path.join(proj, 'index.js'),
 				[
 					"const lambda = require('effect-lambda')",
 					"const oauth = require('@ballatech/effect-oauth-client')",
-					'if (!lambda || !oauth) throw new Error("imports failed")',
+					"const { Distance } = require('effect-measure')",
+					"const distanceModule = require('effect-measure/Distance')",
+					'if (!lambda || !oauth || Distance !== distanceModule) throw new Error("imports failed")',
 					'console.log("OK CJS")',
 				].join('\n'),
 			)
@@ -83,14 +89,16 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			})
 
 			run('pnpm add effect', proj)
-			run(`pnpm add ${lambdaTarPath} ${oauthTarPath}`.trim(), proj)
+			run(installTarballs, proj)
 
 			fs.writeFileSync(
 				path.join(proj, 'index.mjs'),
 				[
 					"import * as lambda from 'effect-lambda'",
 					"import * as oauth from '@ballatech/effect-oauth-client'",
-					'if (!lambda || !oauth) throw new Error("imports failed")',
+					"import { Distance } from 'effect-measure'",
+					"import * as distanceModule from 'effect-measure/Distance'",
+					'if (!lambda || !oauth || Distance !== distanceModule) throw new Error("imports failed")',
 					'console.log("OK ESM")',
 				].join('\n'),
 			)
@@ -111,7 +119,7 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			// deps: peers + typescript
 			run('pnpm add effect @types/aws-lambda', proj)
 			run('pnpm add -D typescript', proj)
-			run(`pnpm add ${lambdaTarPath} ${oauthTarPath}`.trim(), proj)
+			run(installTarballs, proj)
 
 			writeJson(path.join(proj, 'tsconfig.json'), {
 				compilerOptions: {
@@ -131,8 +139,11 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 				[
 					"import * as lambda from 'effect-lambda'",
 					"import * as oauth from '@ballatech/effect-oauth-client'",
+					"import { Distance } from 'effect-measure'",
+					"import * as distanceModule from 'effect-measure/Distance'",
 					'// Ensure types are accessible',
-					'const x: Record<string, unknown> = { lambda, oauth }',
+					'const distance: ReturnType<typeof Distance.meters> = distanceModule.meters(1)',
+					'const x: Record<string, unknown> = { lambda, oauth, distance }',
 					'console.log(!!x)',
 				].join('\n'),
 			)

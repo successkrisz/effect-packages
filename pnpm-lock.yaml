@@ -232,6 +232,9 @@ importers:
       effect-lambda:
         specifier: workspace:*
         version: link:../../packages/effect-lambda
+      effect-measure:
+        specifier: workspace:*
+        version: link:../../packages/effect-measure
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -273,6 +276,12 @@ importers:
       helmet:
         specifier: ^8.1.0
         version: 8.3.0
+
+  packages/effect-measure:
+    devDependencies:
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.3
 
   packages/effect-oauth-client:
     devDependencies:
