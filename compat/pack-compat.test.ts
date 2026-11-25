@@ -21,6 +21,22 @@ const writeJson = (filePath: string, data: unknown) => {
 
 const rootDir = path.resolve(__dirname, '..')
 
+const distanceCodecCheck = [
+	'const Trip = Schema.fromJsonString(Schema.Struct({',
+	'  meters: Distance.FromMeters,',
+	'  kilometers: Distance.FromKilometers,',
+	'  miles: Distance.FromMiles,',
+	'  exactMeters: distanceModule.FromMetersString,',
+	'  exactKilometers: distanceModule.FromKilometersString,',
+	'  exactMiles: distanceModule.FromMilesString,',
+	'  derived: Schema.toCodecJson(distanceModule.Schema),',
+	'}))',
+	'const json = \'{"meters":1609.344,"kilometers":1.609344,"miles":1,"exactMeters":"1609.344","exactKilometers":"1.609344","exactMiles":"1","derived":"1609.344"}\'',
+	'const trip = Schema.decodeUnknownSync(Trip)(json)',
+	'if (!Object.values(trip).every((value) => Distance.equals(trip.meters, value))) throw new Error("distance decoding failed")',
+	'if (Schema.encodeSync(Trip)(trip) !== json) throw new Error("distance encoding failed")',
+]
+
 describe('package tarballs work in CJS, ESM, and TS projects', () => {
 	it('installs and runs in CJS/ESM and type-checks in TS', async () => {
 		// This can take a while due to packing and installs
@@ -65,11 +81,13 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			fs.writeFileSync(
 				path.join(proj, 'index.js'),
 				[
+					"const { Schema } = require('effect')",
 					"const lambda = require('effect-lambda')",
 					"const oauth = require('@ballatech/effect-oauth-client')",
 					"const { Distance } = require('effect-measure')",
 					"const distanceModule = require('effect-measure/Distance')",
 					'if (!lambda || !oauth || Distance !== distanceModule) throw new Error("imports failed")',
+					...distanceCodecCheck,
 					'console.log("OK CJS")',
 				].join('\n'),
 			)
@@ -94,11 +112,13 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			fs.writeFileSync(
 				path.join(proj, 'index.mjs'),
 				[
+					"import { Schema } from 'effect'",
 					"import * as lambda from 'effect-lambda'",
 					"import * as oauth from '@ballatech/effect-oauth-client'",
 					"import { Distance } from 'effect-measure'",
 					"import * as distanceModule from 'effect-measure/Distance'",
 					'if (!lambda || !oauth || Distance !== distanceModule) throw new Error("imports failed")',
+					...distanceCodecCheck,
 					'console.log("OK ESM")',
 				].join('\n'),
 			)
@@ -137,12 +157,14 @@ describe('package tarballs work in CJS, ESM, and TS projects', () => {
 			fs.writeFileSync(
 				path.join(proj, 'index.ts'),
 				[
+					"import { Schema } from 'effect'",
 					"import * as lambda from 'effect-lambda'",
 					"import * as oauth from '@ballatech/effect-oauth-client'",
 					"import { Distance } from 'effect-measure'",
 					"import * as distanceModule from 'effect-measure/Distance'",
 					'// Ensure types are accessible',
 					'const distance: ReturnType<typeof Distance.meters> = distanceModule.meters(1)',
+					...distanceCodecCheck,
 					'const x: Record<string, unknown> = { lambda, oauth, distance }',
 					'console.log(!!x)',
 				].join('\n'),

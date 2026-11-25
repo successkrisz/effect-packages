@@ -11,6 +11,7 @@ import * as Sqs from 'effect-lambda/Sqs'
 import * as Distance from 'effect-measure/Distance'
 
 export const distanceInMiles = Distance.miles(1)
+export const exactDistance = Schema.toCodecJson(Distance.Schema)
 
 export const restApiHandler = RestApi.toLambdaHandler(
 	RestApi.normalizedEvent.pipe(Effect.flatMap((event) => HttpResponse.ok({ body: event.headers }))),
