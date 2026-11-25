@@ -74,6 +74,18 @@ class DistanceValue {
 		return BigDecimal.toNumberUnsafe(BigDecimal.divideUnsafe(self.#meters, metersPerMile))
 	}
 
+	static toMilesString(self: DistanceValue): Option.Option<string> {
+		const { value, scale } = self.#meters
+		// 1609.344 = (2^7 × 12,573) / 10^3. After division by 12,573,
+		// the remaining conversion factor is 10^3 / 2^7 = 78,125 / 10^4.
+		const mileDivisor = 12_573n
+		if (value % mileDivisor !== 0n) {
+			return Option.none()
+		}
+		const coefficient = (value / mileDivisor) * 78_125n
+		return Option.some(formatDecimal(BigDecimal.make(coefficient, scale + 4)))
+	}
+
 	static compare(self: DistanceValue, that: DistanceValue): -1 | 0 | 1 {
 		return BigDecimal.Order(self.#meters, that.#meters)
 	}
@@ -169,8 +181,9 @@ export const toKilometers: (self: Distance) => number = DistanceValue.toKilomete
 
 /**
  * Converts a distance to a number in miles. Decimal division can round a
- * repeating quotient before narrowing to a number, which can round or underflow
- * to zero. The stored distance is immutable.
+ * repeating quotient before narrowing to a number. The result can round,
+ * underflow to zero, or overflow to positive infinity. The stored distance is
+ * immutable.
  *
  * @category conversions
  * @since 0.1.0
@@ -406,6 +419,37 @@ export const FromKilometersString: schema.decodeTo<typeof Schema, schema.String>
 			decimalStringTransformation(
 				metersPerKilometer,
 				SchemaGetter.transform(DistanceValue.toKilometersString),
+			),
+		),
+	)
+
+/**
+ * Codec for exact decimal miles. Accepts unsigned base-10 digits with an
+ * optional fractional part and exponent. The exponent may have a sign. The
+ * scale (fraction digits minus the exponent) must be between -1,000 and 1,004.
+ * The distance may have up to 1,000 decimal places after conversion to meters.
+ * Encodes a canonical decimal string when the miles value has a terminating
+ * expansion. A repeating quotient fails with a Schema issue.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const FromMilesString: schema.decodeTo<typeof Schema, schema.String> =
+	unsignedDecimalString.pipe(
+		schema.decodeTo(
+			Schema,
+			decimalStringTransformation(
+				metersPerMile,
+				SchemaGetter.transformEffect((self: Distance, options) =>
+					Effect.fromOption(
+						DistanceValue.toMilesString(self),
+						() =>
+							new SchemaIssue.InvalidValue(
+								{ message: 'Distance has no terminating decimal expansion in miles' },
+								self,
+								options,
+							),
+					),
+				),
 			),
 		),
 	)
