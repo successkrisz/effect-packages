@@ -1,6 +1,6 @@
 # Distance v1
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Problem Statement
 
