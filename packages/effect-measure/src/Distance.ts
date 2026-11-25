@@ -3,7 +3,16 @@
  *
  * @since 0.1.0
  */
-import { BigDecimal, Equal, Hash, Option, Order as order } from 'effect'
+import {
+	BigDecimal,
+	Equal,
+	Hash,
+	Option,
+	Order as order,
+	Predicate,
+	SchemaTransformation,
+	Schema as schema,
+} from 'effect'
 
 const metersPerMeter = BigDecimal.fromBigInt(1n)
 const metersPerKilometer = BigDecimal.fromBigInt(1_000n)
@@ -34,17 +43,16 @@ class DistanceValue {
 		return BigDecimal.Order(self.#meters, that.#meters)
 	}
 
+	static isDistance(value: unknown): value is DistanceValue {
+		return Predicate.isObjectOrArray(value) && #meters in value
+	}
+
 	// Keep Effect's comparison protocols available without exposing them on the public type.
 	static {
 		Object.defineProperties(DistanceValue.prototype, {
 			[Equal.symbol]: {
 				value(this: DistanceValue, that: unknown): boolean {
-					return (
-						typeof that === 'object' &&
-						that !== null &&
-						#meters in that &&
-						DistanceValue.compare(this, that) === 0
-					)
+					return DistanceValue.isDistance(that) && DistanceValue.compare(this, that) === 0
 				},
 			},
 			[Hash.symbol]: {
@@ -148,3 +156,56 @@ export const equals = (self: Distance, that: Distance): boolean =>
  * @since 0.1.0
  */
 export const Order: order.Order<Distance> = order.make(DistanceValue.compare)
+
+/**
+ * Returns whether an unknown value is a distance constructed by this module.
+ * @category guards
+ * @since 0.1.0
+ */
+export const isDistance: (value: unknown) => value is Distance = DistanceValue.isDistance
+
+/**
+ * Schema for an existing distance value.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const Schema: schema.declare<Distance> = schema.declare(isDistance, { expected: 'Distance' })
+
+const nonNegativeFinite = schema.Finite.check(schema.isGreaterThanOrEqualTo(0))
+
+const fromNumber = (
+	construct: (value: number) => Option.Option<Distance>,
+	convert: (self: Distance) => number,
+): schema.decodeTo<typeof Schema, schema.Finite> =>
+	nonNegativeFinite.pipe(
+		schema.decodeTo(
+			Schema,
+			SchemaTransformation.transform({
+				// Every value accepted by the numeric schema is a valid constructor input.
+				decode: (value) => Option.getOrThrow(construct(value)),
+				encode: convert,
+			}),
+		),
+	)
+
+/**
+ * Codec for finite, nonnegative numbers in meters. Encoding may round and
+ * fails if conversion produces infinity.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const FromMeters: schema.decodeTo<typeof Schema, schema.Finite> = fromNumber(
+	meters,
+	toMeters,
+)
+
+/**
+ * Codec for finite, nonnegative numbers in kilometers. Encoding may round or
+ * underflow to zero and fails if conversion produces infinity.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const FromKilometers: schema.decodeTo<typeof Schema, schema.Finite> = fromNumber(
+	kilometers,
+	toKilometers,
+)
