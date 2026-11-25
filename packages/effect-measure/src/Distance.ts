@@ -1,119 +1,150 @@
 /**
- * Nonnegative lengths measured to the nearest millimeter.
+ * Immutable, nonnegative lengths with exact decimal construction and comparison.
  *
  * @since 0.1.0
  */
-import { BigDecimal, Option, Order as order } from 'effect'
+import { BigDecimal, Equal, Hash, Option, Order as order } from 'effect'
 
-const Millimeters = Symbol('effect-measure/Distance/millimeters')
-const millimetersPerMeter = 1_000
-const millimetersPerKilometer = 1_000_000
-const millimetersPerMile = 1_609_344
-const maxMillimeters = BigDecimal.fromBigInt(BigInt(Number.MAX_SAFE_INTEGER))
+const metersPerMeter = BigDecimal.fromBigInt(1n)
+const metersPerKilometer = BigDecimal.fromBigInt(1_000n)
+const metersPerMile = BigDecimal.fromStringUnsafe('1609.344')
+const kilometersPerMeter = BigDecimal.fromStringUnsafe('0.001')
+
+class DistanceValue {
+	readonly #meters: BigDecimal.BigDecimal
+
+	constructor(meters: BigDecimal.BigDecimal) {
+		this.#meters = meters
+		Object.freeze(this)
+	}
+
+	static toMeters(self: DistanceValue): number {
+		return BigDecimal.toNumberUnsafe(self.#meters)
+	}
+
+	static toKilometers(self: DistanceValue): number {
+		return BigDecimal.toNumberUnsafe(BigDecimal.multiply(self.#meters, kilometersPerMeter))
+	}
+
+	static toMiles(self: DistanceValue): number {
+		return BigDecimal.toNumberUnsafe(BigDecimal.divideUnsafe(self.#meters, metersPerMile))
+	}
+
+	static compare(self: DistanceValue, that: DistanceValue): -1 | 0 | 1 {
+		return BigDecimal.Order(self.#meters, that.#meters)
+	}
+
+	// Keep Effect's comparison protocols available without exposing them on the public type.
+	static {
+		Object.defineProperties(DistanceValue.prototype, {
+			[Equal.symbol]: {
+				value(this: DistanceValue, that: unknown): boolean {
+					return (
+						typeof that === 'object' &&
+						that !== null &&
+						#meters in that &&
+						DistanceValue.compare(this, that) === 0
+					)
+				},
+			},
+			[Hash.symbol]: {
+				value(this: DistanceValue): number {
+					return Hash.hash(this.#meters)
+				},
+			},
+		})
+	}
+}
 
 /**
- * An immutable distance with millimeter precision.
- *
+ * An immutable distance stored in decimal meters.
  * @category models
  * @since 0.1.0
  */
-export interface Distance {
-	readonly [Millimeters]: number
-}
+export interface Distance extends DistanceValue {}
 
-const makeDistance = (value: number, millimetersPerUnit: number): Option.Option<Distance> => {
+const makeDistance = (
+	value: number,
+	metersPerUnit: BigDecimal.BigDecimal,
+): Option.Option<Distance> => {
 	// fromNumber reads the number's decimal representation, including scientific notation.
 	const decimal = BigDecimal.fromNumber(value)
 	if (Option.isNone(decimal) || value < 0) {
 		return Option.none()
 	}
 
-	const scaled = BigDecimal.multiply(decimal.value, BigDecimal.fromNumberUnsafe(millimetersPerUnit))
-	if (BigDecimal.isGreaterThan(scaled, maxMillimeters)) {
-		return Option.none()
-	}
-
-	const rounded = BigDecimal.round(scaled, { mode: 'half-ceil' })
-	// The rounded count is a safe integer, so converting to number is exact.
-	return Option.some(Object.freeze({ [Millimeters]: BigDecimal.toNumberUnsafe(rounded) }))
+	return Option.some(new DistanceValue(BigDecimal.multiply(decimal.value, metersPerUnit)))
 }
 
 /**
- * Constructs a distance from a length in meters. Rounds to the nearest millimeter,
- * with halfway values rounding up.
- * Returns `None` for negative or non-finite input, or if the exact length exceeds
- * `Number.MAX_SAFE_INTEGER` millimeters.
+ * Constructs a distance from a length in meters, preserving the input's decimal
+ * representation. Returns `None` for negative or non-finite input.
  *
  * @category constructors
  * @since 0.1.0
  */
 export const meters = (value: number): Option.Option<Distance> =>
-	makeDistance(value, millimetersPerMeter)
+	makeDistance(value, metersPerMeter)
 
 /**
- * Constructs a distance from a length in kilometers. Rounds to the nearest millimeter,
- * with halfway values rounding up.
- * Returns `None` for negative or non-finite input, or if the exact length exceeds
- * `Number.MAX_SAFE_INTEGER` millimeters.
+ * Constructs a distance from a length in kilometers, preserving the input's
+ * decimal representation. Returns `None` for negative or non-finite input.
  *
  * @category constructors
  * @since 0.1.0
  */
 export const kilometers = (value: number): Option.Option<Distance> =>
-	makeDistance(value, millimetersPerKilometer)
+	makeDistance(value, metersPerKilometer)
 
 /**
- * Constructs a distance from a length in miles. Rounds to the nearest millimeter,
- * with halfway values rounding up.
- * Returns `None` for negative or non-finite input, or if the exact length exceeds
- * `Number.MAX_SAFE_INTEGER` millimeters.
+ * Constructs a distance from a length in miles, preserving the input's decimal
+ * representation. Returns `None` for negative or non-finite input.
  *
  * @category constructors
  * @since 0.1.0
  */
-export const miles = (value: number): Option.Option<Distance> =>
-	makeDistance(value, millimetersPerMile)
+export const miles = (value: number): Option.Option<Distance> => makeDistance(value, metersPerMile)
 
 /**
- * Converts a distance to a number in meters.
+ * Converts a distance to a number in meters. The result can round or overflow
+ * to positive infinity. The stored distance is immutable.
  *
  * @category conversions
  * @since 0.1.0
  */
-export const toMeters = (self: Distance): number => self[Millimeters] / millimetersPerMeter
+export const toMeters: (self: Distance) => number = DistanceValue.toMeters
 
 /**
- * Converts a distance to a number in kilometers.
+ * Converts a distance to a number in kilometers. Decimal scaling occurs before
+ * narrowing to a number, which can round, underflow to zero, or overflow to
+ * positive infinity. The stored distance is immutable.
  *
  * @category conversions
  * @since 0.1.0
  */
-export const toKilometers = (self: Distance): number => self[Millimeters] / millimetersPerKilometer
+export const toKilometers: (self: Distance) => number = DistanceValue.toKilometers
 
 /**
- * Converts a distance to a number in miles.
+ * Converts a distance to a number in miles. Decimal division can round a
+ * repeating quotient before narrowing to a number, which can round or underflow
+ * to zero. The stored distance is immutable.
  *
  * @category conversions
  * @since 0.1.0
  */
-export const toMiles = (self: Distance): number => self[Millimeters] / millimetersPerMile
+export const toMiles: (self: Distance) => number = DistanceValue.toMiles
 
 /**
- * Returns whether two distances have the same millimeter count.
- *
+ * Returns whether two distances have numerically equal decimal meter values.
  * @category equivalence
  * @since 0.1.0
  */
 export const equals = (self: Distance, that: Distance): boolean =>
-	self[Millimeters] === that[Millimeters]
+	DistanceValue.compare(self, that) === 0
 
 /**
- * Orders distances by ascending millimeter count.
- *
+ * Orders distances by ascending decimal meter value.
  * @category ordering
  * @since 0.1.0
  */
-export const Order: order.Order<Distance> = order.mapInput(
-	order.Number,
-	(self: Distance) => self[Millimeters],
-)
+export const Order: order.Order<Distance> = order.make(DistanceValue.compare)

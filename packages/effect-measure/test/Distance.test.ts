@@ -9,7 +9,7 @@ it('compares a route length in meters with a kilometer threshold and displays al
 	assert.strictEqual(Distance.Order(route, threshold), -1)
 	assert.strictEqual(Distance.toKilometers(route), 1.75)
 	assert.strictEqual(Distance.toMeters(threshold), 2000)
-	assert.strictEqual(Distance.toMiles(route), 1_750_000 / 1_609_344)
+	assert.strictEqual(Distance.toMiles(route), 1.0873995864153345)
 })
 
 it('accepts zero and rejects negative and non-finite lengths in all three units', () => {
@@ -29,56 +29,39 @@ it('accepts zero and rejects negative and non-finite lengths in all three units'
 	assert.strictEqual(Distance.toMiles(Option.getOrThrow(Distance.miles(0))), 0)
 })
 
-it('rounds exact decimal values to the nearest millimeter with ties up', () => {
-	for (const [input, expectedMeters] of [
-		[0.50049, 0.5],
-		[0.5005, 0.501],
-		[0.50051, 0.501],
-	] as const) {
-		assert.strictEqual(Distance.toMeters(Option.getOrThrow(Distance.meters(input))), expectedMeters)
-	}
+it('preserves submillimeter precision across meters and kilometers', () => {
+	const below = Option.getOrThrow(Distance.meters(0.50049))
+	const at = Option.getOrThrow(Distance.meters(0.5005))
+	const above = Option.getOrThrow(Distance.meters(0.50051))
 
-	for (const [input, expectedKilometers] of [
-		[4.999999999999999e-7, 0],
-		[5e-7, 0.000001],
-		[5.000000000000001e-7, 0.000001],
-	] as const) {
-		assert.strictEqual(
-			Distance.toKilometers(Option.getOrThrow(Distance.kilometers(input))),
-			expectedKilometers,
-		)
-	}
+	assert.strictEqual(Distance.toMeters(at), 0.5005)
+	assert.strictEqual(Distance.Order(below, at), -1)
+	assert.strictEqual(Distance.Order(at, above), -1)
 
-	// 0.00390625 miles is exactly 6,286.5 millimeters.
-	for (const [input, expectedMeters] of [
-		[0.0039062499999999996, 6.286],
-		[0.00390625, 6.287],
-		[0.003906250000000001, 6.287],
-	] as const) {
-		assert.strictEqual(Distance.toMeters(Option.getOrThrow(Distance.miles(input))), expectedMeters)
-	}
+	const tinyKilometers = Option.getOrThrow(Distance.kilometers(5e-7))
+	const tinyMeters = Option.getOrThrow(Distance.meters(0.0005))
+	assert.strictEqual(Distance.toMeters(tinyKilometers), 0.0005)
+	assert.isTrue(Distance.equals(tinyKilometers, tinyMeters))
+	assert.strictEqual(Distance.Order(tinyKilometers, tinyMeters), 0)
 })
 
-it('accepts the representable lengths below the millimeter cap and rejects the next lengths above it', () => {
-	const metersBelow = Option.getOrThrow(Distance.meters(9_007_199_254_740.99))
-	const kilometersBelow = Option.getOrThrow(Distance.kilometers(9_007_199_254.74099))
+it('preserves fractional miles when converting to meters', () => {
+	const distance = Option.getOrThrow(Distance.miles(0.00390625))
 
-	assert.strictEqual(Distance.toKilometers(metersBelow), 9_007_199_254.74099)
-	assert.strictEqual(Distance.toMeters(kilometersBelow), 9_007_199_254_740.99)
-	assert.isTrue(Option.isNone(Distance.meters(9_007_199_254_740.992)))
-	assert.isTrue(Option.isNone(Distance.kilometers(9_007_199_254.740992)))
+	assert.strictEqual(Distance.toMeters(distance), 6.2865)
+	assert.strictEqual(Distance.toMiles(distance), 0.00390625)
 })
 
-it('checks the mile cap and rounds from the exact decimal length', () => {
-	const belowCap = Option.getOrThrow(Distance.miles(5_596_814_139.637635))
-	const expected = Option.getOrThrow(Distance.meters(9_007_199_254_740.99))
-	assert.isTrue(Distance.equals(belowCap, expected))
-	assert.isTrue(Option.isNone(Distance.miles(5_596_814_139.637636)))
+it('accepts and orders finite distances on both sides of the former millimeter cap', () => {
+	const below = Option.getOrThrow(Distance.meters(9_007_199_254_740.99))
+	const above = Option.getOrThrow(Distance.meters(9_007_199_254_740.992))
+	const equivalent = Option.getOrThrow(Distance.kilometers(9_007_199_254.740992))
 
-	// The exact scaled length ends in 988.452096 mm and rounds down.
-	const roundsDown = Option.getOrThrow(Distance.miles(5_596_814_139.637634))
-	const roundedMetric = Option.getOrThrow(Distance.kilometers(9_007_199_254.740988))
-	assert.isTrue(Distance.equals(roundsDown, roundedMetric))
+	assert.strictEqual(Distance.toMeters(below), 9_007_199_254_740.99)
+	assert.strictEqual(Distance.toMeters(above), 9_007_199_254_740.992)
+	assert.strictEqual(Distance.Order(below, above), -1)
+	assert.isTrue(Distance.equals(above, equivalent))
+	assert.strictEqual(Distance.Order(above, equivalent), 0)
 })
 
 it('compares equivalent lengths and sorts distances across all three units', () => {
@@ -92,41 +75,57 @@ it('compares equivalent lengths and sorts distances across all three units', () 
 		assert.strictEqual(Distance.toMiles(equivalent), 1)
 	}
 
-	const halfMile = Option.getOrThrow(Distance.miles(0.5))
-	assert.strictEqual(Distance.toMeters(halfMile), 804.672)
-	assert.strictEqual(Distance.toMiles(halfMile), 0.5)
+	assert.strictEqual(Distance.toMeters(mile), 1_609.344)
+	assert.strictEqual(Distance.toKilometers(mile), 1.609344)
 
 	const shorter = Option.getOrThrow(Distance.kilometers(1.5))
-	const oneMillimeterLonger = Option.getOrThrow(Distance.meters(1_609.345))
-	assert.isFalse(Distance.equals(mile, oneMillimeterLonger))
-	assert.deepStrictEqual([oneMillimeterLonger, shorter, mile].sort(Distance.Order), [
-		shorter,
-		mile,
-		oneMillimeterLonger,
-	])
+	const longer = Option.getOrThrow(Distance.meters(1_609.3441))
+	assert.isFalse(Distance.equals(mile, longer))
+	const sorted = [longer, shorter, mile].sort(Distance.Order)
+
+	assert.strictEqual(sorted[0], shorter)
+	assert.strictEqual(sorted[1], mile)
+	assert.strictEqual(sorted[2], longer)
 })
 
-it('orders distances one millimeter apart near the cap even when displayed miles coincide', () => {
-	// The mile input scales to 9,007,199,254,740,986.842752 mm.
-	const shorter = Option.getOrThrow(Distance.miles(5_596_814_139.637633))
-	const oneMillimeterLonger = Option.getOrThrow(Distance.kilometers(9_007_199_254.740988))
+it('compares distances whose numeric meter conversions coincide', () => {
+	const shorter = Option.getOrThrow(Distance.meters(100.00000000000001))
+	const longer = Option.getOrThrow(Distance.kilometers(0.10000000000000002))
 
-	assert.strictEqual(Distance.toMiles(shorter), Distance.toMiles(oneMillimeterLonger))
-	assert.isFalse(Distance.equals(shorter, oneMillimeterLonger))
-	assert.strictEqual(Distance.Order(shorter, oneMillimeterLonger), -1)
-	assert.strictEqual(Distance.Order(oneMillimeterLonger, shorter), 1)
+	assert.strictEqual(Distance.toMeters(shorter), Distance.toMeters(longer))
+	assert.isFalse(Distance.equals(shorter, longer))
+	assert.strictEqual(Distance.Order(shorter, longer), -1)
+	assert.strictEqual(Distance.Order(longer, shorter), 1)
 })
 
-it('compares mixed units by millimeters even when display values coincide', () => {
-	const shorter = Option.getOrThrow(Distance.meters(9_007_199_254_740.96))
-	const equivalent = Option.getOrThrow(Distance.kilometers(9_007_199_254.74096))
-	const oneMillimeterLonger = Option.getOrThrow(Distance.kilometers(9_007_199_254.740961))
+it('preserves positive distances in every unit at the smallest positive input', () => {
+	const zero = Option.getOrThrow(Distance.meters(0))
+	const meters = Option.getOrThrow(Distance.meters(Number.MIN_VALUE))
+	const kilometers = Option.getOrThrow(Distance.kilometers(Number.MIN_VALUE))
+	const miles = Option.getOrThrow(Distance.miles(Number.MIN_VALUE))
 
-	assert.isTrue(Distance.equals(shorter, equivalent))
-	assert.strictEqual(Distance.Order(shorter, equivalent), 0)
+	assert.strictEqual(Distance.toMeters(meters), Number.MIN_VALUE)
+	assert.strictEqual(Distance.toKilometers(kilometers), Number.MIN_VALUE)
+	assert.strictEqual(Distance.toMiles(miles), Number.MIN_VALUE)
+	assert.strictEqual(Distance.toKilometers(meters), 0)
+	assert.strictEqual(Distance.toMiles(meters), 0)
+	for (const positive of [meters, kilometers, miles]) {
+		assert.isFalse(Distance.equals(positive, zero))
+		assert.strictEqual(Distance.Order(positive, zero), 1)
+	}
+})
 
-	assert.strictEqual(Distance.toMeters(shorter), Distance.toMeters(oneMillimeterLonger))
-	assert.isFalse(Distance.equals(shorter, oneMillimeterLonger))
-	assert.strictEqual(Distance.Order(shorter, oneMillimeterLonger), -1)
-	assert.strictEqual(Distance.Order(oneMillimeterLonger, shorter), 1)
+it('converts maximum inputs back to their source units and compares them after meter overflow', () => {
+	const meters = Option.getOrThrow(Distance.meters(Number.MAX_VALUE))
+	const kilometers = Option.getOrThrow(Distance.kilometers(Number.MAX_VALUE))
+	const miles = Option.getOrThrow(Distance.miles(Number.MAX_VALUE))
+
+	assert.strictEqual(Distance.toMeters(meters), Number.MAX_VALUE)
+	assert.strictEqual(Distance.toKilometers(kilometers), Number.MAX_VALUE)
+	assert.strictEqual(Distance.toMiles(miles), Number.MAX_VALUE)
+	assert.strictEqual(Distance.toMeters(kilometers), Number.POSITIVE_INFINITY)
+	assert.strictEqual(Distance.toMeters(miles), Number.POSITIVE_INFINITY)
+	assert.isFalse(Distance.equals(kilometers, miles))
+	assert.strictEqual(Distance.Order(meters, kilometers), -1)
+	assert.strictEqual(Distance.Order(kilometers, miles), -1)
 })
