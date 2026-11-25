@@ -1,5 +1,5 @@
 import { assert, it } from '@effect/vitest'
-import { Option } from 'effect'
+import { Equal, Option } from 'effect'
 import { Distance } from 'effect-measure'
 
 it('compares a route length in meters with a kilometer threshold and displays all three units', () => {
@@ -86,6 +86,15 @@ it('compares equivalent lengths and sorts distances across all three units', () 
 	assert.strictEqual(sorted[0], shorter)
 	assert.strictEqual(sorted[1], mile)
 	assert.strictEqual(sorted[2], longer)
+})
+
+it('compares equivalent and distinct distances using Effect Equal', () => {
+	const mile = Option.getOrThrow(Distance.miles(1))
+	const equivalent = Option.getOrThrow(Distance.meters(1_609.344))
+	const distinct = Option.getOrThrow(Distance.meters(1_609.3441))
+
+	assert.isTrue(Equal.equals(mile, equivalent))
+	assert.isFalse(Equal.equals(mile, distinct))
 })
 
 it('compares distances whose numeric meter conversions coincide', () => {

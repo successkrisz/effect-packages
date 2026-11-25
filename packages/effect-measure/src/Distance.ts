@@ -8,7 +8,7 @@ import { BigDecimal, Equal, Hash, Option, Order as order } from 'effect'
 const metersPerMeter = BigDecimal.fromBigInt(1n)
 const metersPerKilometer = BigDecimal.fromBigInt(1_000n)
 const metersPerMile = BigDecimal.fromStringUnsafe('1609.344')
-const kilometersPerMeter = BigDecimal.fromStringUnsafe('0.001')
+const kilometersPerMeter = BigDecimal.divideUnsafe(metersPerMeter, metersPerKilometer)
 
 class DistanceValue {
 	readonly #meters: BigDecimal.BigDecimal
