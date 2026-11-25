@@ -10,9 +10,11 @@ import {
 	Option,
 	Order as order,
 	Predicate,
+	Reducer,
 	SchemaTransformation,
 	Schema as schema,
 } from 'effect'
+import { dual } from 'effect/Function'
 
 const metersPerMeter = BigDecimal.fromBigInt(1n)
 const metersPerKilometer = BigDecimal.fromBigInt(1_000n)
@@ -25,6 +27,22 @@ class DistanceValue {
 	constructor(meters: BigDecimal.BigDecimal) {
 		this.#meters = meters
 		Object.freeze(this)
+	}
+
+	static isZero(self: DistanceValue): boolean {
+		return BigDecimal.isZero(self.#meters)
+	}
+
+	static sum(self: DistanceValue, that: DistanceValue): DistanceValue {
+		return new DistanceValue(BigDecimal.sum(self.#meters, that.#meters))
+	}
+
+	static subtract(self: DistanceValue, that: DistanceValue): Option.Option<DistanceValue> {
+		const remaining = BigDecimal.subtract(self.#meters, that.#meters)
+		if (BigDecimal.isNegative(remaining)) {
+			return Option.none()
+		}
+		return Option.some(BigDecimal.isZero(remaining) ? zero : new DistanceValue(remaining))
 	}
 
 	static toMeters(self: DistanceValue): number {
@@ -149,6 +167,48 @@ export const toMiles: (self: Distance) => number = DistanceValue.toMiles
  */
 export const equals = (self: Distance, that: Distance): boolean =>
 	DistanceValue.compare(self, that) === 0
+
+/**
+ * The distance of zero meters.
+ * @category constructors
+ * @since 0.1.0
+ */
+export const zero: Distance = new DistanceValue(BigDecimal.fromBigInt(0n))
+
+/**
+ * Returns whether a distance is exactly zero.
+ * @category predicates
+ * @since 0.1.0
+ */
+export const isZero: (self: Distance) => boolean = DistanceValue.isZero
+
+/**
+ * Adds two distances exactly in decimal meters.
+ * @category math
+ * @since 0.1.0
+ */
+export const sum: {
+	(that: Distance): (self: Distance) => Distance
+	(self: Distance, that: Distance): Distance
+} = dual(2, DistanceValue.sum)
+
+/**
+ * Subtracts `that` from `self` exactly. Returns `None` when `that` exceeds
+ * `self` and `Some(zero)` when the distances are equal.
+ * @category math
+ * @since 0.1.0
+ */
+export const subtract: {
+	(that: Distance): (self: Distance) => Option.Option<Distance>
+	(self: Distance, that: Distance): Option.Option<Distance>
+} = dual(2, DistanceValue.subtract)
+
+/**
+ * Folds an iterable of distances using exact addition, starting from zero.
+ * @category math
+ * @since 0.1.0
+ */
+export const ReducerSum: Reducer.Reducer<Distance> = Reducer.make(sum, zero)
 
 /**
  * Orders distances by ascending decimal meter value.
