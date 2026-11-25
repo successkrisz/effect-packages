@@ -5,12 +5,15 @@
  */
 import {
 	BigDecimal,
+	Effect,
 	Equal,
 	Hash,
 	Option,
 	Order as order,
 	Predicate,
 	Reducer,
+	SchemaGetter,
+	SchemaIssue,
 	SchemaTransformation,
 	Schema as schema,
 } from 'effect'
@@ -50,7 +53,19 @@ class DistanceValue {
 	}
 
 	static toKilometers(self: DistanceValue): number {
-		return BigDecimal.toNumberUnsafe(BigDecimal.multiply(self.#meters, kilometersPerMeter))
+		return BigDecimal.toNumberUnsafe(DistanceValue.#toDecimalKilometers(self))
+	}
+
+	static toMetersString(self: DistanceValue): string {
+		return formatDecimal(self.#meters)
+	}
+
+	static toKilometersString(self: DistanceValue): string {
+		return formatDecimal(DistanceValue.#toDecimalKilometers(self))
+	}
+
+	static #toDecimalKilometers(self: DistanceValue): BigDecimal.BigDecimal {
+		return BigDecimal.multiply(self.#meters, kilometersPerMeter)
 	}
 
 	static toMiles(self: DistanceValue): number {
@@ -225,11 +240,15 @@ export const Order: order.Order<Distance> = order.make(DistanceValue.compare)
 export const isDistance: (value: unknown) => value is Distance = DistanceValue.isDistance
 
 /**
- * Schema for an existing distance value.
+ * Schema for an existing distance value. Its derived JSON codec uses a
+ * canonical decimal meter string.
  * @category schemas
  * @since 0.1.0
  */
-export const Schema: schema.declare<Distance> = schema.declare(isDistance, { expected: 'Distance' })
+export const Schema: schema.declare<Distance> = schema.declare(isDistance, {
+	expected: 'Distance',
+	toCodecJson: () => schema.link<Distance>()(unsignedDecimalString, metersStringTransformation),
+})
 
 const nonNegativeFinite = schema.Finite.check(schema.isGreaterThanOrEqualTo(0))
 
@@ -269,3 +288,92 @@ export const FromKilometers: schema.decodeTo<typeof Schema, schema.Finite> = fro
 	kilometers,
 	toKilometers,
 )
+
+const unsignedDecimalString = schema.String.check(
+	schema.isPattern(/^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u, {
+		expected: 'an unsigned decimal string',
+	}),
+)
+
+const minWireScale = -1_000
+const maxMeterScale = 1_000
+// A terminating mile quotient can add up to four decimal places.
+const maxWireScale = maxMeterScale + 4
+
+const formatDecimal = (decimal: BigDecimal.BigDecimal): string =>
+	// Very large integers use plain digits so decoding does not require a larger scale shift.
+	BigDecimal.normalize(decimal).scale < minWireScale
+		? BigDecimal.scale(decimal, 0).value.toString()
+		: BigDecimal.format(decimal)
+
+const decimalStringTransformation = (
+	metersPerUnit: BigDecimal.BigDecimal,
+	encode: SchemaGetter.Getter<string, Distance>,
+): SchemaTransformation.Transformation<Distance, string> =>
+	SchemaTransformation.makeTransformation({
+		decode: SchemaGetter.transformEffect((text: string, options) => {
+			const decimal = BigDecimal.fromString(text)
+			if (
+				Option.isNone(decimal) ||
+				decimal.value.scale < minWireScale ||
+				decimal.value.scale > maxWireScale
+			) {
+				return Effect.fail(
+					new SchemaIssue.InvalidValue(
+						{ expected: `a decimal scale between ${minWireScale} and ${maxWireScale}` },
+						text,
+						options,
+					),
+				)
+			}
+			const meters = BigDecimal.multiply(decimal.value, metersPerUnit)
+			if (BigDecimal.normalize(meters).scale > maxMeterScale) {
+				return Effect.fail(
+					new SchemaIssue.InvalidValue(
+						{ expected: `a length with at most ${maxMeterScale} decimal places in meters` },
+						text,
+						options,
+					),
+				)
+			}
+			return Effect.succeed(new DistanceValue(meters))
+		}),
+		encode,
+	})
+
+const metersStringTransformation = decimalStringTransformation(
+	metersPerMeter,
+	SchemaGetter.transform(DistanceValue.toMetersString),
+)
+
+/**
+ * Codec for exact decimal meters. Accepts unsigned base-10 digits with an
+ * optional fractional part and exponent. The exponent may have a sign. The
+ * scale (fraction digits minus the exponent) must be between -1,000 and 1,004.
+ * The distance may have up to 1,000 decimal places in meters. Encodes a
+ * canonical decimal string.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const FromMetersString: schema.decodeTo<typeof Schema, schema.String> =
+	unsignedDecimalString.pipe(schema.decodeTo(Schema, metersStringTransformation))
+
+/**
+ * Codec for exact decimal kilometers. Accepts unsigned base-10 digits with an
+ * optional fractional part and exponent. The exponent may have a sign. The
+ * scale (fraction digits minus the exponent) must be between -1,000 and 1,004.
+ * The distance may have up to 1,000 decimal places after conversion to meters.
+ * Encodes a canonical decimal string.
+ * @category schemas
+ * @since 0.1.0
+ */
+export const FromKilometersString: schema.decodeTo<typeof Schema, schema.String> =
+	unsignedDecimalString.pipe(
+		schema.decodeTo(
+			Schema,
+			decimalStringTransformation(
+				metersPerKilometer,
+				SchemaGetter.transform(DistanceValue.toKilometersString),
+			),
+		),
+	)
