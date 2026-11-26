@@ -16,6 +16,8 @@ import type * as HttpClient from "../http/HttpClient.ts"
 import * as HttpClientRequest from "../http/HttpClientRequest.ts"
 import * as Layer from "../Layer.ts"
 import type * as Tracer from "../Tracer.ts"
+import type { Concurrency } from "../Types.ts"
+import type * as OtlpExporter from "./OtlpExporter.ts"
 import * as OtlpLogger from "./OtlpLogger.ts"
 import type { AggregationTemporality } from "./OtlpMetrics.ts"
 import * as OtlpMetrics from "./OtlpMetrics.ts"
@@ -30,6 +32,10 @@ import * as OtlpTracer from "./OtlpTracer.ts"
  * The layer sends data to `/v1/logs`, `/v1/metrics`, and `/v1/traces` below
  * `baseUrl` and requires an `OtlpSerialization` implementation.
  *
+ * The layer provides the `OtlpExporter.Flusher` shared by all three signals,
+ * so one `flush` exports their buffered telemetry, for example before a
+ * serverless instance is suspended.
+ *
  * @stability unstable
  * @category layers
  * @since 4.0.0
@@ -42,7 +48,17 @@ export const layer = (options: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /**
+   * Request compression. Defaults to "none". Gzip uses
+   * HttpClientRequest's default minimum body size of 1KB.
+   */
+  readonly compression?: "gzip" | "none" | undefined
   readonly maxBatchSize?: number | undefined
+  /** Maximum pending queued spans/logs (does not include in-flight batches). */
+  readonly maxQueueSize?: number | undefined
+  /** Maximum concurrent export requests for spans/logs, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly tracerContext?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
   readonly loggerExportInterval?: Duration.Input | undefined
   readonly loggerExcludeLogSpans?: boolean | undefined
@@ -51,7 +67,7 @@ export const layer = (options: {
   readonly metricsTemporality?: AggregationTemporality | undefined
   readonly tracerExportInterval?: Duration.Input | undefined
   readonly shutdownTimeout?: Duration.Input | undefined
-}): Layer.Layer<never, never, HttpClient.HttpClient | OtlpSerialization.OtlpSerialization> => {
+}): Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient | OtlpSerialization.OtlpSerialization> => {
   const base = HttpClientRequest.get(options.baseUrl)
   const url = (path: string) => HttpClientRequest.appendUrl(base, path).url
   return Layer.mergeAll(
@@ -59,8 +75,12 @@ export const layer = (options: {
       url: url("/v1/logs"),
       resource: options.resource,
       headers: options.headers,
+      compression: options.compression,
       exportInterval: options.loggerExportInterval,
       maxBatchSize: options.maxBatchSize,
+      maxQueueSize: options.maxQueueSize,
+      concurrency: options.concurrency,
+      onDrop: options.onDrop,
       shutdownTimeout: options.shutdownTimeout,
       excludeLogSpans: options.loggerExcludeLogSpans,
       mergeWithExisting: options.loggerMergeWithExisting
@@ -69,6 +89,7 @@ export const layer = (options: {
       url: url("/v1/metrics"),
       resource: options.resource,
       headers: options.headers,
+      compression: options.compression,
       exportInterval: options.metricsExportInterval,
       shutdownTimeout: options.shutdownTimeout,
       temporality: options.metricsTemporality
@@ -77,8 +98,12 @@ export const layer = (options: {
       url: url("/v1/traces"),
       resource: options.resource,
       headers: options.headers,
+      compression: options.compression,
       exportInterval: options.tracerExportInterval,
       maxBatchSize: options.maxBatchSize,
+      maxQueueSize: options.maxQueueSize,
+      concurrency: options.concurrency,
+      onDrop: options.onDrop,
       context: options.tracerContext,
       shutdownTimeout: options.shutdownTimeout
     })
@@ -88,6 +113,12 @@ export const layer = (options: {
 /**
  * Creates a combined OTLP layer for logs, metrics, and traces from
  * OpenTelemetry configuration.
+ *
+ * **Details**
+ *
+ * The layer provides the `OtlpExporter.Flusher` shared by all enabled signals.
+ * It is provided even when configuration disables every signal, in which case
+ * `flush` is a no-op.
  *
  * @stability unstable
  * @category layers
@@ -100,14 +131,19 @@ export const layerFromConfig = (options?: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /** Maximum concurrent export requests for spans/logs, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly tracerContext?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
   readonly loggerExcludeLogSpans?: boolean | undefined
   readonly loggerMergeWithExisting?: boolean | undefined
-}): Layer.Layer<never, never, HttpClient.HttpClient | OtlpSerialization.OtlpSerialization> =>
+}): Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient | OtlpSerialization.OtlpSerialization> =>
   Layer.mergeAll(
     OtlpLogger.layerFromConfig({
       resource: options?.resource,
       headers: options?.headers,
+      concurrency: options?.concurrency,
+      onDrop: options?.onDrop,
       excludeLogSpans: options?.loggerExcludeLogSpans,
       mergeWithExisting: options?.loggerMergeWithExisting
     }),
@@ -118,6 +154,8 @@ export const layerFromConfig = (options?: {
     OtlpTracer.layerFromConfig({
       resource: options?.resource,
       headers: options?.headers,
+      concurrency: options?.concurrency,
+      onDrop: options?.onDrop,
       context: options?.tracerContext
     })
   )
@@ -138,7 +176,17 @@ export const layerJson: (options: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /**
+   * Request compression. Defaults to "none". Gzip uses
+   * HttpClientRequest's default minimum body size of 1KB.
+   */
+  readonly compression?: "gzip" | "none" | undefined
   readonly maxBatchSize?: number | undefined
+  /** Maximum pending queued spans/logs (does not include in-flight batches). */
+  readonly maxQueueSize?: number | undefined
+  /** Maximum concurrent export requests for spans/logs, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly tracerContext?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
   readonly loggerExportInterval?: Duration.Input | undefined
   readonly loggerExcludeLogSpans?: boolean | undefined
@@ -147,7 +195,10 @@ export const layerJson: (options: {
   readonly metricsTemporality?: AggregationTemporality | undefined
   readonly tracerExportInterval?: Duration.Input | undefined
   readonly shutdownTimeout?: Duration.Input | undefined
-}) => Layer.Layer<never, never, HttpClient.HttpClient> = flow(layer, Layer.provide(OtlpSerialization.layerJson))
+}) => Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient> = flow(
+  layer,
+  Layer.provide(OtlpSerialization.layerJson)
+)
 
 /**
  * Creates the combined OTLP logs, metrics, and traces layer using protobuf
@@ -165,7 +216,17 @@ export const layerProtobuf: (options: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /**
+   * Request compression. Defaults to "none". Gzip uses
+   * HttpClientRequest's default minimum body size of 1KB.
+   */
+  readonly compression?: "gzip" | "none" | undefined
   readonly maxBatchSize?: number | undefined
+  /** Maximum pending queued spans/logs (does not include in-flight batches). */
+  readonly maxQueueSize?: number | undefined
+  /** Maximum concurrent export requests for spans/logs, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly tracerContext?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
   readonly loggerExportInterval?: Duration.Input | undefined
   readonly loggerExcludeLogSpans?: boolean | undefined
@@ -174,4 +235,7 @@ export const layerProtobuf: (options: {
   readonly metricsTemporality?: AggregationTemporality | undefined
   readonly tracerExportInterval?: Duration.Input | undefined
   readonly shutdownTimeout?: Duration.Input | undefined
-}) => Layer.Layer<never, never, HttpClient.HttpClient> = flow(layer, Layer.provide(OtlpSerialization.layerProtobuf))
+}) => Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient> = flow(
+  layer,
+  Layer.provide(OtlpSerialization.layerProtobuf)
+)

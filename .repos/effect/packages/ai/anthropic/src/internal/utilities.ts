@@ -4,6 +4,7 @@ import * as Predicate from "effect/Predicate"
 const finishReasonMap: Record<string, Response.FinishReason> = {
   end_turn: "stop",
   max_tokens: "length",
+  model_context_window_exceeded: "length",
   pause_turn: "pause",
   refusal: "content-filter",
   stop_sequence: "stop",
@@ -13,13 +14,13 @@ const finishReasonMap: Record<string, Response.FinishReason> = {
 /** @internal */
 export const resolveFinishReason = (
   finishReason: string,
-  isJsonResponse: boolean = false
+  hasStructuredOutputTool: boolean = false
 ): Response.FinishReason => {
   const reason = Object.hasOwn(finishReasonMap, finishReason) ? finishReasonMap[finishReason] : undefined
   if (Predicate.isUndefined(reason)) {
     return "unknown"
   }
-  if (isJsonResponse && reason === "tool-calls") {
+  if (hasStructuredOutputTool && reason === "tool-calls") {
     return "stop"
   }
   return reason

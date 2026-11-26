@@ -72,7 +72,7 @@ export const useAtomValue: {
 function createAtomAccessor<A>(registry: AtomRegistry.AtomRegistry, atom: () => Atom.Atom<A>): Accessor<A> {
   const [value, setValue] = createSignal<A>(null as any)
   createComputed(() => {
-    onCleanup(registry.subscribe(atom(), setValue as any, constImmediate))
+    onCleanup(registry.subscribe(atom(), (next) => setValue(() => next), constImmediate))
   })
   return value
 }
@@ -151,6 +151,13 @@ export const useAtomMount = <A>(atom: () => Atom.Atom<A>): void => {
 /**
  * Returns a setter for a writable atom without subscribing to its value.
  *
+ * **Gotchas**
+ *
+ * In `promise` and `promiseExit` modes, the setter observes the atom's next
+ * settled result, not a result correlated with that write. Overlapping writes
+ * can resolve with another write's result. Serialize writes when each caller
+ * needs its own result.
+ *
  * @stability unstable
  * @category hooks
  * @since 4.0.0
@@ -205,6 +212,13 @@ export const useAtomRefresh = <A>(atom: () => Atom.Atom<A>): () => void => {
  * The setter accepts either a write value or an updater function. For
  * `AsyncResult` atoms, `promise` and `promiseExit` modes return promises for the
  * success value or full `Exit`.
+ *
+ * **Gotchas**
+ *
+ * In `promise` and `promiseExit` modes, the setter observes the atom's next
+ * settled result, not a result correlated with that write. Overlapping writes
+ * can resolve with another write's result. Serialize writes when each caller
+ * needs its own result.
  *
  * @see {@link useAtomValue} for subscribing to an atom without a setter
  * @see {@link useAtomSet} for updating a writable atom without subscribing to its value
@@ -305,8 +319,8 @@ export const useAtomRef = <A>(ref: () => AtomRef.ReadonlyRef<A>): Accessor<A> =>
   const [value, setValue] = createSignal(null as A)
   createComputed(() => {
     const r = ref()
-    setValue(r.value as any)
-    onCleanup(r.subscribe(setValue))
+    setValue(() => r.value)
+    onCleanup(r.subscribe((next) => setValue(() => next)))
   })
   return value
 }

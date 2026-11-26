@@ -8,7 +8,7 @@ describe("JsonSchemaGenerator representation", () => {
 
     const output = generator.generate("openapi-3.1", {}, false)
 
-    assert.include(output, `Schema.isPattern(new RegExp("^a+$", "u"))`)
+    assert.include(output, `Schema.isPattern(new globalThis.RegExp("^a+$", "u"))`)
   })
 
   it("emits only reachable definitions", () => {
@@ -22,10 +22,8 @@ describe("JsonSchemaGenerator representation", () => {
 
     assert.strictEqual(
       output,
-      `// non-recursive definitions
-export type Shared = string
+      `export type Shared = string
 export const Shared = Schema.String.annotate({ "identifier": "Shared" })
-// schemas
 export type Root = Shared
 export const Root = Shared
 `

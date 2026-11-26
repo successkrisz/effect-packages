@@ -1,7 +1,15 @@
 import { assert, describe, expectTypeOf, it } from "@effect/vitest"
 import { type Cause, Deferred, Effect, Layer, Schema } from "effect"
 import { AsyncResult, Atom, AtomRegistry, AtomRpc, Hydration } from "effect/reactivity"
-import { Rpc, RpcClient, type RpcClientError, RpcGroup, RpcMiddleware, type RpcSerialization } from "effect/rpc"
+import {
+  Rpc,
+  RpcClient,
+  type RpcClientError,
+  RpcGroup,
+  RpcMiddleware,
+  type RpcSerialization,
+  RpcTest
+} from "effect/rpc"
 
 const Group = RpcGroup.make(
   Rpc.make("getUser", {
@@ -54,6 +62,86 @@ const makeClientMiddlewareProtocol = (
   )
 
 describe("AtomRpc", () => {
+  it.effect("reuses fresh hydration and revalidates stale hydration once", () =>
+    Effect.gen(function*() {
+      let requests = 0
+      const group = RpcGroup.make(Rpc.make("get", { success: Schema.Number }))
+      const Client = AtomRpc.Service()("FreshClient", {
+        group,
+        protocol: group.toLayer({ get: () => Effect.sync(() => ++requests) }),
+        makeEffect: RpcTest.makeClient(group, { flatten: true })
+      })
+      const query = (staleTime: number) => Client.query("get", undefined, { serializationKey: "value", staleTime })
+      const atom = query(Infinity)
+      const server = AtomRegistry.make()
+      yield* Effect.addFinalizer(() => Effect.sync(() => server.dispose()))
+      yield* AtomRegistry.mount(server, atom)
+      assert.strictEqual(yield* AtomRegistry.getResult(server, atom), 1)
+      const state = Hydration.dehydrate(server)
+
+      for (const [reader, expected] of [[atom, 1], [query(0), 2]] as const) {
+        const client = AtomRegistry.make()
+        yield* Effect.addFinalizer(() => Effect.sync(() => client.dispose()))
+        Hydration.hydrate(client, state)
+        yield* AtomRegistry.mount(client, reader)
+        const seed = client.get(reader)
+        assert(AsyncResult.isSuccess(seed))
+        assert.strictEqual(seed.value, 1)
+        yield* Effect.yieldNow
+        const result = yield* AtomRegistry.getResult(client, reader, { suspendOnWaiting: true })
+        assert.strictEqual(result, expected)
+        assert.strictEqual(requests, expected)
+      }
+    }))
+
+  it.effect.each([
+    { idA: "RpcA", tagA: "create", idB: "RpcB", tagB: "create" },
+    { idA: "Tenant:User", tagA: "create", idB: "Tenant", tagB: "User:create" }
+  ])("isolates mutations across services ($idA / $idB)", ({ idA, tagA, idB, tagB }) =>
+    Effect.gen(function*() {
+      const requests: Array<{ service: string; name: string }> = []
+      const makeClient = (id: string, tag: string) => {
+        const group = RpcGroup.make(
+          Rpc.make(tag, {
+            payload: Schema.Struct({ name: Schema.String }),
+            success: Schema.String
+          })
+        )
+        return AtomRpc.Service()(id, {
+          group,
+          protocol: group.toLayer({
+            [tag]: ({ name }) =>
+              Effect.sync(() => {
+                requests.push({ service: id, name })
+                return `${id} ok`
+              })
+          }),
+          makeEffect: RpcTest.makeClient(group, { flatten: true })
+        })
+      }
+      const RpcA = makeClient(idA, tagA)
+      const RpcB = makeClient(idB, tagB)
+      const createA = RpcA.mutation(tagA)
+      const createB = RpcB.mutation(tagB)
+      const registry = AtomRegistry.make()
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()))
+      yield* AtomRegistry.mount(registry, createA)
+      yield* AtomRegistry.mount(registry, createB)
+
+      registry.set(createA, { payload: { name: "alice" } })
+      const resultA = yield* AtomRegistry.getResult(registry, createA, { suspendOnWaiting: true })
+      registry.set(createB, { payload: { name: "bob" } })
+      const resultB = yield* AtomRegistry.getResult(registry, createB, { suspendOnWaiting: true })
+
+      assert.deepStrictEqual({ results: [resultA, resultB], requests }, {
+        results: [`${idA} ok`, `${idB} ok`],
+        requests: [
+          { service: idA, name: "alice" },
+          { service: idB, name: "bob" }
+        ]
+      })
+    }))
+
   it("includes client middleware errors in atom failure types", () => {
     const Client = AtomRpc.Service()("MiddlewareClient", {
       group: ClientMiddlewareGroup,

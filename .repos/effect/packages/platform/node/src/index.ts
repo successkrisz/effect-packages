@@ -13,6 +13,12 @@ export * as NodeAddressResolver from "./NodeAddressResolver.ts"
 
 /**
  * @stability unstable
+ * @since 4.1.6
+ */
+export * as NodeChildProcessProxy from "./NodeChildProcessProxy.ts"
+
+/**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as NodeChildProcessSpawner from "./NodeChildProcessSpawner.ts"
@@ -166,3 +172,9 @@ export * as NodeWorker from "./NodeWorker.ts"
  * @since 4.0.0
  */
 export * as NodeWorkerRunner from "./NodeWorkerRunner.ts"
+
+/**
+ * @stability unstable
+ * @since 4.1.0
+ */
+export * as NodeWS from "./NodeWS.ts"

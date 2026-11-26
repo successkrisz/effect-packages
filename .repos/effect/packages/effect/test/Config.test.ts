@@ -17,6 +17,7 @@ import {
 } from "effect"
 import { vi } from "vitest"
 import type * as ConfigProviderModule from "../src/ConfigProvider.ts"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 async function assertSuccess<T>(config: Config.Config<T>, provider: ConfigProvider.ConfigProvider, expected: T) {
   const r = await config.parse(provider).pipe(
@@ -547,6 +548,24 @@ describe("Config", () => {
       }))
 
     describe("all", () => {
+      it.effect("collects enumerable symbol fields and ignores hidden or inherited configs", () =>
+        Effect.gen(function*() {
+          const key = Symbol("value")
+          const provider = ConfigProvider.fromUnknown({ name: "value", count: "1" })
+          const config = Config.all(withIgnoredProperties({
+            name: Config.String("name"),
+            [key]: Config.Number("count")
+          }))
+
+          assert.deepStrictEqual(yield* config.parse(provider), { name: "value", [key]: 1 })
+          assert.deepStrictEqual(
+            yield* Config.all({ [key]: Config.String("missing") }).pipe(Config.option).parse(provider),
+            Option.none()
+          )
+          const failure = yield* Config.all({ [key]: Config.Number("name") }).parse(provider).pipe(Effect.result)
+          assert.isTrue(Result.isFailure(failure))
+        }))
+
       it.effect("resolves empty groups without using a default", () =>
         Effect.gen(function*() {
           const provider = ConfigProvider.fromUnknown({})
@@ -1565,6 +1584,29 @@ Expected "Infinity" | "-Infinity" | "NaN"
       )
     })
 
+    it("loads matching numeric record keys", async () => {
+      const provider = ConfigProvider.fromUnknown({ a: { 80: "http", 1.5: "fractional", abc: "skipped" } })
+
+      await assertSuccess(
+        Config.schema(Schema.Record(Schema.Int, Schema.String), "a"),
+        provider,
+        { 80: "http" }
+      )
+      await assertSuccess(
+        Config.schema(Schema.Record(Schema.Number, Schema.String), "a"),
+        provider,
+        { 80: "http", 1.5: "fractional" }
+      )
+    })
+
+    it("preserves __proto__ record keys", async () => {
+      await assertSuccess(
+        Config.schema(Schema.Record(Schema.String, Schema.String), "a"),
+        ConfigProvider.fromUnknown({ a: { ["__proto__"]: "value" } }),
+        { ["__proto__"]: "value" }
+      )
+    })
+
     describe("built-in schema-backed constructors", () => {
       it("decodes supported boolean spellings", async () => {
         const provider = ConfigProvider.fromUnknown({
@@ -1753,6 +1795,17 @@ Expected "Infinity" | "-Infinity" | "NaN"
             Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES", options),
             ConfigProvider.fromUnknown({ OTEL_RESOURCE_ATTRIBUTES: input }),
             expected
+          )
+        })
+
+        it("trims and keeps empty values when requested", async () => {
+          await assertSuccess(
+            Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES", {
+              trim: true,
+              keepEmptyValues: true
+            }),
+            ConfigProvider.fromEnv({ env: { OTEL_RESOURCE_ATTRIBUTES: " b = x ,empty=, =ignored" } }),
+            { b: "x", empty: "" }
           )
         })
       })

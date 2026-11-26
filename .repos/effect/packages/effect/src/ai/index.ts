@@ -6,6 +6,24 @@
 // @barrel: Auto-generated exports. Do not edit manually.
 
 /**
+ * @stability experimental
+ * @since 4.1.0
+ */
+export * as AgUi from "./AgUi.ts"
+
+/**
+ * @stability experimental
+ * @since 4.1.0
+ */
+export * as AgUiSchema from "./AgUiSchema.ts"
+
+/**
+ * @stability experimental
+ * @since 4.1.0
+ */
+export * as AgUiServer from "./AgUiServer.ts"
+
+/**
  * @stability unstable
  * @since 4.0.0
  */
@@ -54,6 +72,18 @@ export * as IdGenerator from "./IdGenerator.ts"
 export * as LanguageModel from "./LanguageModel.ts"
 
 /**
+ * @stability experimental
+ * @since 4.0.6
+ */
+export * as McpClient from "./McpClient.ts"
+
+/**
+ * @stability experimental
+ * @since 4.0.6
+ */
+export * as McpClientError from "./McpClientError.ts"
+
+/**
  * @stability unstable
  * @since 4.0.0
  */
@@ -70,6 +100,12 @@ export * as McpSchema from "./McpSchema.ts"
  * @since 4.0.0
  */
 export * as McpServer from "./McpServer.ts"
+
+/**
+ * @stability unstable
+ * @since 4.0.0
+ */
+export * as McpTest from "./McpTest.ts"
 
 /**
  * @stability unstable
@@ -103,6 +139,12 @@ export * as ResponseIdTracker from "./ResponseIdTracker.ts"
 
 /**
  * @stability unstable
+ * @since 4.1.6
+ */
+export * as Skill from "./Skill.ts"
+
+/**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Telemetry from "./Telemetry.ts"
@@ -124,3 +166,9 @@ export * as Tool from "./Tool.ts"
  * @since 4.0.0
  */
 export * as Toolkit from "./Toolkit.ts"
+
+/**
+ * @stability unstable
+ * @since 4.1.3
+ */
+export * as WorkloadIdentity from "./WorkloadIdentity.ts"

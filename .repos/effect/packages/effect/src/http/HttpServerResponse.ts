@@ -25,6 +25,7 @@ import { hasProperty } from "../Predicate.ts"
 import { redact } from "../Redactable.ts"
 import type * as Schema from "../Schema.ts"
 import type { ParseOptions } from "../SchemaAST.ts"
+import type * as Socket from "../socket/Socket.ts"
 import * as Stream from "../Stream.ts"
 import type { Mutable } from "../Types.ts"
 import * as Cookies from "./Cookies.ts"
@@ -37,6 +38,7 @@ import * as HttpIncomingMessage from "./HttpIncomingMessage.ts"
 import type { HttpPlatform } from "./HttpPlatform.ts"
 import * as headersInternal from "./internal/headers.ts"
 import * as bodyInternal from "./internal/httpBody.ts"
+import * as internalUrlParams from "./internal/urlParams.ts"
 import * as Template from "./Template.ts"
 import * as UrlParams from "./UrlParams.ts"
 
@@ -76,6 +78,9 @@ export interface Options {
   readonly headers?: Headers.Input | undefined
   readonly cookies?: Cookies.Cookies | undefined
   readonly contentType?: string | undefined
+  /**
+   * Sent as `content-length`, so it must equal the body's byte length.
+   */
   readonly contentLength?: number | undefined
 }
 
@@ -559,6 +564,56 @@ export const setHeader: {
 )
 
 /**
+ * Returns a response with the value added to the specified header, keeping any
+ * existing value.
+ *
+ * **When to use**
+ *
+ * Use when several parts of an application each add to a list-valued header,
+ * such as `Link` or `Vary`.
+ *
+ * **Details**
+ *
+ * An existing value is joined with the new one by `", "`, and an empty value
+ * leaves the response unchanged, so formatting an empty list of links is safe.
+ *
+ * **Gotchas**
+ *
+ * Do not append `Set-Cookie` this way; use the cookie APIs instead.
+ *
+ * **Example** (Adding canonical and alternate links)
+ *
+ * ```ts
+ * import { Headers, HttpServerResponse } from "effect/http"
+ *
+ * const withLinks = HttpServerResponse.appendHeader(
+ *   "Link",
+ *   Headers.formatLink([
+ *     { target: "https://example.com/en", rel: ["canonical"] },
+ *     { target: "https://example.com/de", rel: ["alternate"], params: { hreflang: "de" } }
+ *   ])
+ * )
+ * ```
+ *
+ * @see {@link setHeader} to replace a header value
+ *
+ * @stability unstable
+ * @category combinators
+ * @since 4.1.6
+ */
+export const appendHeader: {
+  (key: string, value: string): (self: HttpServerResponse) => HttpServerResponse
+  (self: HttpServerResponse, key: string, value: string): HttpServerResponse
+} = dual(
+  3,
+  (self: HttpServerResponse, key: string, value: string): HttpServerResponse => {
+    const headers = Headers.append(self.headers, key, value)
+    // makeResponse mutates the headers map in place, so never pass self.headers
+    return headers === self.headers ? self : makeResponse(self, headers)
+  }
+)
+
+/**
  * Returns a response with the specified header removed.
  *
  * @stability unstable
@@ -570,11 +625,7 @@ export const removeHeader: {
   (self: HttpServerResponse, key: string): HttpServerResponse
 } = dual(
   2,
-  (self: HttpServerResponse, key: string): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      headers: Headers.remove(self.headers, key)
-    })
+  (self: HttpServerResponse, key: string): HttpServerResponse => makeResponse(self, Headers.remove(self.headers, key))
 )
 
 /**
@@ -606,10 +657,7 @@ export const removeCookie: {
 } = dual(
   2,
   (self: HttpServerResponse, name: string): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.remove(self.cookies, name)
-    })
+    replaceCookies(self, Cookies.remove(self.cookies, name))
 )
 
 /**
@@ -624,7 +672,8 @@ export const replaceCookies: {
   (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse
 } = dual(
   2,
-  (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse => makeResponse({ ...self, cookies })
+  (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse =>
+    copyResponse(self, self.status, self.statusText, cookies, self.body)
 )
 
 /**
@@ -663,11 +712,7 @@ export const setCookie: {
   ): Effect.Effect<HttpServerResponse, Cookies.CookiesError> =>
     Effect.map(
       Effect.fromResult(Cookies.set(self.cookies, name, value, options)),
-      (cookies) =>
-        makeResponse({
-          ...self,
-          cookies
-        })
+      (cookies) => replaceCookies(self, cookies)
     )
 )
 
@@ -704,11 +749,7 @@ export const expireCookie: {
   ): Effect.Effect<HttpServerResponse, Cookies.CookiesError> =>
     Effect.map(
       Effect.fromResult(Cookies.expireCookie(self.cookies, name, options)),
-      (cookies) =>
-        makeResponse({
-          ...self,
-          cookies
-        })
+      (cookies) => replaceCookies(self, cookies)
     )
 )
 
@@ -744,11 +785,7 @@ export const setCookieUnsafe: {
     name: string,
     value: string,
     options?: Cookies.Cookie["options"]
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.setUnsafe(self.cookies, name, value, options)
-    })
+  ): HttpServerResponse => replaceCookies(self, Cookies.setUnsafe(self.cookies, name, value, options))
 )
 
 /**
@@ -780,11 +817,7 @@ export const expireCookieUnsafe: {
     self: HttpServerResponse,
     name: string,
     options?: Omit<NonNullable<Cookies.Cookie["options"]>, "expires" | "maxAge">
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.expireCookieUnsafe(self.cookies, name, options)
-    })
+  ): HttpServerResponse => replaceCookies(self, Cookies.expireCookieUnsafe(self.cookies, name, options))
 )
 
 /**
@@ -813,11 +846,7 @@ export const updateCookies: {
   (
     self: HttpServerResponse,
     f: (cookies: Cookies.Cookies) => Cookies.Cookies
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: f(self.cookies)
-    })
+  ): HttpServerResponse => replaceCookies(self, f(self.cookies))
 )
 
 /**
@@ -839,7 +868,7 @@ export const mergeCookies: {
 } = dual(
   2,
   (self: HttpServerResponse, cookies: Cookies.Cookies): HttpServerResponse =>
-    makeResponse({ ...self, cookies: Cookies.merge(self.cookies, cookies) })
+    replaceCookies(self, Cookies.merge(self.cookies, cookies))
 )
 
 /**
@@ -888,11 +917,7 @@ export const setCookies: {
       ]
     >
   ): Effect.Effect<HttpServerResponse, Cookies.CookiesError> =>
-    Effect.map(Effect.fromResult(Cookies.setAll(self.cookies, cookies)), (cookies) =>
-      makeResponse({
-        ...self,
-        cookies
-      }))
+    Effect.map(Effect.fromResult(Cookies.setAll(self.cookies, cookies)), (cookies) => replaceCookies(self, cookies))
 )
 
 /**
@@ -939,11 +964,7 @@ export const setCookiesUnsafe: {
         options?: Cookies.Cookie["options"]
       ]
     >
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      cookies: Cookies.setAllUnsafe(self.cookies, cookies)
-    })
+  ): HttpServerResponse => replaceCookies(self, Cookies.setAllUnsafe(self.cookies, cookies))
 )
 
 /**
@@ -972,15 +993,8 @@ export const setBody: {
  *
  * @internal
  */
-export const setBodyKeepHeaders = (self: HttpServerResponse, body: Body.HttpBody): HttpServerResponse => {
-  const response = Object.create(Proto) as Mutable<HttpServerResponse>
-  response.status = self.status
-  response.statusText = self.statusText
-  response.headers = self.headers
-  response.cookies = self.cookies
-  response.body = body
-  return response
-}
+export const setBodyKeepHeaders = (self: HttpServerResponse, body: Body.HttpBody): HttpServerResponse =>
+  copyResponse(self, self.status, self.statusText, self.cookies, body)
 
 /**
  * Sets the HTTP status code of an `HttpServerResponse`.
@@ -1009,12 +1023,7 @@ export const setStatus: {
     self: HttpServerResponse,
     status: number,
     statusText?: string | undefined
-  ): HttpServerResponse =>
-    makeResponse({
-      ...self,
-      status,
-      statusText: statusText ?? self.statusText
-    })
+  ): HttpServerResponse => copyResponse(self, status, statusText ?? self.statusText, self.cookies, self.body)
 )
 
 /**
@@ -1028,23 +1037,38 @@ export const setStatus: {
 export const omitsBody = (response: HttpServerResponse, withoutBody = false): boolean =>
   withoutBody || response.status === 204 || response.status === 205 || response.status === 304
 
+// HEAD and 304 retain the representation length; 204 and 205 omit it.
+const omitsContentLength = (status: number): boolean => status === 204 || status === 205
+
+const mergeHeaders = (target: globalThis.Headers, headers: globalThis.Headers): globalThis.Headers => {
+  for (const [key, value] of headers as any) {
+    if (key === "set-cookie") {
+      target.append(key, value)
+    } else {
+      target.set(key, value)
+    }
+  }
+  return target
+}
+
 /**
  * Converts an `HttpServerResponse` to a Web `Response`.
  *
  * **Details**
  *
  * Cookies are appended as `Set-Cookie` headers. Stream bodies are converted using
- * the supplied context.
+ * the supplied context, and are interrupted when `signal` aborts.
  *
  * Bodies are omitted for statuses 204, 205, and 304, or when `withoutBody` is true
- * (for example, for HEAD responses). Omitted raw `ReadableStream` bodies are
- * cancelled without awaiting completion, and cancellation errors are ignored.
+ * (for example, for HEAD responses). Statuses 204 and 205 also omit
+ * `content-length`. Omitted raw `ReadableStream` bodies are cancelled without
+ * awaiting completion, and cancellation errors are ignored.
  *
- * A raw `Response` body is returned as-is after the outer headers are merged
- * into it: outer headers replace native ones, and cookies are appended. When
- * its body is omitted, the bodyless `Response` keeps those merged headers and
- * uses the outer status for 204, 205 and 304, or the raw `Response` status
- * otherwise.
+ * A raw `Response` is returned as-is unless its body or `content-length` must
+ * be omitted, or outer headers or cookies must be merged. Copies leave the
+ * original unchanged: outer headers replace native ones, and cookies append.
+ * Bodyless copies use the outer status for 204, 205 and 304; otherwise they keep
+ * the raw status.
  *
  * @stability unstable
  * @category converting
@@ -1055,6 +1079,7 @@ export const toWeb = (
   options?: {
     readonly withoutBody?: boolean | undefined
     readonly context?: Context.Context<never> | undefined
+    readonly signal?: AbortSignal | undefined
   }
 ): Response => {
   const headers = new globalThis.Headers(response.headers)
@@ -1069,29 +1094,28 @@ export const toWeb = (
   const withoutBody = outerOmitsBody || options?.withoutBody === true
   if (body._tag === "Raw" && body.body instanceof Response) {
     const raw = body.body
-    for (const [key, value] of headers as any) {
-      if (key === "set-cookie") {
-        raw.headers.append(key, value)
-      } else {
-        raw.headers.set(key, value)
-      }
-    }
-    if (!withoutBody) {
+    // HEAD preserves the raw status; an explicit bodyless status overrides it.
+    const source = outerOmitsBody ? response : raw
+    const omitContentLength = omitsContentLength(source.status)
+    if (!withoutBody && headers.keys().next().done && !(omitContentLength && raw.headers.has("content-length"))) {
       return raw
     }
-    // A bodyless outer status is what the caller chose to send; otherwise the
-    // body is only omitted for HEAD and the raw Response describes the resource.
-    const source = outerOmitsBody ? response : raw
-    return new Response(undefined, {
-      status: source.status,
-      statusText: source.statusText as string,
-      headers: raw.headers
-    })
+    const copy = withoutBody
+      ? new Response(undefined, {
+        status: source.status,
+        statusText: source.statusText as string,
+        headers: raw.headers
+      })
+      : new Response(raw.body, raw)
+    mergeHeaders(copy.headers, headers)
+    if (omitContentLength) copy.headers.delete("content-length")
+    return copy
   }
   if (withoutBody) {
     if (body._tag === "Raw" && isReadableStream(body.body)) {
       body.body.cancel().catch(constVoid)
     }
+    if (omitsContentLength(response.status)) headers.delete("content-length")
     return new Response(undefined, {
       status: response.status,
       statusText: response.statusText as string,
@@ -1131,7 +1155,8 @@ export const toWeb = (
       return new Response(
         Stream.toReadableStreamWith(
           body.stream,
-          options?.context ?? Context.empty()
+          options?.context ?? Context.empty(),
+          { signal: options?.signal }
         ),
         {
           status: response.status,
@@ -1315,9 +1340,9 @@ class ServerHttpClientResponse extends Inspectable.Class implements HttpClientRe
   }
 
   get urlParamsBody(): Effect.Effect<UrlParams.UrlParams, HttpClientError.HttpClientError> {
-    return Effect.flatMap(this.text, (_) =>
+    return Effect.flatMap(this.bytes, (bytes) =>
       Effect.try({
-        try: () => UrlParams.fromInput(new URLSearchParams(_)),
+        try: () => UrlParams.fromInput(internalUrlParams.fromBody(bytes)),
         catch: (cause) =>
           new HttpClientError.HttpClientError({
             reason: new HttpClientError.DecodeError({
@@ -1364,6 +1389,18 @@ class ServerHttpClientResponse extends Inspectable.Class implements HttpClientRe
   private formDataResponse?: Response
   private getFormDataResponse(): Response {
     return this.formDataResponse ??= new Response((this.response.body as Body.FormData).formData)
+  }
+
+  get upgrade(): Effect.Effect<Socket.Socket, HttpClientError.HttpClientError> {
+    return Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.StatusCodeError({
+          request: this.request,
+          response: this,
+          description: "a server response has no connection to hand over"
+        })
+      })
+    )
   }
 
   pipe() {
@@ -1466,6 +1503,24 @@ const makeResponse = (options: {
   return self
 }
 
+// Shares the headers of `self`, so explicit content headers are not replaced
+// with the body's.
+const copyResponse = (
+  self: HttpServerResponse,
+  status: number,
+  statusText: string | undefined,
+  cookies: Cookies.Cookies,
+  body: Body.HttpBody
+): HttpServerResponse => {
+  const response = Object.create(Proto) as Mutable<HttpServerResponse>
+  response.status = status
+  response.statusText = statusText
+  response.cookies = cookies
+  response.body = body
+  response.headers = self.headers
+  return response
+}
+
 /**
  * Converts a Web `Response` to an `HttpServerResponse`.
  *
@@ -1473,6 +1528,12 @@ const makeResponse = (options: {
  *
  * `Set-Cookie` headers are parsed into the response cookie collection and removed
  * from the header map. A present Web body is exposed as a stream body.
+ *
+ * **Gotchas**
+ *
+ * Preserves `content-length`, which must match the body. When proxying a
+ * compressed response decoded by `fetch`, remove the stale length from a copy
+ * (`new Response(response.body, response)`) before converting it.
  *
  * @stability unstable
  * @category converting

@@ -167,6 +167,14 @@ const evaluateAt = <T>(
  * Use when you need to transform a parsed config value with a function that
  * cannot fail.
  *
+ * **Gotchas**
+ *
+ * A function that throws, such as a brand constructor with checks, produces a
+ * defect rather than a `ConfigError`. Validate in the schema passed to
+ * {@link schema} instead, where `Schema.fromBrand` applies the constructor's
+ * checks. For other fallible transformations, use {@link mapEffect} and fail
+ * with a `ConfigError`.
+ *
  * **Example** (Uppercasing a string config)
  *
  * ```ts import.meta.vitest
@@ -181,6 +189,7 @@ const evaluateAt = <T>(
  * ```
  *
  * @see {@link mapEffect} – when the transformation can fail
+ * @see {@link schema} – when a schema can validate the value
  *
  * @stability stable
  * @category mapping
@@ -385,6 +394,8 @@ export const orElse: {
  *
  * Accepts a tuple (preserves positions), an iterable, or a record of configs.
  * Returns a config whose parsed value mirrors the input shape.
+ * Record inputs use own enumerable string and symbol properties.
+ * Non-enumerable and inherited properties are ignored.
  *
  * A combined config is absent when any child is absent and no child fails.
  * Validation and source errors propagate even when another child is absent.
@@ -417,19 +428,19 @@ export const orElse: {
  * @category combinators
  * @since 2.0.0
  */
-export function all<const Arg extends Iterable<Config<any>> | Record<string, Config<any>>>(
+export function all<const Arg extends Iterable<Config<any>> | Record<PropertyKey, Config<any>>>(
   arg: Arg
 ): Config<
   [Arg] extends [ReadonlyArray<Config<any>>] ? {
       -readonly [K in keyof Arg]: [Arg[K]] extends [Config<infer A>] ? A : never
     }
     : [Arg] extends [Iterable<Config<infer A>>] ? Array<A>
-    : [Arg] extends [Record<string, Config<any>>] ? {
+    : [Arg] extends [Record<PropertyKey, Config<any>>] ? {
         -readonly [K in keyof Arg]: [Arg[K]] extends [Config<infer A>] ? A : never
       }
     : never
 > {
-  const configs: Array<Config<any>> | Record<string, Config<any>> = globalThis.Array.isArray(arg)
+  const configs: Array<Config<any>> | Record<PropertyKey, Config<any>> = globalThis.Array.isArray(arg)
     ? arg
     : Symbol.iterator in arg
     ? [...arg as any]
@@ -441,7 +452,9 @@ export function all<const Arg extends Iterable<Config<any>> | Record<string, Con
         Result.all
       )
       : Effect.mapEager(
-        Effect.all(Rec.map(configs, (config) => evaluateAt(config, provider, pathPrefix))),
+        Effect.all(Object.fromEntries(
+          InternalRecord.ownEnumerableKeys(configs).map((key) => [key, evaluateAt(configs[key], provider, pathPrefix)])
+        )),
         Result.all
       )
   ) as any
@@ -706,7 +719,6 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
     seen.add(ast)
     switch (ast._tag) {
       case "Objects": {
-        const matchesIndex = ast.indexSignatures.map((is) => SchemaParser._is(is.parameter))
         const materialize = Effect.fnUntraced(function*(cursor: ConfigCursor) {
           if (cursor.node?._tag !== "Record") {
             return undefined
@@ -716,9 +728,15 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
           for (const property of ast.propertySignatures) {
             if (typeof property.name === "string") keys.add(property.name)
           }
-          if (matchesIndex.length > 0) {
+          if (ast.indexSignatures.length > 0) {
+            const input: Record<string, undefined> = {}
             for (const key of node.keys) {
-              if (matchesIndex.some((matches) => matches(key))) keys.add(key)
+              InternalRecord.assignProperty(input, key, undefined)
+            }
+            for (const is of ast.indexSignatures) {
+              for (const key of SchemaAST.getIndexSignatureKeys(input, is.parameter)) {
+                if (typeof key === "string") keys.add(key)
+              }
             }
           }
           const out: Record<string, ConfigCursor> = {}
@@ -889,6 +907,8 @@ interface ArrayOptions {
 interface RecordOptions {
   readonly separator?: string | undefined
   readonly keyValueSeparator?: string | undefined
+  readonly trim?: boolean | undefined
+  readonly keepEmptyValues?: boolean | undefined
 }
 
 const isPath = (u: unknown): u is string | Path => Predicate.isString(u) || globalThis.Array.isArray(u)
@@ -1197,7 +1217,11 @@ export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
  *
  * Pass a string or `ConfigProvider.Path` as the third argument to set the lookup
  * path. When no path is needed, pass the options object directly. The `separator`
- * defaults to `","` and `keyValueSeparator` defaults to `"="`.
+ * defaults to `","` and `keyValueSeparator` defaults to `"="`. For string input,
+ * set `trim: true` to trim keys and values before entries with an empty key are
+ * skipped, and `keepEmptyValues: true` to keep entries with an empty value as
+ * `""` instead of skipping them. Entries without a `keyValueSeparator` are
+ * always skipped.
  *
  * **Example** (Reading a comma-separated record)
  *

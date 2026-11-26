@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema } from "effect"
 import { Prompt, Response } from "effect/ai"
+import { SchemaBinary } from "effect/encoding"
 
 describe("Prompt", () => {
   describe("serialization", () => {
@@ -77,7 +78,68 @@ describe("Prompt", () => {
     })
   })
 
+  describe("binary codecs", () => {
+    it("round trips file data forms", () => {
+      const codec = SchemaBinary.toCodec(Prompt.FilePart)
+      for (
+        const data of [
+          "aGVsbG8=",
+          new Uint8Array([1, 2, 3]),
+          new URL("https://example.com/image.png")
+        ]
+      ) {
+        const part = Prompt.filePart({ mediaType: "image/png", data })
+        assert.deepStrictEqual(Schema.decodeSync(codec)(Schema.encodeSync(codec)(part)), part)
+      }
+    })
+
+    it("keeps the tagged JSON encoding for byte and URL file data", () => {
+      const encode = (data: Uint8Array | URL) =>
+        Schema.encodeSync(Prompt.FilePart)(Prompt.filePart({ mediaType: "image/png", data })).data
+
+      assert.deepStrictEqual(encode(new Uint8Array([1, 2, 3])), { _tag: "Uint8Array", base64: "AQID" })
+      assert.deepStrictEqual(encode(new URL("https://example.com/image.png")), {
+        _tag: "URL",
+        href: "https://example.com/image.png"
+      })
+    })
+  })
+
   describe("fromResponseParts", () => {
+    it("keeps text before an interleaved tool call", () => {
+      assert.deepStrictEqual(
+        Prompt.fromResponseParts([
+          Response.makePart("text-start", { id: "t1" }),
+          Response.makePart("text-delta", { id: "t1", delta: "Hello" }),
+          Response.makePart("tool-call", {
+            id: "call-1",
+            name: "get_weather",
+            params: {},
+            providerExecuted: false
+          }),
+          Response.makePart("text-end", { id: "t1" })
+        ]),
+        Prompt.make([{
+          role: "assistant",
+          content: [
+            { type: "text", text: "Hello" },
+            { type: "tool-call", id: "call-1", name: "get_weather", params: {}, providerExecuted: false }
+          ]
+        }])
+      )
+    })
+
+    it("omits unended reasoning and empty unended text", () => {
+      assert.deepStrictEqual(
+        Prompt.fromResponseParts([
+          Response.makePart("text-start", { id: "t1" }),
+          Response.makePart("reasoning-start", { id: "r1" }),
+          Response.makePart("reasoning-delta", { id: "r1", delta: "Unsigned thinking" })
+        ]),
+        Prompt.empty
+      )
+    })
+
     it("preserves file-only responses as assistant messages", () => {
       const file = Response.makePart("file", {
         data: new Uint8Array([0, 127, 128, 255]),
@@ -364,14 +426,7 @@ describe("Prompt", () => {
           params: {},
           providerExecuted: false
         }),
-        // Tool call B arrives second
-        Response.makePart("tool-call", {
-          id: "call-B",
-          name: "tool_b",
-          params: {},
-          providerExecuted: false
-        }),
-        // But tool B's result arrives before tool A's result
+        // Tool B's result arrives before tool call B and tool A's result
         Response.makePart("tool-result", {
           id: "call-B",
           name: "tool_b",
@@ -379,6 +434,13 @@ describe("Prompt", () => {
           result: "result-B",
           encodedResult: "result-B",
           preliminary: false,
+          providerExecuted: false
+        }),
+        // Tool call B arrives after its result
+        Response.makePart("tool-call", {
+          id: "call-B",
+          name: "tool_b",
+          params: {},
           providerExecuted: false
         }),
         Response.makePart("tool-result", {

@@ -17,7 +17,6 @@ import type * as Layer from "../Layer.ts"
 import type * as HttpApi from "./HttpApi.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import * as Html from "./internal/html.ts"
-import * as internal from "./internal/httpApiScalar.ts"
 import * as OpenApi from "./OpenApi.ts"
 
 /**
@@ -60,8 +59,15 @@ export type ScalarConfig = {
   layout?: "modern" | "classic"
   /** URL to a request proxy for the API client */
   proxyUrl?: string
+  /** Authentication preferences for the API client */
+  authentication?: {
+    /** OpenAPI security scheme names to select by default */
+    preferredSecurityScheme?: string | Array<string | Array<string>> | null
+  }
   /** Browser JavaScript function expression used by Scalar for documents and test requests */
   customFetch?: string
+  /** Set disabled to true to hide Scalar's Ask AI controls. */
+  agent?: { disabled?: boolean }
   /** Whether to show the sidebar */
   showSidebar?: boolean
   /**
@@ -150,6 +156,12 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
 }) => {
   const makeResponse = Function.memoize((api: HttpApi.HttpApi<Id, Groups>) => {
     const spec = OpenApi.fromApi(api)
+    // The bundled Scalar has no page-origin fallback for documents without servers, so its copy
+    // gets OpenAPI's implicit root server. layerCdn is left alone because the caller picks its Scalar.
+    // Scalar's config-level servers option is not used because it overrides operation servers.
+    const content = options.source._tag === "Inline" && !spec.servers?.length
+      ? { ...spec, servers: [{ url: "/" }] }
+      : spec
     const { customFetch, ...scalar } = options.scalar ?? {}
     const scalarConfig = {
       _integration: "html",
@@ -189,7 +201,7 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
     <script>
       window.Scalar.createApiReference(document.getElementById('api-reference-container'), {
         ...${Html.escapeJson(scalarConfig)},
-        content: ${Html.escapeJson(spec)}${
+        content: ${Html.escapeJson(content)}${
       customFetch === undefined ? "" : `,
         customFetch: ${customFetch}`
     }
@@ -207,7 +219,8 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
  * **Details**
  *
  * The route serves the OpenAPI specification generated from the API at the
- * configured path, defaulting to `/docs`.
+ * configured path, defaulting to `/docs`. The bundled script is loaded when
+ * the layer is built, not when this module is imported.
  *
  * @stability unstable
  * @category layers
@@ -221,11 +234,12 @@ export const layer = <Id extends string, Groups extends HttpApiGroup.Constraint>
   } | undefined
 ): Layer.Layer<never, never, HttpRouter.HttpRouter> =>
   HttpRouter.use(Effect.fnUntraced(function*(router) {
+    const { javascript } = yield* Effect.promise(() => import("./internal/httpApiScalar.ts"))
     const handler = makeHandler({
       api,
       source: {
         _tag: "Inline",
-        source: internal.javascript
+        source: javascript
       },
       scalar: options?.scalar
     })

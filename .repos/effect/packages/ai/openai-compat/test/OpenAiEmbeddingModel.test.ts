@@ -59,6 +59,34 @@ describe("OpenAiEmbeddingModel", () => {
       assert.deepStrictEqual(requestBody.input, ["first", "second"])
     }))
 
+  it.effect("decodes responses with null object and usage", () =>
+    Effect.gen(function*() {
+      const clientLayer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+        Layer.provide(Layer.succeed(
+          HttpClient.HttpClient,
+          makeHttpClient((request) =>
+            Effect.succeed(jsonResponse(request, {
+              object: null,
+              data: [{ object: null, index: 0, embedding: [1, 2] }],
+              model: "text-embedding-3-small",
+              usage: null
+            }))
+          )
+        ))
+      )
+
+      const response = yield* Effect.gen(function*() {
+        const model = yield* EmbeddingModel.EmbeddingModel
+        return yield* model.embedMany(["hello"])
+      }).pipe(
+        Effect.provide(OpenAiEmbeddingModel.layer({ model: "text-embedding-3-small" })),
+        Effect.provide(clientLayer)
+      )
+
+      assert.deepStrictEqual(response.embeddings.map((embedding) => embedding.vector), [[1, 2]])
+      assert.strictEqual(response.usage.inputTokens, undefined)
+    }))
+
   it.effect("merges config and applies withConfigOverride precedence", () =>
     Effect.gen(function*() {
       let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
@@ -198,15 +226,14 @@ const jsonResponse = (
     })
   )
 
-const getRequestBody = (request: HttpClientRequest.HttpClientRequest) =>
-  Effect.gen(function*() {
-    const body = request.body
-    if (body._tag === "Uint8Array") {
-      const text = new TextDecoder().decode(body.body)
-      return JSON.parse(text)
-    }
-    return yield* Effect.die(new Error("Expected Uint8Array body"))
-  })
+const getRequestBody = Effect.fnUntraced(function*(request: HttpClientRequest.HttpClientRequest) {
+  const body = request.body
+  if (body._tag === "Uint8Array") {
+    const text = new TextDecoder().decode(body.body)
+    return JSON.parse(text)
+  }
+  return yield* Effect.die(new Error("Expected Uint8Array body"))
+})
 
 const noopOpenAiClient: OpenAiClient.Service = {
   client: undefined as unknown as OpenAiClient.Service["client"],

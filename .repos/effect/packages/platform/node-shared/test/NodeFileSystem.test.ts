@@ -5,48 +5,81 @@ import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as FileSystem from "effect/FileSystem"
+import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as TestClock from "effect/testing/TestClock"
-import type * as NFS from "node:fs"
+import * as ChildProcess from "node:child_process"
+import * as NFS from "node:fs"
+import * as Path from "node:path"
 import { afterEach, beforeEach, vi } from "vitest"
-import { testLayer } from "../../../effect/test/FileSystem.test-utils.ts"
+import { testGlob, testLayer } from "../../../effect/test/FileSystem.test-utils.ts"
 
-const startWatch = <E, R>(
+const startWatch = Effect.fnUntraced(function*<E, R>(
   fs: FileSystem.FileSystem,
   root: string,
   watch: () => Stream.Stream<FileSystem.WatchEvent, E, R>
-) =>
+) {
+  const ready = yield* Deferred.make<void>()
+  const readyName = ".watch-ready"
+  const fiber = yield* watch().pipe(
+    Stream.tap((event) =>
+      event.path === readyName
+        ? Deferred.succeed(ready, undefined)
+        : Effect.void
+    ),
+    Stream.dropUntil((event) => event.path === readyName),
+    Stream.filter((event) => event.path !== readyName),
+    Stream.runHead,
+    Effect.flatMap(Effect.fromOption),
+    Effect.forkChild
+  )
+  const signalFiber = yield* Effect.sleep("10 millis").pipe(
+    TestClock.withLive,
+    Effect.andThen(fs.writeFileString(`${root}/${readyName}`, "")),
+    Effect.forever,
+    Effect.forkChild
+  )
+  yield* Deferred.await(ready).pipe(
+    Effect.raceFirst(Fiber.join(fiber).pipe(Effect.asVoid)),
+    Effect.ensuring(Fiber.interrupt(signalFiber))
+  )
+  return fiber
+})
+
+// A file system whose listings report every entry as `"Unknown"`, so `glob`
+// learns entry types from `stat` and `readLink` alone.
+const untypedLayer = Layer.effect(
+  FileSystem.FileSystem,
   Effect.gen(function*() {
-    const ready = yield* Deferred.make<void>()
-    const readyName = ".watch-ready"
-    const fiber = yield* watch().pipe(
-      Stream.tap((event) =>
-        event.path === readyName
-          ? Deferred.succeed(ready, undefined)
-          : Effect.void
-      ),
-      Stream.dropUntil((event) => event.path === readyName),
-      Stream.filter((event) => event.path !== readyName),
-      Stream.runHead,
-      Effect.flatMap(Effect.fromOption),
-      Effect.forkChild
-    )
-    const signalFiber = yield* Effect.sleep("10 millis").pipe(
-      TestClock.withLive,
-      Effect.andThen(fs.writeFileString(`${root}/${readyName}`, "")),
-      Effect.forever,
-      Effect.forkChild
-    )
-    yield* Deferred.await(ready).pipe(
-      Effect.raceFirst(Fiber.join(fiber).pipe(Effect.asVoid)),
-      Effect.ensuring(Fiber.interrupt(signalFiber))
-    )
-    return fiber
+    const fs = yield* FileSystem.FileSystem
+    return FileSystem.make({
+      ...fs,
+      readDirectoryEntries: (path) =>
+        Effect.map(fs.readDirectory(path), (names) => names.map((name) => ({ name, type: "Unknown" as const })))
+    })
   })
+).pipe(Layer.provide(NodeFileSystem.layer))
+
+describe("FileSystem without typed directory listings", { concurrent: false }, () => {
+  testGlob(untypedLayer)
+})
 
 describe("FileSystem", { concurrent: false }, () => {
   testLayer(NodeFileSystem.layer, { noFollow: process.platform !== "win32" })
+
+  it.effect("realPath resolves a directory alias to its physical target", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped())
+      const target = Path.join(root, "target")
+      const alias = Path.join(root, "alias")
+      yield* fs.makeDirectory(target)
+      NFS.symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir")
+      assert.strictEqual(yield* fs.realPath(alias), target)
+    }).pipe(
+      Effect.provide(NodeFileSystem.layer)
+    ))
 
   it.effect("writeAll accepts an empty buffer", () =>
     Effect.gen(function*() {
@@ -58,6 +91,26 @@ describe("FileSystem", { concurrent: false }, () => {
     }).pipe(
       Effect.provide(NodeFileSystem.layer)
     ))
+
+  it.effect.skipIf(process.platform === "win32")(
+    "File handles and stream read and write a FIFO sequentially",
+    () =>
+      Effect.gen(function*() {
+        const fs = yield* FileSystem.FileSystem
+        const fifo = Path.join(yield* fs.makeTempDirectoryScoped(), "fifo")
+        ChildProcess.execFileSync("mkfifo", [fifo])
+
+        const [text] = yield* Effect.all([
+          fs.stream(fifo).pipe(Stream.decodeText(), Stream.mkString),
+          Effect.scoped(
+            Effect.flatMap(fs.open(fifo, { flag: "w" }), (file) => file.writeAll(Buffer.from("piped text")))
+          )
+        ], { concurrency: 2 })
+        assert.strictEqual(text, "piped text")
+      }).pipe(
+        Effect.provide(NodeFileSystem.layer)
+      )
+  )
 
   it.effect("watch reports Create for a new file outside the current directory", () =>
     Effect.gen(function*() {
@@ -113,6 +166,42 @@ describe("FileSystem", { concurrent: false }, () => {
       Effect.provide(NodeFileSystem.layer)
     ))
 
+  it.live("watch uses a WatchBackend provided after the layer is built", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* fs.makeTempDirectoryScoped()
+      const backendEvent: FileSystem.WatchEvent = { _tag: "Create", path: "from-backend" }
+      const event = yield* fs.watch(root).pipe(
+        Stream.runHead,
+        Effect.provideService(FileSystem.WatchBackend, {
+          register: () => Option.some(Stream.make(backendEvent))
+        }),
+        Effect.timeout("1 second")
+      )
+      assert.deepStrictEqual(event, Option.some(backendEvent))
+    }).pipe(
+      Effect.provide(NodeFileSystem.layer)
+    ))
+
+  it.effect("watch prefers the caller WatchBackend over the construction backend", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const root = yield* fs.makeTempDirectoryScoped()
+      const callerEvent: FileSystem.WatchEvent = { _tag: "Create", path: "from-caller" }
+      const event = yield* fs.watch(root).pipe(
+        Stream.runHead,
+        Effect.provideService(FileSystem.WatchBackend, {
+          register: () => Option.some(Stream.make(callerEvent))
+        })
+      )
+      assert.deepStrictEqual(event, Option.some(callerEvent))
+    }).pipe(
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provideService(FileSystem.WatchBackend, {
+        register: () => Option.some(Stream.make({ _tag: "Create" as const, path: "from-construction" }))
+      })
+    ))
+
   it.effect("watch reports nested changes when recursive is true", () =>
     Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem
@@ -134,7 +223,8 @@ describe("FileSystem", { concurrent: false }, () => {
 const state = vi.hoisted(() => ({
   enabled: false,
   values: {} as Record<string, bigint>,
-  positions: [] as Array<number | bigint | undefined>
+  positions: [] as Array<number | bigint | undefined>,
+  writes: [] as Array<number | NodeJS.ErrnoException>
 }))
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -167,10 +257,11 @@ vi.mock("node:fs", async (importOriginal) => {
       _offset: unknown,
       _length: unknown,
       position: number | bigint | undefined,
-      callback: (error: null, bytesWritten: number) => void
+      callback: (error: NodeJS.ErrnoException | null, bytesWritten?: number) => void
     ) => {
       state.positions.push(position)
-      callback(null, 1)
+      const result = state.writes.shift() ?? 1
+      return typeof result === "number" ? callback(null, result) : callback(result)
     }
   }
   return {
@@ -195,6 +286,7 @@ describe("NodeFileSystem precision", { concurrent: false }, () => {
   beforeEach(() => {
     state.enabled = true
     state.positions = []
+    state.writes = []
     state.values = {
       size: 4n,
       blksize: 4096n,
@@ -232,6 +324,16 @@ describe("NodeFileSystem precision", { concurrent: false }, () => {
       assert.strictEqual(yield* file.seek(0n, "current"), maxSafe + 1n)
     }).pipe(Effect.provide(NodeFileSystem.layer)))
 
+  it.effect("writeAll does not rewrite bytes when a later chunk fails with ESPIPE", () =>
+    Effect.gen(function*() {
+      const espipe = Object.assign(new Error("ESPIPE"), { code: "ESPIPE" })
+      state.writes = [1, espipe, espipe]
+      const fs = yield* FileSystem.FileSystem
+      const file = yield* fs.open("precision.bin", { flag: "r+" })
+      yield* Effect.flip(file.writeAll(new Uint8Array([1, 2, 3])))
+      assert.deepStrictEqual(state.positions, [0, 1, undefined])
+    }).pipe(Effect.provide(NodeFileSystem.layer)))
+
   for (const method of ["stat", "fstat"] as const) {
     const getInfo = Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem
@@ -247,59 +349,52 @@ describe("NodeFileSystem precision", { concurrent: false }, () => {
         assert.strictEqual(Option.getOrThrow(info.blksize), ByteSize.bytes(oversized))
       }).pipe(Effect.provide(NodeFileSystem.layer)))
 
-    for (const field of ["dev", "mode"] as const) {
-      it.effect(`${method} rejects unsafe ${field} metadata`, () =>
-        Effect.gen(function*() {
-          state.values[field] = maxSafe + 1n
-          const error = yield* Effect.flip(getInfo)
-          assert.strictEqual(error.reason._tag, "BadArgument")
-        }).pipe(Effect.provide(NodeFileSystem.layer)))
-    }
-
-    it.effect(`${method} omits only the overflowing optional field`, () =>
+    it.effect(`${method} rejects unsafe mode metadata`, () =>
       Effect.gen(function*() {
-        Object.assign(state.values, { ino: maxSafe + 1n, nlink: 3n, uid: 1000n, gid: 1001n, rdev: 0n, blocks: 8n })
-        const info = yield* getInfo
-        assert.deepStrictEqual(info.ino, Option.none())
-        assert.deepStrictEqual(info.nlink, Option.some(3))
-        assert.deepStrictEqual(info.uid, Option.some(1000))
-        assert.deepStrictEqual(info.gid, Option.some(1001))
-        assert.deepStrictEqual(info.rdev, Option.some(0))
-        assert.deepStrictEqual(info.blocks, Option.some(8))
-        assert.strictEqual(info.type, "File")
-        assert.strictEqual(info.size, ByteSize.bytes(4n))
-        assert.deepStrictEqual(info.mtime, Option.some(new Date(0)))
+        state.values.mode = maxSafe + 1n
+        const error = yield* Effect.flip(getInfo)
+        assert.strictEqual(error.reason._tag, "BadArgument")
       }).pipe(Effect.provide(NodeFileSystem.layer)))
 
     for (
       const { expected, name, value } of [
-        {
-          name: "preserves optional metadata at MAX_SAFE_INTEGER",
-          value: maxSafe,
-          expected: Option.some(Number.MAX_SAFE_INTEGER)
-        },
-        { name: "omits optional metadata above MAX_SAFE_INTEGER", value: maxSafe + 1n, expected: Option.none() },
-        { name: "omits missing optional metadata", value: undefined, expected: Option.none() }
+        { name: "preserves metadata above MAX_SAFE_INTEGER", value: maxSafe + 1n, expected: 9007199254740992n },
+        { name: "interprets signed identifiers as unsigned 64-bit", value: -2n, expected: 18446744073709551614n }
       ]
     ) {
       it.effect(`${method} ${name}`, () =>
         Effect.gen(function*() {
-          const fields = ["ino", "nlink", "uid", "gid", "rdev", "blocks"] as const
-          for (const field of fields) {
-            if (value === undefined) {
-              delete state.values[field]
-            } else {
-              state.values[field] = value
-            }
-          }
+          Object.assign(state.values, { dev: value, ino: value, rdev: value, nlink: value, blocks: value })
           const info = yield* getInfo
-          for (const field of fields) {
-            assert.deepStrictEqual(info[field], expected, field)
+          assert.strictEqual(info.dev, expected)
+          for (const field of ["ino", "rdev", "nlink"] as const) {
+            assert.deepStrictEqual(info[field], Option.some(expected), field)
           }
-          assert.strictEqual(info.type, "File")
-          assert.strictEqual(info.size, ByteSize.bytes(4n))
-          assert.deepStrictEqual(info.mtime, Option.some(new Date(0)))
+          assert.deepStrictEqual(info.blocks, Option.some(value))
         }).pipe(Effect.provide(NodeFileSystem.layer)))
     }
+
+    it.effect(`${method} preserves numeric ownership metadata`, () =>
+      Effect.gen(function*() {
+        Object.assign(state.values, { uid: 1000n, gid: 1001n })
+        const info = yield* getInfo
+        assert.deepStrictEqual(info.uid, Option.some(1000))
+        assert.deepStrictEqual(info.gid, Option.some(1001))
+      }).pipe(Effect.provide(NodeFileSystem.layer)))
+
+    it.effect(`${method} omits missing optional metadata`, () =>
+      Effect.gen(function*() {
+        const fields = ["ino", "nlink", "uid", "gid", "rdev", "blocks"] as const
+        for (const field of fields) {
+          delete state.values[field]
+        }
+        const info = yield* getInfo
+        for (const field of fields) {
+          assert.deepStrictEqual(info[field], Option.none(), field)
+        }
+        assert.strictEqual(info.type, "File")
+        assert.strictEqual(info.size, ByteSize.bytes(4n))
+        assert.deepStrictEqual(info.mtime, Option.some(new Date(0)))
+      }).pipe(Effect.provide(NodeFileSystem.layer)))
   }
 })

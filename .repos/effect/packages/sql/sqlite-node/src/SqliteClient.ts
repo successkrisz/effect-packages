@@ -65,7 +65,7 @@ export type TypeId = "~@effect/sql-sqlite-node/SqliteClient"
  * @category services
  * @since 4.0.0
  */
-export interface SqliteClient extends Client.SqlClient {
+export interface SqliteClient extends Client.Base {
   readonly [TypeId]: TypeId
   readonly config: SqliteClientConfig
   readonly backup: (destination: string) => Effect.Effect<BackupMetadata, SqlError>
@@ -94,7 +94,9 @@ export interface BackupMetadata {
  * @category services
  * @since 4.0.0
  */
-export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-node/SqliteClient")
+export const SqliteClient = Context.Service<SqliteClient, SqliteClient & Client.SqlClient>(
+  "@effect/sql-sqlite-node/SqliteClient"
+)
 
 /**
  * Configuration for a node SQLite client backed by `node:sqlite`, including the database filename, read-only mode, statement cache settings, WAL and busy timeout behavior, span attributes, and query/result name transforms.
@@ -136,7 +138,7 @@ interface SqliteConnection extends Connection {
  */
 export const make = (
   options: SqliteClientConfig
-): Effect.Effect<SqliteClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<SqliteClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
     const transformRows = options.transformResultNames ?
@@ -157,7 +159,7 @@ export const make = (
         }),
         (db) => Effect.sync(() => db.close())
       )
-      db.enableLoadExtension(false)
+      setLoadExtensionEnabled(db, false)
       const busyTimeout = Math.min(
         MAX_BUSY_TIMEOUT,
         Math.max(0, Math.round(Duration.toMillis(options.busyTimeout ?? Duration.seconds(5))))
@@ -173,6 +175,12 @@ export const make = (
         // Switching to WAL can fail with SQLITE_BUSY without invoking the busy
         // handler, so retry it until busyTimeout has elapsed. Each attempt's
         // native busy wait is limited to the remaining time.
+        // Deno's `exec` errors omit `errcode`, so run the pragma as a prepared
+        // statement to keep SQLITE_BUSY retryable.
+        const enableWAL = Effect.try({
+          try: () => db.prepare("PRAGMA journal_mode = WAL").get(),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to configure database", "connect") })
+        })
         const deadline = (yield* Clock.monotonicTimeNanos) + BigInt(busyTimeout) * NANOS_PER_MILLI
         const remainingMillis = Effect.map(
           Clock.monotonicTimeNanos,
@@ -180,7 +188,7 @@ export const make = (
         )
         yield* remainingMillis.pipe(
           Effect.flatMap((remaining) => exec(`PRAGMA busy_timeout = ${remaining}`)),
-          Effect.andThen(exec("PRAGMA journal_mode = WAL")),
+          Effect.andThen(enableWAL),
           Effect.retry({
             while: (error) =>
               error.reason._tag === "LockTimeoutError" && Effect.map(remainingMillis, (remaining) => remaining > 0),
@@ -320,21 +328,21 @@ export const make = (
         },
         loadExtension(path) {
           return Effect.acquireUseRelease(
-            Effect.sync(() => db.enableLoadExtension(true)),
+            Effect.sync(() => setLoadExtensionEnabled(db, true)),
             () =>
               Effect.try({
                 try: () => db.loadExtension(path),
                 catch: (cause) =>
                   new SqlError({ reason: classifyError(cause, "Failed to load extension", "loadExtension") })
               }),
-            () => Effect.sync(() => db.enableLoadExtension(false))
+            () => Effect.sync(() => setLoadExtensionEnabled(db, false))
           )
         }
       })
     })
 
     const connection = yield* makeConnection
-    const { acquirer, onCommitFailure, transactionAcquirer } = Client.makeSqliteAcquirers({
+    const { acquirer, borrower, isTransaction, onCommitFailure, transactionAcquirer } = Client.makeSqliteAcquirers({
       connection: Effect.succeed(connection),
       semaphore: yield* Semaphore.make(1),
       isTransaction: (conn) => conn.isTransaction()
@@ -342,10 +350,13 @@ export const make = (
 
     return Object.assign(
       (yield* Client.make({
+        driver: "sqlite-node",
         acquirer,
+        borrower,
         compiler,
         transactionAcquirer,
         onCommitFailure,
+        isTransaction,
         releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
         beginTransaction: options.readonly === true ? "BEGIN" : "BEGIN IMMEDIATE",
         spanAttributes: [
@@ -353,7 +364,7 @@ export const make = (
           [ATTR_DB_SYSTEM_NAME, "sqlite"]
         ],
         transformRows
-      })) as SqliteClient,
+      })) as SqliteClient & Client.SqlClient,
       {
         [TypeId]: TypeId as TypeId,
         config: options,
@@ -415,4 +426,12 @@ const sqliteCauseWithErrno = (cause: unknown): unknown => {
     return cause
   }
   return Object.assign(cause, { errno: errcode })
+}
+
+// Deno's node:sqlite has no `enableLoadExtension`, so `allowExtension` alone
+// controls extension loading there.
+const setLoadExtensionEnabled = (db: DatabaseSync, enabled: boolean): void => {
+  if (typeof db.enableLoadExtension === "function") {
+    db.enableLoadExtension(enabled)
+  }
 }

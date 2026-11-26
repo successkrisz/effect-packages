@@ -4,11 +4,13 @@ import * as Resource from "@effect/opentelemetry/Resource"
 import { assert, describe, it } from "@effect/vitest"
 import * as OtelApi from "@opentelemetry/api"
 import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks"
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base"
+import { InMemorySpanExporter, SimpleSpanProcessor, type SpanExporter } from "@opentelemetry/sdk-trace-base"
 import * as Cause from "effect/Cause"
 import * as EffectContext from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
+import * as HttpRouter from "effect/http/HttpRouter"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as EffectTracer from "effect/Tracer"
@@ -36,6 +38,32 @@ describe("Tracer", () => {
       assert.strictEqual(scope.name, "effect")
       assert.strictEqual(scope.version, Version.getCurrentVersion())
     }).pipe(Effect.provide(layer))
+  })
+
+  it("exports the HTTP server span when disposed right after the response", async () => {
+    const exported: Array<string> = []
+    const exporter: SpanExporter = {
+      export: (spans, done) => {
+        exported.push(...spans.map((span) => span.name))
+        done({ code: 0 })
+      },
+      shutdown: () => Promise.resolve()
+    }
+    const { dispose, handler } = HttpRouter.toWebHandler(
+      HttpRouter.add("GET", "/", Effect.succeed(HttpServerResponse.text("ok"))).pipe(
+        Layer.provideMerge(NodeSdk.layer(() => ({
+          resource: { serviceName: "test" },
+          spanProcessor: new SimpleSpanProcessor(exporter)
+        })))
+      ),
+      { disableLogger: true }
+    )
+
+    const response = await handler(new Request("http://localhost/"))
+    assert.strictEqual(await response.text(), "ok")
+    await dispose()
+
+    assert.deepStrictEqual(exported, ["GET"])
   })
 
   describe("provided", () => {
@@ -349,6 +377,34 @@ describe("Tracer", () => {
         spanProcessor: [new SimpleSpanProcessor(exporter)]
       }))))
     })
+
+    it.effect.each([
+      { name: "success", effect: Effect.void, status: undefined },
+      { name: "failure without errors", effect: Effect.failCause(Cause.empty), status: undefined },
+      { name: "success with an application Ok", effect: Effect.void, status: OtelApi.SpanStatusCode.OK },
+      { name: "success with an application Error", effect: Effect.void, status: OtelApi.SpanStatusCode.ERROR },
+      {
+        name: "failure without errors with an application Error",
+        effect: Effect.failCause(Cause.empty),
+        status: OtelApi.SpanStatusCode.ERROR
+      }
+    ])("keeps the status of $name", ({ effect, status }) => {
+      const exporter = new InMemorySpanExporter()
+      return Effect.gen(function*() {
+        yield* Effect.gen(function*() {
+          const span = yield* OtelTracer.currentOtelSpan
+          if (status !== undefined) span.setStatus({ code: status })
+          yield* effect
+        }).pipe(Effect.withSpan("test"), Effect.exit)
+        assert.deepStrictEqual(exporter.getFinishedSpans()[0].status, {
+          code: status ?? OtelApi.SpanStatusCode.UNSET
+        })
+      }).pipe(Effect.provide(NodeSdk.layer(() => ({
+        resource: { serviceName: "test" },
+        spanProcessor: [new SimpleSpanProcessor(exporter)]
+      }))))
+    })
+
     it.effect("exports homogeneous primitive arrays as array attributes", () =>
       Effect.gen(function*() {
         const exporter = new InMemorySpanExporter()

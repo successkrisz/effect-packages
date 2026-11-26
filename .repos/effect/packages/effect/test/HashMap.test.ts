@@ -1,3 +1,4 @@
+import { assert } from "@effect/vitest"
 import { Equal, Hash, HashMap, Option, Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
@@ -540,6 +541,24 @@ describe("HashMap", () => {
       }
     }
 
+    it("handles custom hashes that are not 32-bit integers", () => {
+      const fractional = new FixedHashKey("fractional", 1.25)
+      const other = new FixedHashKey("other", 1.5)
+      const large = new FixedHashKey("large", 2 ** 32 + 1)
+
+      let map = HashMap.make([fractional, "a"], [other, "b"])
+      map = HashMap.set(map, large, "c")
+      assert.strictEqual(HashMap.size(map), 3)
+      assert.isTrue(HashMap.has(map, other))
+      assert.deepStrictEqual(HashMap.get(map, large), Option.some("c"))
+      assert.deepStrictEqual(HashMap.getHash(map, fractional, 1.25), Option.some("a"))
+      assert.isTrue(HashMap.hasHash(map, large, 2 ** 32 + 1))
+
+      map = HashMap.remove(map, fractional)
+      assert.isFalse(HashMap.has(map, fractional))
+      assert.deepStrictEqual(HashMap.get(map, large), Option.some("c"))
+    })
+
     it("keeps entries addressable when bit 31 is present in indexed leaf insert", () => {
       const bit31Key = new FixedHashKey("bit31", 31)
       const bit30Key = new FixedHashKey("bit30", 30)
@@ -599,6 +618,51 @@ describe("HashMap", () => {
         }),
         { numRuns: 200 }
       )
+    })
+
+    it("set stores a new value that is equal to the current one", () => {
+      let valueOperations = 0
+      class Versioned implements Equal.Equal {
+        constructor(readonly id: string, readonly version: number) {}
+
+        [Equal.symbol](that: Equal.Equal): boolean {
+          valueOperations++
+          return that instanceof Versioned && this.id === that.id
+        }
+
+        [Hash.symbol](): number {
+          valueOperations++
+          return Hash.string(this.id)
+        }
+      }
+
+      const collisionA = new FixedHashKey("collisionA", 7)
+      const collisionB = new FixedHashKey("collisionB", 7)
+      const leaf = HashMap.make(["a", new Versioned("a", 0)])
+      const collisions = HashMap.make([collisionA, new Versioned("a", 0)], [collisionB, new Versioned("b", 0)])
+      const next = new Versioned("a", 1)
+
+      assert.strictEqual(HashMap.getUnsafe(HashMap.set(leaf, "a", next), "a"), next)
+      assert.strictEqual(HashMap.getUnsafe(HashMap.set(collisions, collisionA, next), collisionA), next)
+      assert.strictEqual(valueOperations, 0)
+    })
+
+    it("set uses Object.is to decide whether to preserve map identity", () => {
+      const value = { x: 1 }
+      const collisionA = new FixedHashKey("collisionA", 7)
+      const collisionB = new FixedHashKey("collisionB", 7)
+      for (const stored of [value, NaN, 0]) {
+        for (
+          const map of [HashMap.make([collisionA, stored]), HashMap.make([collisionA, stored], [collisionB, stored])]
+        ) {
+          assert.strictEqual(HashMap.set(map, collisionA, stored), map)
+          if (stored === 0) {
+            const updated = HashMap.set(map, collisionA, -0)
+            assert.notStrictEqual(updated, map)
+            assert.isTrue(Object.is(HashMap.getUnsafe(updated, collisionA), -0))
+          }
+        }
+      }
     })
   })
 

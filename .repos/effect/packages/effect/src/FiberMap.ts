@@ -7,6 +7,9 @@
  * interrupt background work by a stable key while keeping all fibers tied to
  * one scope.
  *
+ * A fiber's success or failure does not interrupt the other fibers or close
+ * the map. The map removes the completed fiber and keeps accepting new ones.
+ *
  * @stability stable
  * @since 2.0.0
  */
@@ -67,6 +70,8 @@ export interface FiberMap<in out K, out A = unknown, out E = unknown>
   state: {
     readonly _tag: "Open"
     readonly backing: MutableHashMap.MutableHashMap<K, Fiber.Fiber<A, E>>
+    /** Every fiber the map still owns: the keyed ones plus replaced fibers that are still interrupting. */
+    readonly fibers: Set<Fiber.Fiber<A, E>>
   } | {
     readonly _tag: "Closed"
   }
@@ -122,7 +127,7 @@ const makeUnsafe = <K, A = unknown, E = unknown>(
   deferred: Deferred.Deferred<void, E>
 ): FiberMap<K, A, E> => {
   const self = Object.create(Proto)
-  self.state = { _tag: "Open", backing }
+  self.state = { _tag: "Open", backing, fibers: new Set() }
   self.deferred = deferred
   return self
 }
@@ -176,7 +181,7 @@ export const make = <K, A = unknown, E = unknown>(): Effect.Effect<FiberMap<K, A
         const state = map.state
         if (state._tag === "Closed") return Effect.void
         map.state = { _tag: "Closed" }
-        return Fiber.interruptAll(MutableHashMap.values(state.backing)).pipe(
+        return Fiber.interruptAll(state.fibers).pipe(
           Deferred.into(map.deferred)
         )
       })
@@ -191,6 +196,7 @@ export const make = <K, A = unknown, E = unknown>(): Effect.Effect<FiberMap<K, A
  * fiber. If the key already has a fiber, the previous fiber is interrupted
  * unless `onlyIfMissing` is set. All managed fibers are interrupted when the
  * map's scope closes.
+ * The returned function starts fibers like `Effect.runForkWith`.
  *
  * **Example** (Creating a scoped runtime)
  *
@@ -249,6 +255,7 @@ export const makeRuntime = <R, K, E = unknown, A = unknown>(): Effect.Effect<
  * fiber for that key unless `onlyIfMissing` is set. The returned Promise
  * resolves with the effect's success value or rejects with the squashed failure
  * cause.
+ * The returned function starts fibers like `Effect.runForkWith`.
  *
  * **Example** (Creating a promise runtime)
  *
@@ -385,6 +392,7 @@ export const setUnsafe: {
 
   // Install the replacement before interruption can re-enter the map through a finalizer.
   MutableHashMap.set(self.state.backing, key, fiber)
+  self.state.fibers.add(fiber)
   if (previous._tag === "Some") {
     previous.value.interruptUnsafe(internalFiberId)
   }
@@ -392,6 +400,7 @@ export const setUnsafe: {
     if (self.state._tag === "Closed") {
       return
     }
+    self.state.fibers.delete(fiber)
     const current = MutableHashMap.get(self.state.backing, key)
     if (Option.isSome(current) && fiber === current.value) {
       MutableHashMap.remove(self.state.backing, key)
@@ -420,6 +429,9 @@ export const setUnsafe: {
  * kept, while re-registering the existing fiber is a no-op.
  *
  * This is the Effect-wrapped version of `setUnsafe`.
+ *
+ * Set `propagateInterruption: true` to report external interruptions to
+ * {@link join}.
  *
  * **Example** (Adding a fiber)
  *
@@ -747,8 +759,26 @@ const constInterruptedFiber = (function() {
  *
  * When the fiber completes, it is removed from the map. If the key already has
  * a fiber, the previous fiber is interrupted unless `onlyIfMissing` is set.
- * Set `startImmediately: false` to defer startup. By default, the effect starts
- * immediately.
+ *
+ * The new fiber starts interruptible, even when the caller is uninterruptible.
+ * By default, it runs synchronously until it suspends, yields, or completes
+ * before `run` returns. Set `startImmediately: false` to defer startup as in
+ * `Effect.forkChild`.
+ *
+ * The map owns the fiber, not the caller: it can outlive the caller's
+ * completion or interruption. Forking and registration are interruption-safe,
+ * so caller interruption cannot leave the fiber untracked. Closing the owning
+ * scope from another fiber interrupts managed fibers and awaits their finalizers.
+ *
+ * Set `propagateInterruption: true` to report external interruptions to
+ * {@link join}.
+ *
+ * **Gotchas**
+ *
+ * Uninterruptible work can delay scope closure.
+ *
+ * Replacement requests interruption of the previous fiber without waiting
+ * for its cleanup.
  *
  * **Example** (Forking effects into a map)
  *
@@ -842,6 +872,7 @@ const runImpl = <K, A, E, R, XE extends E, XA extends A>(
  *
  * Each call stores the forked fiber under the supplied key. If that key already
  * has a fiber, the previous fiber is interrupted unless `onlyIfMissing` is set.
+ * The returned function starts fibers like `Effect.runForkWith`.
  *
  * **Example** (Capturing a runtime)
  *
@@ -926,6 +957,7 @@ export const runtime: <K, A, E>(
  * previous fiber for that key unless `onlyIfMissing` is set. The Promise
  * resolves with the effect's success value or rejects with the squashed failure
  * cause.
+ * The returned function starts fibers like `Effect.runForkWith`.
  *
  * **Example** (Running effects as promises)
  *
@@ -1024,10 +1056,13 @@ export const size = <K, A, E>(self: FiberMap<K, A, E>): Effect.Effect<number> =>
  *
  * **Details**
  *
- * The returned Effect fails with the first managed fiber failure that is not
- * ignored by the map's interruption rules. Normal successful completion
- * removes fibers from the map; use `awaitEmpty` to wait until the map has no
- * fibers.
+ * Fails with the first recorded fiber failure. A successful fiber is removed
+ * without completing `join`; use {@link awaitEmpty} to wait for an empty map.
+ *
+ * By default, failures caused only by interruption are ignored. If the fiber
+ * was registered with `propagateInterruption: true`, its interruption is
+ * recorded unless the map itself interrupted it, as on scope closure,
+ * `clear`, `remove`, or replacement.
  *
  * **Example** (Joining failing fibers)
  *

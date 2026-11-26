@@ -21,6 +21,8 @@
     "**/*.tsbuildinfo",
     "**/CHANGELOG.md",
     "packages/effect/src/StandardSchema.ts",
+    "packages/tools/graphql-generator/test/generated/**/*.graphql.ts",
+    "packages/effect/src/protobuf/ProtobufDescriptorProto.ts",
     "!scratchpad/**/*",
     "**/.*",
     "!.agents",

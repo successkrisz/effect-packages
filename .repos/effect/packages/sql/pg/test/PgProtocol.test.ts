@@ -109,9 +109,11 @@ describe("PgProtocol", () => {
         else sink.raw(value)
         return Result.void
       })
+      const options = { portal: "p1", statement: "s1", parameters: [bytes("00000001"), null] }
+      assert.strictEqual(hex(success(encodeBind(options))), frontend.bind)
       assert.strictEqual(
-        hex(success(encodeBind({ portal: "p1", statement: "s1", parameters: [bytes("00000001"), null] }))),
-        frontend.bind
+        hex(success(encodeBind({ ...options, textResults: true }))),
+        "42000000207031007331000001000100020000000400000001ffffffff00010000"
       )
     })
 
@@ -246,26 +248,28 @@ describe("PgProtocol", () => {
       }
     })
 
-    it("accepts the maximum signed parameter count and rejects the next value", () => {
-      const maxOids = new Array<number>(0x7fff).fill(23)
-      const maxParameters = new Array<Uint8Array | null>(0x7fff).fill(null)
-      const parse = success(PgProtocol.encodeParse({ name: "", query: "", parameterTypes: maxOids }))
-      const bind = success(PgProtocol.encodeBind({ portal: "", statement: "", parameters: maxParameters }))
-      assert.strictEqual(new DataView(parse.buffer, parse.byteOffset, parse.byteLength).getInt16(7), 0x7fff)
-      assert.strictEqual(new DataView(bind.buffer, bind.byteOffset, bind.byteLength).getInt16(11), 0x7fff)
-
-      const tooManyOids = new Array<number>(0x8000).fill(23)
-      const tooManyParameters = new Array<Uint8Array | null>(0x8000).fill(null)
-      const parseFailure = PgProtocol.encodeParse({ name: "", query: "", parameterTypes: tooManyOids })
-      const bindFailure = PgProtocol.encodeBind({ portal: "", statement: "", parameters: tooManyParameters })
-      assert.isTrue(Result.isFailure(parseFailure))
-      assert.isTrue(Result.isFailure(bindFailure))
+    it("accepts the maximum unsigned parameter count and rejects the next value", () => {
       const encodeBind = PgProtocol.makeBindEncoder<Uint8Array | null>((sink, value) => {
         if (value === null) sink.sqlNull()
         else sink.raw(value)
         return Result.void
       })
+      const maxOids = new Array<number>(0xffff).fill(23)
+      const maxParameters = new Array<Uint8Array | null>(0xffff).fill(null)
+      const parse = success(PgProtocol.encodeParse({ name: "", query: "", parameterTypes: maxOids }))
+      const bind = success(PgProtocol.encodeBind({ portal: "", statement: "", parameters: maxParameters }))
+      const fused = success(encodeBind({ portal: "", statement: "", parameters: maxParameters }))
+      assert.strictEqual(new DataView(parse.buffer, parse.byteOffset, parse.byteLength).getUint16(7), 0xffff)
+      assert.strictEqual(new DataView(bind.buffer, bind.byteOffset, bind.byteLength).getUint16(11), 0xffff)
+      assert.deepStrictEqual(fused, bind)
+
+      const tooManyOids = new Array<number>(0x10000).fill(23)
+      const tooManyParameters = new Array<Uint8Array | null>(0x10000).fill(null)
+      const parseFailure = PgProtocol.encodeParse({ name: "", query: "", parameterTypes: tooManyOids })
+      const bindFailure = PgProtocol.encodeBind({ portal: "", statement: "", parameters: tooManyParameters })
       const fusedFailure = encodeBind({ portal: "", statement: "", parameters: tooManyParameters })
+      assert.isTrue(Result.isFailure(parseFailure))
+      assert.isTrue(Result.isFailure(bindFailure))
       assert.isTrue(Result.isFailure(fusedFailure))
     })
   })
@@ -390,6 +394,14 @@ describe("PgProtocol", () => {
       assert.deepStrictEqual(
         PgProtocol.makeParser().push(parameterStatus(name, "v")),
         [{ _tag: "ParameterStatus", name, value: "v" }]
+      )
+    })
+
+    it("keeps a leading U+FEFF when the string contains U+FFFD", () => {
+      const name = "\ufeffnote\ufffd"
+      assert.deepStrictEqual(
+        PgProtocol.makeParser().push(parameterStatus(name, name)),
+        [{ _tag: "ParameterStatus", name, value: name }]
       )
     })
 
