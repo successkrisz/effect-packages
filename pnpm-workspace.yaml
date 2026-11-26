@@ -4,14 +4,17 @@ packages:
   - scratchpad
 
 catalog:
-  '@effect/platform-node': 4.0.3
-  '@effect/platform-node-shared': 4.0.3
-  '@effect/vitest': 4.0.3
+  '@effect/platform-node': 4.1.6
+  '@effect/platform-node-shared': 4.1.6
+  '@effect/vitest': 4.1.6
   '@types/aws-lambda': ^8.10.152
   '@types/node': ^24.0.4
-  effect: 4.0.3
+  effect: 4.1.6
 
 minimumReleaseAgeExclude:
+  - effect
+  - '@effect/*'
+  - '@effect-aws/*'
   - '@changesets/write@1.0.1'
   - '@vitest/expect@4.1.11'
   - '@vitest/mocker@4.1.11'
@@ -21,7 +24,6 @@ minimumReleaseAgeExclude:
   - '@vitest/spy@4.1.11'
   - '@vitest/utils@4.1.11'
   - vitest@4.1.11
-  - '@effect-aws/lambda@2.0.0'
 
 allowBuilds:
   esbuild: true

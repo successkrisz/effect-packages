@@ -6,7 +6,13 @@ on:
 
 jobs:
   pack:
+    name: Packed packages on Effect ${{ matrix.effect || 'catalog' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The catalog pin, the minimum supported version, and the latest patch of each supported minor.
+        effect: ['', '4.0.0', '4.0.x', '4.1.x']
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
@@ -18,10 +24,10 @@ jobs:
           corepack enable
           corepack install
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-      - name: Build packages
-        run: pnpm build
-      - name: Pack all packages and compile the portability fixture against them
+        run: pnpm install --frozen-lockfile
+      - name: Check packed packages in an isolated consumer project
+        env:
+          EFFECT_VERSION: ${{ matrix.effect }}
         run: pnpm pack:portability
       - name: List packed contents
         run: |

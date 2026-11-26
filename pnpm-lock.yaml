@@ -165,14 +165,14 @@ settings:
 catalogs:
   default:
     '@effect/platform-node':
-      specifier: 4.0.3
-      version: 4.0.3
+      specifier: 4.1.6
+      version: 4.1.6
     '@effect/platform-node-shared':
-      specifier: 4.0.3
-      version: 4.0.3
+      specifier: 4.1.6
+      version: 4.1.6
     '@effect/vitest':
-      specifier: 4.0.3
-      version: 4.0.3
+      specifier: 4.1.6
+      version: 4.1.6
     '@types/aws-lambda':
       specifier: ^8.10.152
       version: 8.10.162
@@ -180,8 +180,8 @@ catalogs:
       specifier: ^24.0.4
       version: 24.13.3
     effect:
-      specifier: 4.0.3
-      version: 4.0.3
+      specifier: 4.1.6
+      version: 4.1.6
 
 importers:
 
@@ -204,7 +204,7 @@ importers:
         version: 0.51.1
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.3(effect@4.0.3)(vitest@5.0.3(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0)))
+        version: 4.1.6(effect@4.1.6)(vitest@5.0.3(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0)))
       lefthook:
         specifier: 2.2.1
         version: 2.2.1
@@ -225,7 +225,7 @@ importers:
         version: link:../../packages/effect-problem-json
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
       effect-csv:
         specifier: workspace:*
         version: link:../../packages/effect-csv
@@ -244,10 +244,10 @@ importers:
     devDependencies:
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.3(effect@4.0.3)(redis@6.2.1)
+        version: 4.1.6(effect@4.1.6)(redis@6.2.1)
       '@effect/platform-node-shared':
         specifier: 'catalog:'
-        version: 4.0.3(effect@4.0.3)
+        version: 4.1.6(effect@4.1.6)
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
@@ -256,7 +256,7 @@ importers:
         version: 2.0.0
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
 
   packages/effect-lambda:
     dependencies:
@@ -272,7 +272,7 @@ importers:
         version: 24.13.3
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
       helmet:
         specifier: ^8.1.0
         version: 8.3.0
@@ -281,7 +281,7 @@ importers:
     devDependencies:
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
 
   packages/effect-oauth-client:
     devDependencies:
@@ -290,19 +290,19 @@ importers:
         version: 24.13.3
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
 
   packages/effect-problem-json:
     devDependencies:
       '@effect-aws/lambda':
         specifier: 2.0.0
-        version: 2.0.0(@effect/platform-node-shared@4.0.3(effect@4.0.3))(effect@4.0.3)
+        version: 2.0.0(@effect/platform-node-shared@4.1.6(effect@4.1.6))(effect@4.1.6)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.3(effect@4.0.3)(redis@6.2.1)
+        version: 4.1.6(effect@4.1.6)(redis@6.2.1)
       '@effect/platform-node-shared':
         specifier: 'catalog:'
-        version: 4.0.3(effect@4.0.3)
+        version: 4.1.6(effect@4.1.6)
       '@types/aws-lambda':
         specifier: 'catalog:'
         version: 8.10.162
@@ -311,7 +311,7 @@ importers:
         version: 24.13.3
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
       tsx:
         specifier: ^4.21.0
         version: 4.23.12
@@ -326,10 +326,10 @@ importers:
         version: link:../packages/effect-problem-json
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.3(effect@4.0.3)(redis@6.2.1)
+        version: 4.1.6(effect@4.1.6)(redis@6.2.1)
       effect:
         specifier: 'catalog:'
-        version: 4.0.3
+        version: 4.1.6
       effect-csv:
         specifier: workspace:*
         version: link:../packages/effect-csv
@@ -491,18 +491,18 @@ packages:
       '@effect/platform-node-shared': '>=4.0.0 <5.0.0'
       effect: '>=4.0.0-beta.66 <5.0.0'
 
-  '@effect/platform-node-shared@4.0.3':
-    resolution: {integrity: sha512-5srkJfmWklWSgwZwlkMeTXobfNtxuwuTCvY9JWdPXRv/PBXAe5kKSptzRxT778oFFsaE9IMI8X61pvkifT9Eug==}
-    engines: {node: '>=18.0.0'}
+  '@effect/platform-node-shared@4.1.6':
+    resolution: {integrity: sha512-RWKHX5TEZet2KC/NlBu5prBkZT30m6h8YTSWfJM0wIw0BNMkfEzCuH6N5HOw8mUudclWp5z1XTzsZ7xg0h+6Qw==}
+    engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.0.3
+      effect: ^4.1.6
 
-  '@effect/platform-node@4.0.3':
-    resolution: {integrity: sha512-ctvREpC1EzRVsOm0JyIzYHajAQScFaec6Gl+M7TEIpEqdmmx6Ju11Um92EA/CE2KBfY5Fp1QWlqTkK6lOL7tqg==}
-    engines: {node: '>=18.0.0'}
+  '@effect/platform-node@4.1.6':
+    resolution: {integrity: sha512-DNHzWIRARCCoK6Ez5MOqJ6H81e5FbQecH8GY41ftJGqATENUOVOLkT1iNgxBt6zPi36iF1EpraBen+MjKUqHpw==}
+    engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.0.3
-      redis: '>=5.0.0 <7.0.0'
+      effect: ^4.1.6
+      redis: '>=5.1.0 <7.0.0'
 
   '@effect/tsgo-darwin-arm64@0.51.1':
     resolution: {integrity: sha512-Jx+1RB3pz1B2zYs1EmxybwDOq9KRpfdu/rn1XTULNMZmqUJZuvTQU9CRqB0g/ZgIa6MeNBZEYvmAu4Dq2/QVWA==}
@@ -543,10 +543,10 @@ packages:
     resolution: {integrity: sha512-i6mA6cNah+0mkPdu8qZILCO3Pnd9kWo03/s82Ju+1DFhdL28HFagi+1PRGxqgq1uMaHziWQ+ciKvOmIoks2RdA==}
     hasBin: true
 
-  '@effect/vitest@4.0.3':
-    resolution: {integrity: sha512-jsIkpssf0CFuOeycW2sQZkWx0qzlsRv+JIkzd9qQpoFDcHC9JZFSdIjEBAhsdp20pDy4Y/b2vT/ew7wXZxvEig==}
+  '@effect/vitest@4.1.6':
+    resolution: {integrity: sha512-Knb13gPhDbtOuNUnPXE/Sl+UvrKFHRATwU2vy+DGQCpjK1yI3oy1feQo1g2X8ZdOdc63sJB7HJXCMNsDy8xYvg==}
     peerDependencies:
-      effect: ^4.0.3
+      effect: ^4.1.6
       vitest: '>=5.0.0 <6.0.0'
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -1044,8 +1044,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  effect@4.0.3:
-    resolution: {integrity: sha512-LoWn/Uwwx0JjHSDmBAAahx8sB+klzM6vsZovnbYowBNw6B4QScJLRLBByO61plvNiycx7HPN8FnsWUCu0eXW5w==}
+  effect@4.1.6:
+    resolution: {integrity: sha512-P3CxMsdcSCle/7/FnPILd9GJkNqGtduKam2LX9Xsb8LoOjmeQ9Kmsuh16JwtIthaxLyiTCOzUUt+PZsXIohl+A==}
 
   es-module-lexer@2.3.2:
     resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
@@ -1316,8 +1316,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  undici@8.11.2:
-    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
+  undici@8.13.1:
+    resolution: {integrity: sha512-Kt7EaPjh0s93lJH/PmW3d5rhkcpUa6fS3jqZ7+YGxNd9L7Xy/i827xe4C2uhhq+pJebM4tQOl5AgHmW11G5Skg==}
     engines: {node: '>=22.19.0'}
 
   vite@8.2.1:
@@ -1409,8 +1409,8 @@ packages:
     engines: {node: '>=20.11'}
     hasBin: true
 
-  ws@8.22.0:
-    resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -1592,26 +1592,26 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
-  '@effect-aws/lambda@2.0.0(@effect/platform-node-shared@4.0.3(effect@4.0.3))(effect@4.0.3)':
+  '@effect-aws/lambda@2.0.0(@effect/platform-node-shared@4.1.6(effect@4.1.6))(effect@4.1.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.3(effect@4.0.3)
-      effect: 4.0.3
+      '@effect/platform-node-shared': 4.1.6(effect@4.1.6)
+      effect: 4.1.6
 
-  '@effect/platform-node-shared@4.0.3(effect@4.0.3)':
+  '@effect/platform-node-shared@4.1.6(effect@4.1.6)':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.0.3
-      ws: 8.22.0
+      effect: 4.1.6
+      ws: 8.23.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.3(effect@4.0.3)(redis@6.2.1)':
+  '@effect/platform-node@4.1.6(effect@4.1.6)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.3(effect@4.0.3)
-      effect: 4.0.3
+      '@effect/platform-node-shared': 4.1.6(effect@4.1.6)
+      effect: 4.1.6
       redis: 6.2.1
-      undici: 8.11.2
+      undici: 8.13.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -1647,9 +1647,9 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.51.1
       '@effect/tsgo-win32-x64': 0.51.1
 
-  '@effect/vitest@4.0.3(effect@4.0.3)(vitest@5.0.3(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0)))':
+  '@effect/vitest@4.1.6(effect@4.1.6)(vitest@5.0.3(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0)))':
     dependencies:
-      effect: 4.0.3
+      effect: 4.1.6
       vitest: 5.0.3(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -1928,7 +1928,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  effect@4.0.3: {}
+  effect@4.1.6: {}
 
   es-module-lexer@2.3.2: {}
 
@@ -2194,7 +2194,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici@8.11.2: {}
+  undici@8.13.1: {}
 
   vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
@@ -2233,6 +2233,6 @@ snapshots:
 
   why-is-node-running@3.2.1: {}
 
-  ws@8.22.0: {}
+  ws@8.23.0: {}
 
   yaml@2.9.0: {}
