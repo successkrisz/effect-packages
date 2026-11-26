@@ -1,0 +1,14 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"extends": "../tsconfigs/tsconfig.node22.json",
+	"include": ["**/*.ts"],
+	"compilerOptions": {
+		"rootDir": ".",
+		"noEmit": true,
+		"declaration": false,
+		"declarationMap": false,
+		"composite": false,
+		"incremental": false,
+		"types": ["node"]
+	}
+}

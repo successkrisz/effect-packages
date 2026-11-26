@@ -11,6 +11,7 @@
 - Run `pnpm run typecheck` and `pnpm run format` after code changes.
 - Run `pnpm run test` when behavior changes or tests are added.
 - After typecheck, format, and tests pass for code changes, read the [Effect v4 QA agent definition](.cursor/agents/qa-agent.md) and use it to delegate an independent review.
+- For an ad hoc runnable probe, create `scratchpad/<name>.ts`, run it with plain `node`, and remove it when finished. Do not put probes in packages or `.scratch/` (that folder is for planning/specs/issues only).
 
 ## Effect Reference Repository
 
