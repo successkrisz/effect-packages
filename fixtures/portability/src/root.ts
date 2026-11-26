@@ -13,6 +13,10 @@ import {
 	Sns,
 	Sqs,
 } from 'effect-lambda'
+import { Distance } from 'effect-measure'
+
+export const distanceInKilometers = Distance.kilometers(2)
+export const tripDistance = Schema.Struct({ kilometers: Distance.FromKilometers })
 
 export const restApiHandler = RestApi.toLambdaHandler(
 	RestApi.schemaBodyJson(Schema.Struct({ name: Schema.String })).pipe(

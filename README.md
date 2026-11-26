@@ -10,6 +10,7 @@ Useful Effect libraries
 - [`effect-oauth-client`](packages/effect-oauth-client/README.md) -- OAuth 2.0 Client Credentials `HttpClient` wrapper for Effect v4 HTTP.
 - [`effect-problem-json`](packages/effect-problem-json/README.md) -- RFC 9457 problem details (`application/problem+json`) for Effect v4 `HttpApi`.
 - [`effect-csv`](packages/effect-csv/README.md) -- Streaming CSV parsing and writing for Effect v4 with `Schema`-typed rows.
+- [`effect-measure`](packages/effect-measure/README.md) -- Physical measurement values for Effect v4, starting with `Distance`.
 
 ### effect-lambda quickstart
 

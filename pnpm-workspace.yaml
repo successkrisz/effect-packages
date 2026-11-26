@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - fixtures/*
+  - scratchpad
 
 catalog:
   '@effect/platform-node': 4.0.3

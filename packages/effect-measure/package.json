@@ -1,0 +1,49 @@
+{
+	"name": "effect-measure",
+	"version": "0.0.0",
+	"description": "Physical measurement values for Effect, starting with Distance",
+	"keywords": [
+		"effect-ts",
+		"units",
+		"distance",
+		"schema"
+	],
+	"license": "MIT",
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./Distance": "./src/Distance.ts",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"src/**/*.ts",
+		"dist",
+		"LICENSE"
+	],
+	"scripts": {
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.dev.json",
+		"build": "tsc -p tsconfig.json",
+		"prepack": "pnpm run build"
+	},
+	"devDependencies": {
+		"effect": "catalog:"
+	},
+	"peerDependencies": {
+		"effect": "^4.0.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true,
+		"exports": {
+			".": "./dist/index.js",
+			"./Distance": "./dist/Distance.js",
+			"./package.json": "./package.json"
+		}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/successkrisz/effect-packages.git",
+		"directory": "packages/effect-measure"
+	}
+}

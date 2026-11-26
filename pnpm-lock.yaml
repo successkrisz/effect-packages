@@ -232,6 +232,9 @@ importers:
       effect-lambda:
         specifier: workspace:*
         version: link:../../packages/effect-lambda
+      effect-measure:
+        specifier: workspace:*
+        version: link:../../packages/effect-measure
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -274,6 +277,12 @@ importers:
         specifier: ^8.1.0
         version: 8.3.0
 
+  packages/effect-measure:
+    devDependencies:
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.3
+
   packages/effect-oauth-client:
     devDependencies:
       '@types/node':
@@ -306,6 +315,34 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.23.12
+
+  scratchpad:
+    dependencies:
+      '@ballatech/effect-oauth-client':
+        specifier: workspace:*
+        version: link:../packages/effect-oauth-client
+      '@ballatech/effect-problem-json':
+        specifier: workspace:*
+        version: link:../packages/effect-problem-json
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.0.3(effect@4.0.3)(redis@6.2.1)
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.3
+      effect-csv:
+        specifier: workspace:*
+        version: link:../packages/effect-csv
+      effect-lambda:
+        specifier: workspace:*
+        version: link:../packages/effect-lambda
+      effect-measure:
+        specifier: workspace:*
+        version: link:../packages/effect-measure
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
 
 packages:
 

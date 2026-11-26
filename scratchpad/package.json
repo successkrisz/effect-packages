@@ -1,0 +1,18 @@
+{
+	"name": "scratchpad",
+	"private": true,
+	"type": "module",
+	"version": "0.0.0",
+	"dependencies": {
+		"@ballatech/effect-oauth-client": "workspace:*",
+		"@ballatech/effect-problem-json": "workspace:*",
+		"@effect/platform-node": "catalog:",
+		"effect": "catalog:",
+		"effect-csv": "workspace:*",
+		"effect-lambda": "workspace:*",
+		"effect-measure": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:"
+	}
+}

@@ -6,3 +6,9 @@ dist
 .gitnexus
 .repos/
 repos/
+
+# Scratchpad probe files (keep scaffolding tracked)
+scratchpad/*
+!scratchpad/package.json
+!scratchpad/tsconfig.json
+!scratchpad/index.ts

@@ -4,7 +4,7 @@
 	"commit": false,
 	"access": "public",
 	"baseBranch": "master",
-	"ignore": [],
+	"ignore": ["scratchpad"],
 	"linked": [],
 	"updateInternalDependencies": "patch",
 	"snapshot": {
