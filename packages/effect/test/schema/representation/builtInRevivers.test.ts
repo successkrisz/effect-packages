@@ -1,6 +1,11 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Formatter, Schema, type SchemaAST, SchemaRepresentation } from "effect"
 import { throws } from "../../utils/assert.ts"
+import { makeModule } from "../../utils/schemaCodegen.ts"
+
+function print(document: SchemaRepresentation.Document): string {
+  return makeModule({ representations: [document.representation], references: document.references }).print()
+}
 
 function assertFilterReviver<T>(input: {
   readonly schema: Schema.Codec<T>
@@ -44,7 +49,9 @@ function assertFilterReviver<T>(input: {
     typeof revivedCheck.annotations?.toJsonSchema,
     input.hasToJsonSchema === false ? "undefined" : "function"
   )
-  assert.strictEqual(typeof revivedCheck.annotations?.toCode, "function")
+  const expected = print(document)
+  assert.strictEqual(print(SchemaRepresentation.fromJson(json)), expected)
+  assert.strictEqual(print(SchemaRepresentation.toRepresentation(revived.ast)), expected)
 }
 
 function assertDeclarationReviver(input: {
@@ -74,7 +81,9 @@ function assertDeclarationReviver(input: {
     (revived.ast.annotations?.representation as { readonly id?: string } | undefined)?.id,
     input.id
   )
-  assert.strictEqual(typeof revived.ast.annotations?.toCode, "function")
+  const expected = print(document)
+  assert.strictEqual(print(SchemaRepresentation.fromJson(json)), expected)
+  assert.strictEqual(print(SchemaRepresentation.toRepresentation(revived.ast)), expected)
 }
 
 describe("SchemaRepresentation built-in string revivers", () => {
@@ -228,7 +237,18 @@ describe("SchemaRepresentation built-in string revivers", () => {
       payload: null,
       reviver: SchemaRepresentation.isULIDReviver,
       valid: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-      invalid: "not-a-ulid"
+      invalid: "80000000000000000000000000"
+    })
+  })
+
+  it("revives isAscii", () => {
+    assertFilterReviver({
+      schema: Schema.String.check(Schema.isAscii()),
+      id: "effect/schema/isAscii",
+      payload: null,
+      reviver: SchemaRepresentation.isAsciiReviver,
+      valid: "ascii only",
+      invalid: "caf\u00e9"
     })
   })
 
@@ -978,6 +998,33 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       id: "effect/schema/BigDecimal",
       payload: null,
       reviver: SchemaRepresentation.BigDecimalReviver
+    })
+  })
+
+  it("revives Rational", () => {
+    assertDeclarationReviver({
+      schema: Schema.Rational,
+      id: "effect/schema/Rational",
+      payload: null,
+      reviver: SchemaRepresentation.RationalReviver
+    })
+  })
+
+  it("revives SemVer", () => {
+    assertDeclarationReviver({
+      schema: Schema.SemVer,
+      id: "effect/schema/SemVer",
+      payload: null,
+      reviver: SchemaRepresentation.SemVerReviver
+    })
+  })
+
+  it("revives SemVerRange", () => {
+    assertDeclarationReviver({
+      schema: Schema.SemVerRange,
+      id: "effect/schema/SemVerRange",
+      payload: null,
+      reviver: SchemaRepresentation.SemVerRangeReviver
     })
   })
 

@@ -30,6 +30,7 @@ import * as DeliverAt from "./DeliverAt.ts"
 import type { EntityAddress } from "./EntityAddress.ts"
 import * as Envelope from "./Envelope.ts"
 import * as ClusterAbandon from "./internal/clusterAbandon.ts"
+import { TransactionNotifications } from "./internal/transactionNotifications.ts"
 import * as Message from "./Message.ts"
 import * as Reply from "./Reply.ts"
 import * as ShardId from "./ShardId.ts"
@@ -118,7 +119,31 @@ export class MessageStorage extends Context.Service<MessageStorage, {
   ) => Effect.Effect<Option.Option<Snowflake.Snowflake>, PersistenceError>
 
   /**
+   * Retrieves every request saved for the address under the RPC tag, whether
+   * or not it has been processed, in no particular order.
+   *
+   * **Details**
+   *
+   * The entity type, entity id and tag must match exactly, including case. The
+   * shard id is ignored, as in `clearAddress`, so requests saved before a shard
+   * reassignment are still returned.
+   */
+  readonly requestsForAddress: (
+    options: {
+      readonly address: EntityAddress
+      readonly tag: string
+    }
+  ) => Effect.Effect<Array<Envelope.PartialRequestEncoded>, PersistenceError>
+
+  /**
    * For locally sent messages, register a handler to process the replies.
+   *
+   * **Details**
+   *
+   * The handler must be registered as soon as the effect starts, before it
+   * first suspends. Callers fork it with `startImmediately` before saving or
+   * notifying the request, and rely on it to see every reply saved after that
+   * point. The effect completes when a `WithExit` reply arrives.
    */
   readonly registerReplyHandler: <R extends Rpc.Any>(
     message: Message.OutgoingRequest<R> | Message.IncomingRequest<R>
@@ -126,8 +151,15 @@ export class MessageStorage extends Context.Service<MessageStorage, {
 
   /**
    * Unregister the reply handler for the specified message.
+   *
+   * By default the waiters are resumed with `EntityNotAssignedToRunner`. With
+   * `interrupt: true` they are interrupted with a cluster-abandon annotation
+   * instead, for when the request will not be served by this runner.
    */
-  readonly unregisterReplyHandler: (requestId: Snowflake.Snowflake) => Effect.Effect<void>
+  readonly unregisterReplyHandler: (
+    requestId: Snowflake.Snowflake,
+    options?: { readonly interrupt?: boolean | undefined }
+  ) => Effect.Effect<void>
 
   /**
    * Unregister the reply handlers for the specified ShardId.
@@ -207,10 +239,33 @@ export class MessageStorage extends Context.Service<MessageStorage, {
   ) => Effect.Effect<void, PersistenceError>
 
   /**
+   * Deletes up to `limit` of an entity type's completed requests with their
+   * messages and replies, returning the number of requests deleted.
+   *
+   * **Details**
+   *
+   * A request is eligible when its `WithExit` reply id has a timestamp before
+   * `completedBefore`, in Unix milliseconds. Requests without one, including
+   * ones reset by `clearReplies`, are kept. A request saved again with the same
+   * primary key after deletion is a new request.
+   *
+   * **Gotchas**
+   *
+   * Inside a caller's transaction on MySQL before 8.0.20 or MariaDB, SQL storage
+   * needs that transaction at READ COMMITTED, or the delete can deadlock with a
+   * concurrent reply.
+   */
+  readonly deleteProcessed: (options: {
+    readonly entityType: string
+    readonly completedBefore: number
+    readonly limit: number
+  }) => Effect.Effect<number, PersistenceError>
+
+  /**
    * Wraps requests in storage transactions.
    *
-   * `WithExit` replies saved in a transaction notify callers after the outermost
-   * commit; stream chunks notify immediately. Replies saved in a failed
+   * `WithExit` replies and discarded sends saved in a transaction notify after
+   * the outermost commit; stream chunks notify immediately. Replies saved in a failed
    * transaction must be discarded. The wrapper may fail only with the wrapped
    * effect's own failure or a defect.
    */
@@ -381,6 +436,23 @@ export type Encoded = {
   ) => Effect.Effect<Option.Option<Snowflake.Snowflake>, PersistenceError>
 
   /**
+   * Retrieves every request saved for the address under the RPC tag, whether
+   * or not it has been processed, in no particular order.
+   *
+   * **Details**
+   *
+   * The entity type, entity id and tag must match exactly, including case. The
+   * shard id is ignored, as in `clearAddress`, so requests saved before a shard
+   * reassignment are still returned.
+   */
+  readonly requestsForAddress: (
+    options: {
+      readonly address: EntityAddress
+      readonly tag: string
+    }
+  ) => Effect.Effect<Array<Envelope.PartialRequestEncoded>, PersistenceError>
+
+  /**
    * Retrieves the replies for the specified requests.
    *
    * **Details**
@@ -475,6 +547,22 @@ export type Encoded = {
   ) => Effect.Effect<void, PersistenceError>
 
   /**
+   * Deletes up to `limit` of an entity type's completed requests with every
+   * message and reply sharing their request id, returning the number deleted.
+   *
+   * **Details**
+   *
+   * A request is eligible when its `WithExit` reply id has a timestamp before
+   * `completedBefore`, in Unix milliseconds. Selecting and deleting must be
+   * atomic. Requests locked by another transaction may be left for a later call.
+   */
+  readonly deleteProcessed: (options: {
+    readonly entityType: string
+    readonly completedBefore: number
+    readonly limit: number
+  }) => Effect.Effect<number, PersistenceError>
+
+  /**
    * Used to wrap requests with transactions.
    */
   readonly withTransaction: <A, E, R>(
@@ -518,10 +606,6 @@ export type EncodedRepliesOptions<A> = {
   readonly cursor: Option.Option<A>
 }
 
-const TransactionNotifications = Context.Reference<
-  Array<Effect.Effect<void, PersistenceError | MalformedMessage>> | undefined
->("effect/cluster/MessageStorage/TransactionNotifications", { defaultValue: () => undefined })
-
 /**
  * Wraps a concrete message storage implementation with reply-handler management.
  *
@@ -562,6 +646,14 @@ export const make = (
     }
     const replyHandlers = new Map<Snowflake.Snowflake, Array<ReplyHandler>>()
     const replyHandlersShard = new Map<string, Set<ReplyHandler>>()
+    const resumeUnregistered = (handler: ReplyHandler, options?: { readonly interrupt?: boolean | undefined }) =>
+      handler.resume(
+        options?.interrupt ? ClusterAbandon.interrupt : Effect.fail(
+          new EntityNotAssignedToRunner({
+            address: handler.message.envelope.address
+          })
+        )
+      )
     return MessageStorage.of({
       ...storage,
       // Nested transactions defer notifications to the outermost commit.
@@ -601,13 +693,15 @@ export const make = (
           handlers.push(entry)
           shardSet.add(entry)
           return Effect.sync(() => {
-            const index = handlers.indexOf(entry)
-            handlers.splice(index, 1)
+            handlers.splice(handlers.indexOf(entry), 1)
             shardSet.delete(entry)
+            if (handlers.length === 0 && replyHandlers.get(requestId) === handlers) {
+              replyHandlers.delete(requestId)
+            }
           })
         })
       },
-      unregisterReplyHandler: (requestId) =>
+      unregisterReplyHandler: (requestId, options) =>
         Effect.sync(() => {
           const handlers = replyHandlers.get(requestId)
           if (!handlers) return
@@ -615,11 +709,7 @@ export const make = (
           for (let i = 0; i < handlers.length; i++) {
             const handler = handlers[i]
             handler.shardSet.delete(handler)
-            handler.resume(Effect.fail(
-              new EntityNotAssignedToRunner({
-                address: handler.message.envelope.address
-              })
-            ))
+            resumeUnregistered(handler, options)
           }
         }),
       unregisterShardReplyHandlers: (shardId, options) =>
@@ -630,13 +720,7 @@ export const make = (
           replyHandlersShard.delete(id)
           shardSet.forEach((handler) => {
             replyHandlers.delete(handler.message.envelope.requestId)
-            handler.resume(
-              options?.interrupt ? ClusterAbandon.interrupt : Effect.fail(
-                new EntityNotAssignedToRunner({
-                  address: handler.message.envelope.address
-                })
-              )
-            )
+            resumeUnregistered(handler, options)
           })
         }),
       saveReply(reply) {
@@ -767,6 +851,7 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
       const primaryKey = Envelope.primaryKeyByAddress(options)
       return encoded.requestIdForPrimaryKey(primaryKey)
     },
+    requestsForAddress: encoded.requestsForAddress,
     unprocessedMessages(shardIds, options) {
       const storage = this as unknown as MessageStorage["Service"]
       const shards = Array.from(shardIds, (id) => id.toString())
@@ -790,6 +875,7 @@ export const makeEncoded: (encoded: Encoded) => Effect.Effect<
     resetRequests: (requestIds) => requestIds.length === 0 ? Effect.void : encoded.resetRequests(requestIds),
     resetAddresses: (addresses) => addresses.length === 0 ? Effect.void : encoded.resetAddresses(addresses),
     clearAddress: encoded.clearAddress,
+    deleteProcessed: encoded.deleteProcessed,
     resetShards: (shardIds) => {
       const shards = Array.from(shardIds, (id) => id.toString())
       if (!Arr.isArrayNonEmpty(shards)) return Effect.void
@@ -916,12 +1002,14 @@ export const noop: MessageStorage["Service"] = Effect.runSync(make({
   repliesFor: () => Effect.succeed([]),
   repliesForUnfiltered: () => Effect.succeed([]),
   requestIdForPrimaryKey: () => Effect.succeedNone,
+  requestsForAddress: () => Effect.succeed([]),
   unprocessedMessages: () => Effect.succeed([]),
   unprocessedMessagesById: () => Effect.succeed([]),
   resetAddress: () => Effect.void,
   resetRequests: () => Effect.void,
   resetAddresses: () => Effect.void,
   clearAddress: () => Effect.void,
+  deleteProcessed: () => Effect.succeed(0),
   resetShards: () => Effect.void,
   withTransaction: identity
 }))
@@ -1074,9 +1162,11 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
             if (primaryKey) {
               requestsByPrimaryKey.set(primaryKey, entry)
             }
-          } else if (envelope._tag === "AckChunk") {
+          } else {
             const entry = requests.get(envelope.requestId)
-            if (entry) {
+            // the request was deleted, so there is nothing left to acknowledge or interrupt
+            if (!entry) return SaveResultEncoded.Success()
+            if (envelope._tag === "AckChunk") {
               entry.lastReceivedChunk = entry.replies.find((r): r is Reply.ChunkEncoded =>
                 r._tag === "Chunk" && r.id === envelope.replyId
               ) ?? entry.lastReceivedChunk
@@ -1086,8 +1176,8 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
           journal.push(envelope)
           return SaveResultEncoded.Success()
         }),
-      saveReply: (reply_) =>
-        Effect.sync(() => {
+      saveReply: (reply_) => {
+        const save = Effect.sync(() => {
           const reply = JSON.parse(JSON.stringify(reply_)) as Reply.Encoded
           const entry = requests.get(reply.requestId)
           if (!entry || replyIds.has(reply.id)) return
@@ -1098,7 +1188,18 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
           entry.replies.push(reply)
           replyIds.add(reply.id)
           replyLatch.openUnsafe()
-        }),
+        })
+        // Memory has no transaction isolation. Publish terminal replies at the
+        // outer commit boundary, before their queued handler notifications, so
+        // reply readers cannot deliver a success that may still be rolled back.
+        return TransactionNotifications.use((notifications) =>
+          reply_._tag === "WithExit" && notifications
+            ? Effect.sync(() => {
+              notifications.push(save)
+            })
+            : save
+        )
+      },
       clearReplies: (id, options) =>
         Effect.sync(() => {
           const entry = requests.get(String(id))
@@ -1115,6 +1216,17 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
         Effect.sync(() => {
           const entry = requestsByPrimaryKey.get(primaryKey)
           return Option.map(Option.fromNullishOr(entry?.envelope.requestId), Snowflake.Snowflake)
+        }),
+      requestsForAddress: ({ address, tag }) =>
+        Effect.sync(() => {
+          const out: Array<Envelope.PartialRequestEncoded> = []
+          for (const { envelope } of requests.values()) {
+            if (
+              envelope._tag === "Request" && envelope.tag === tag &&
+              envelope.address.entityType === address.entityType && envelope.address.entityId === address.entityId
+            ) out.push(envelope)
+          }
+          return out
         }),
       repliesFor: (requestIds) => Effect.sync(() => repliesFor(requestIds)),
       repliesForUnfiltered: (requestIds) =>
@@ -1203,6 +1315,34 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
             }
             journal.splice(i, 1)
           }
+        }),
+      deleteProcessed: ({ completedBefore, entityType, limit }) =>
+        Effect.sync(() => {
+          const deleted = new Set<string>()
+          for (const [requestId, entry] of requests) {
+            if (deleted.size >= limit) break
+            const exit = entry.replies.find((reply) => reply._tag === "WithExit")
+            if (
+              entry.envelope.address.entityType === entityType && exit !== undefined &&
+              Snowflake.timestamp(Snowflake.Snowflake(exit.id)) < completedBefore
+            ) {
+              deleted.add(requestId)
+              for (const reply of entry.replies) replyIds.delete(reply.id)
+            }
+          }
+          if (deleted.size === 0) return 0
+          for (const requestId of deleted) requests.delete(requestId)
+          for (const [primaryKey, entry] of requestsByPrimaryKey) {
+            if (deleted.has(entry.envelope.requestId)) requestsByPrimaryKey.delete(primaryKey)
+          }
+          for (let i = journal.length - 1; i >= 0; i--) {
+            const envelope = journal[i]
+            if (!deleted.has(envelope.requestId)) continue
+            unprocessed.delete(envelope)
+            lastRead.delete(envelope)
+            journal.splice(i, 1)
+          }
+          return deleted.size
         }),
       resetShards: (shardIds) =>
         Effect.sync(() => {

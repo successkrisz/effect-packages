@@ -200,7 +200,7 @@ export const toUpperCase = <S extends string>(self: S): Uppercase<S> => self.toU
 export const toLowerCase = <T extends string>(self: T): Lowercase<T> => self.toLowerCase() as Lowercase<T>
 
 /**
- * Capitalizes the first character of a string.
+ * Capitalizes the first character (Unicode code point) of a string.
  *
  * **Example** (Capitalizing a string)
  *
@@ -209,6 +209,7 @@ export const toLowerCase = <T extends string>(self: T): Lowercase<T> => self.toL
  *
  * pipe("abc", String.capitalize) // => "Abc"
  * String.capitalize("hello") // => "Hello"
+ * String.capitalize("𐐨foo") // => "𐐀foo"
  * ```
  *
  * @stability stable
@@ -216,13 +217,12 @@ export const toLowerCase = <T extends string>(self: T): Lowercase<T> => self.toL
  * @since 2.0.0
  */
 export const capitalize = <T extends string>(self: T): Capitalize<T> => {
-  if (self.length === 0) return self as Capitalize<T>
-
-  return (toUpperCase(self[0]) + self.slice(1)) as Capitalize<T>
+  const [first = ""] = self
+  return (toUpperCase(first) + self.slice(first.length)) as Capitalize<T>
 }
 
 /**
- * Uncapitalizes the first character of a string.
+ * Uncapitalizes the first character (Unicode code point) of a string.
  *
  * **Example** (Uncapitalizing a string)
  *
@@ -231,6 +231,7 @@ export const capitalize = <T extends string>(self: T): Capitalize<T> => {
  *
  * pipe("ABC", String.uncapitalize) // => "aBC"
  * String.uncapitalize("Hello") // => "hello"
+ * String.uncapitalize("𐐀FOO") // => "𐐨FOO"
  * ```
  *
  * @stability stable
@@ -238,9 +239,8 @@ export const capitalize = <T extends string>(self: T): Capitalize<T> => {
  * @since 2.0.0
  */
 export const uncapitalize = <T extends string>(self: T): Uncapitalize<T> => {
-  if (self.length === 0) return self as Uncapitalize<T>
-
-  return (toLowerCase(self[0]) + self.slice(1)) as Uncapitalize<T>
+  const [first = ""] = self
+  return (toLowerCase(first) + self.slice(first.length)) as Uncapitalize<T>
 }
 
 /**
@@ -431,6 +431,44 @@ export const isEmpty = (self: string): self is "" => self.length === 0
  * @since 2.0.0
  */
 export const isNonEmpty = (self: string): boolean => self.length > 0
+
+// An unpaired UTF-16 surrogate. With the `u` flag, a surrogate pair matches as
+// one code point, outside the class.
+const loneSurrogate = /[\uD800-\uDFFF]/u
+const loneSurrogates = /[\uD800-\uDFFF]/gu
+
+interface WellFormedNative {
+  readonly isWellFormed?: () => boolean
+  readonly toWellFormed?: () => string
+}
+
+/**
+ * Checks whether a `string` has no unpaired UTF-16 surrogates, so that it is
+ * valid Unicode and can be encoded as UTF-8 without loss.
+ *
+ * **Details**
+ *
+ * Uses `String.prototype.isWellFormed` (ES2024) when the runtime has it, which
+ * is much faster than a regular expression on non-ASCII text.
+ *
+ * **Example** (Checking for unpaired surrogates)
+ *
+ * ```ts import.meta.vitest
+ * import { String } from "effect"
+ *
+ * String.isWellFormed("abc") // => true
+ * String.isWellFormed("\uD83D\uDE00") // => true
+ * String.isWellFormed("a\uD800b") // => false
+ * ```
+ *
+ * @see {@link toWellFormed} to replace unpaired surrogates
+ *
+ * @stability unstable
+ * @category predicates
+ * @since 4.1.5
+ */
+export const isWellFormed = (self: string): boolean =>
+  (self as WellFormedNative).isWellFormed?.() ?? !loneSurrogate.test(self)
 
 /**
  * Returns the JavaScript string length, measured in UTF-16 code units.
@@ -775,6 +813,34 @@ export const matchAll = (regExp: RegExp) => (self: string): IterableIterator<Reg
 export const normalize = (form?: "NFC" | "NFD" | "NFKC" | "NFKD") => (self: string): string => self.normalize(form)
 
 /**
+ * Replaces every unpaired UTF-16 surrogate in a `string` with the replacement
+ * character U+FFFD, as UTF-8 encoders such as `TextEncoder` do.
+ *
+ * **Details**
+ *
+ * Uses `String.prototype.toWellFormed` (ES2024) when the runtime has it. A
+ * string without unpaired surrogates is returned as is.
+ *
+ * **Example** (Replacing unpaired surrogates)
+ *
+ * ```ts import.meta.vitest
+ * import { String } from "effect"
+ *
+ * String.toWellFormed("a\uD800b") // => "a\uFFFDb"
+ * String.toWellFormed("\uD83D\uDE00") // => "\uD83D\uDE00"
+ * ```
+ *
+ * @see {@link isWellFormed} to check for unpaired surrogates
+ *
+ * @stability unstable
+ * @category transforming
+ * @since 4.1.5
+ */
+export const toWellFormed = (self: string): string =>
+  (self as WellFormedNative).toWellFormed?.() ??
+    (isWellFormed(self) ? self : self.replace(loneSurrogates, "\uFFFD"))
+
+/**
  * Pads the string from the end with a given fill string to a specified length.
  *
  * **Example** (Padding strings at the end)
@@ -1079,6 +1145,12 @@ export const stripMargin = (self: string): string => stripMarginWith(self, "|")
 /**
  * Converts a snake_case string to camelCase.
  *
+ * **Details**
+ *
+ * Keeps the first character, then replaces each later underscore and the
+ * character after it with that character uppercased. A trailing underscore is
+ * dropped. Input made only of an even number of underscores returns `""`.
+ *
  * **Example** (Converting snake_case to camelCase)
  *
  * ```ts import.meta.vitest
@@ -1093,16 +1165,22 @@ export const stripMargin = (self: string): string => stripMarginWith(self, "|")
  * @since 2.0.0
  */
 export const snakeToCamel = (self: string): string => {
-  if (self.length === 0) return self
+  if (self.length === 0 || (self.length % 2 === 0 && self[0] === "_" && /^_+$/.test(self))) return ""
   let str = self[0]
   for (let i = 1; i < self.length; i++) {
-    str += self[i] === "_" ? self[++i].toUpperCase() : self[i]
+    str += self[i] === "_" ? self.charAt(++i).toUpperCase() : self[i]
   }
   return str
 }
 
 /**
  * Converts a snake_case string to PascalCase.
+ *
+ * **Details**
+ *
+ * Uppercases the first character, then replaces each later underscore and the
+ * character after it with that character uppercased. A trailing underscore is
+ * dropped. Input made only of an even number of underscores returns `""`.
  *
  * **Example** (Converting snake_case to PascalCase)
  *
@@ -1118,10 +1196,10 @@ export const snakeToCamel = (self: string): string => {
  * @since 2.0.0
  */
 export const snakeToPascal = (self: string): string => {
-  if (self.length === 0) return self
+  if (self.length === 0 || (self.length % 2 === 0 && self[0] === "_" && /^_+$/.test(self))) return ""
   let str = self[0].toUpperCase()
   for (let i = 1; i < self.length; i++) {
-    str += self[i] === "_" ? self[++i].toUpperCase() : self[i]
+    str += self[i] === "_" ? self.charAt(++i).toUpperCase() : self[i]
   }
   return str
 }
@@ -1238,7 +1316,7 @@ class LinesIterator implements IterableIterator<string> {
   }
 
   [Symbol.iterator](): IterableIterator<string> {
-    return new LinesIterator(this.s, this.stripped)
+    return this
   }
 
   private get done(): boolean {
@@ -1265,7 +1343,8 @@ const linesSeparated = (self: string, stripped: boolean): LinesIterator => new L
 
 /**
  * Normalizes a string by splitting it into word parts, transforming each part,
- * and joining the parts with a configurable delimiter.
+ * and joining the parts with a configurable delimiter. By default, words contain
+ * Unicode letters, combining marks, and numbers; no Unicode normalization is applied.
  *
  * **When to use**
  *
@@ -1334,20 +1413,29 @@ const normalizeCase = (
   while (result.charAt(end - 1) === "\0") {
     end--
   }
+  if (start >= end) return ""
 
   // Transform each token independently.
   return result.slice(start, end).split("\0").map(transform).join(delimiter)
 }
 
+const SPLIT_LOWER_UPPER_REGEXP = /([\p{Ll}\p{N}]\p{M}*)(\p{Lu})/gu
+const SPLIT_UPPER_UPPER_REGEXP = /(\p{Lu}\p{M}*)(\p{Lu}\p{M}*\p{Ll})/gu
+
 // Support camel case ("camelCase" -> "camel Case" and "CAMELCase" -> "CAMEL Case")
 // and digit boundaries ("camel2case" -> "camel 2 case").
-const SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g, /([A-Z])([0-9])/gi, /([0-9])([A-Z])/gi]
+const SPLIT_REGEXP = [
+  SPLIT_LOWER_UPPER_REGEXP,
+  SPLIT_UPPER_UPPER_REGEXP,
+  /(\p{L}\p{M}*)(\p{N})/gu,
+  /(\p{N}\p{M}*)(\p{L})/gu
+]
 
 // Config paths preserve digit groups such as "v2" while still supporting camel case.
-const CONFIG_SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g]
+const CONFIG_SPLIT_REGEXP = [SPLIT_LOWER_UPPER_REGEXP, SPLIT_UPPER_UPPER_REGEXP]
 
 // Remove all non-word characters.
-const STRIP_REGEXP = /[^A-Z0-9]+/gi
+const STRIP_REGEXP = /[^\p{L}\p{M}\p{N}]+/gu
 
 const pascalCaseTransform = (input: string): string => {
   const firstChar = input.charAt(0)
@@ -1441,6 +1529,9 @@ export const constantCase: (self: string) => string = noCase({
  *
  * Unlike {@link constantCase}, digit-letter boundaries are not split. For
  * example, `"api-v2 xml"` becomes `"API_V2_XML"`.
+ *
+ * `configCase` is not idempotent: `"field2value"` becomes `"FIELD2VALUE"`, and
+ * applying it again gives `"FIELD2_VALUE"`.
  *
  * @see {@link constantCase} for standard uppercase underscore-separated output
  * @stability stable

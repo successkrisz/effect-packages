@@ -13,18 +13,17 @@ import * as AiError from "effect/ai/AiError"
 import * as LanguageModel from "effect/ai/LanguageModel"
 import * as AiModel from "effect/ai/Model"
 import { toCodecOpenAI } from "effect/ai/OpenAiStructuredOutput"
-import type * as Prompt from "effect/ai/Prompt"
+import * as Prompt from "effect/ai/Prompt"
 import type * as Response from "effect/ai/Response"
 import * as Tool from "effect/ai/Tool"
+import * as Arr from "effect/Array"
 import * as Context from "effect/Context"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Base64 from "effect/encoding/Base64"
 import { dual } from "effect/Function"
-import type * as HttpClientRequest from "effect/http/HttpClientRequest"
 import type * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Layer from "effect/Layer"
-import * as Option from "effect/Option"
 import * as Predicate from "effect/Predicate"
 import * as Rec from "effect/Record"
 import * as Redactable from "effect/Redactable"
@@ -32,23 +31,20 @@ import * as Schema from "effect/Schema"
 import * as AST from "effect/SchemaAST"
 import * as Stream from "effect/Stream"
 import type { Span } from "effect/Tracer"
-import type { DeepMutable, Simplify } from "effect/Types"
+import type { Simplify } from "effect/Types"
 import * as InternalUtilities from "./internal/utilities.ts"
 import {
   type Annotation,
   type ChatCompletionContentPart,
+  type ChatCompletionRequestMessage,
   type ChatCompletionRequestToolCall,
   type CreateResponse,
   type CreateResponse200,
   type CreateResponse200Sse,
   type CreateResponseRequestJson,
-  type IncludeEnum,
   type InputContent,
-  type InputItem,
   type MessageStatus,
   OpenAiClient,
-  type ReasoningItem,
-  type SummaryTextContent,
   type TextResponseFormatConfiguration,
   type Tool as OpenAiClientTool,
   type UnknownChatCompletionEvent
@@ -66,7 +62,7 @@ type ImageDetail = "auto" | "low" | "high"
 
 type ConfigOptions = Simplify<
   & Partial<
-    Omit<CreateResponse, "input" | "tools" | "tool_choice" | "stream" | "text">
+    Omit<CreateResponse, "input" | "tools" | "tool_choice" | "stream" | "text" | "store" | "conversation">
   >
   & {
     /**
@@ -137,7 +133,7 @@ declare module "effect/ai/Prompt" {
     /**
      * Provider-specific file options for OpenAI-compatible APIs.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The detail level of the image to be sent to the model. One of `high`, `low`, or `auto`. Defaults to `auto`.
        */
@@ -156,7 +152,7 @@ declare module "effect/ai/Prompt" {
     /**
      * Provider-specific reasoning options for OpenAI-compatible APIs.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The ID of the item to reference.
        */
@@ -167,6 +163,12 @@ declare module "effect/ai/Prompt" {
        * parameter.
        */
       readonly encryptedContent?: string | null
+      /**
+       * The chat message field the reasoning was returned under. Replayed
+       * reasoning is sent back under the same field, defaulting to
+       * `reasoning_content`.
+       */
+      readonly reasoningField?: "reasoning" | "reasoning_content" | null
     } | null
   }
 
@@ -181,7 +183,7 @@ declare module "effect/ai/Prompt" {
     /**
      * Provider-specific tool-call options for OpenAI-compatible APIs.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The ID of the item to reference.
        */
@@ -208,7 +210,7 @@ declare module "effect/ai/Prompt" {
     /**
      * Provider-specific tool-result options for OpenAI-compatible APIs.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The ID of the item to reference.
        */
@@ -231,7 +233,7 @@ declare module "effect/ai/Prompt" {
     /**
      * Provider-specific text options for OpenAI-compatible APIs.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The ID of the item to reference.
        */
@@ -260,7 +262,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the text part.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the text part.
        */
@@ -293,7 +295,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the streamed text start.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the streamed text part.
        */
@@ -312,7 +314,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the streamed text end.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the streamed text part.
        */
@@ -335,7 +337,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the reasoning part.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the reasoning part.
        */
@@ -344,6 +346,10 @@ declare module "effect/ai/Response" {
        * Encrypted reasoning content that can be sent back in later requests.
        */
       readonly encryptedContent?: string | null
+      /**
+       * The chat message field the provider returned the reasoning under.
+       */
+      readonly reasoningField?: "reasoning" | "reasoning_content" | null
     } | null
   }
 
@@ -358,7 +364,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the streamed reasoning start.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the reasoning part.
        */
@@ -367,6 +373,10 @@ declare module "effect/ai/Response" {
        * Encrypted reasoning content that can be sent back in later requests.
        */
       readonly encryptedContent?: string | null
+      /**
+       * The chat message field the provider returned the reasoning under.
+       */
+      readonly reasoningField?: "reasoning" | "reasoning_content" | null
     } | null
   }
 
@@ -381,7 +391,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the streamed reasoning delta.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the reasoning part.
        */
@@ -400,7 +410,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the streamed reasoning end.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the reasoning part.
        */
@@ -423,7 +433,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned for the tool call.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The OpenAI item ID associated with the tool call.
        */
@@ -446,7 +456,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific citation metadata for OpenAI-compatible APIs.
      */
-    readonly openai?:
+    readonly "openai-compat"?:
       | {
         /**
          * Identifies a citation to an uploaded file.
@@ -503,7 +513,7 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific URL citation metadata for OpenAI-compatible APIs.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * Identifies a citation to a URL.
        */
@@ -530,11 +540,15 @@ declare module "effect/ai/Response" {
     /**
      * Provider-specific metadata returned when generation finishes.
      */
-    readonly openai?: {
+    readonly "openai-compat"?: {
       /**
        * The service tier reported by the OpenAI-compatible provider.
        */
       readonly serviceTier?: "default" | "auto" | "flex" | "scale" | "priority" | null
+      /**
+       * The refusal explanation returned instead of content.
+       */
+      readonly refusal?: string | null
     } | null
   }
 }
@@ -612,17 +626,16 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
       readonly config: typeof Config.Service
       readonly options: LanguageModel.ProviderOptions
       readonly toolNameMapper: Tool.NameMapper<Tools>
-    }): Effect.fn.Return<CreateResponseRequestJson, AiError.AiError> {
-      const include = new Set<IncludeEnum>()
-      const capabilities = getModelCapabilities(config.model!)
+    }): Effect.fn.Return<{
+      readonly request: CreateResponseRequestJson
+      readonly toolCodecs: ToolCodecs
+    }, AiError.AiError> {
       const messages = yield* prepareMessages({
         config,
         options,
-        capabilities,
-        include,
         toolNameMapper
       })
-      const { toolChoice, tools } = yield* prepareTools({
+      const { toolChoice, toolCodecs, tools } = yield* prepareTools({
         config,
         options,
         toolNameMapper
@@ -634,8 +647,6 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
       const { fileIdPrefixes: _fip, strictJsonSchema: _sjs, ...apiConfig } = config
       const request: CreateResponse = {
         ...apiConfig,
-        input: messages,
-        include: include.size > 0 ? Array.from(include) : null,
         text: {
           verbosity: config.text?.verbosity ?? null,
           format: responseFormat
@@ -643,7 +654,7 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
         ...(tools !== undefined ? { tools } : undefined),
         ...(toolChoice !== undefined ? { tool_choice: toolChoice } : undefined)
       }
-      return toChatCompletionsRequest(request)
+      return { request: toChatCompletionsRequest(request, messages), toolCodecs }
     }
   )
 
@@ -653,15 +664,17 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
       function*(options) {
         const config = yield* makeConfig
         const toolNameMapper = new Tool.NameMapper(options.tools)
-        const request = yield* makeRequest({ config, options, toolNameMapper })
+        const { request, toolCodecs } = yield* makeRequest({ config, options, toolNameMapper })
         annotateRequest(options.span, request)
         const [rawResponse, response] = yield* client.createResponse(request)
         annotateResponse(options.span, rawResponse)
         return yield* makeResponse({
+          config,
           options,
           rawResponse,
           response,
-          toolNameMapper
+          toolNameMapper,
+          toolCodecs
         })
       }
     ),
@@ -669,14 +682,16 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
       function*(options) {
         const config = yield* makeConfig
         const toolNameMapper = new Tool.NameMapper(options.tools)
-        const request = yield* makeRequest({ config, options, toolNameMapper })
+        const { request, toolCodecs } = yield* makeRequest({ config, options, toolNameMapper })
         annotateRequest(options.span, request)
         const [response, stream] = yield* client.createResponseStream(request)
         return yield* makeStreamResponse({
+          config,
           options,
           stream,
           response,
-          toolNameMapper
+          toolNameMapper,
+          toolCodecs
         })
       },
       (effect, options) =>
@@ -755,7 +770,7 @@ export const withConfigOverride: {
 // =============================================================================
 
 const getSystemMessageMode = (model: string): "system" | "developer" =>
-  model.startsWith("o") ||
+  /^o\d/.test(model) ||
     model.startsWith("gpt-5") ||
     model.startsWith("codex-") ||
     model.startsWith("computer-use")
@@ -766,27 +781,13 @@ const prepareMessages = Effect.fnUntraced(
   function*<Tools extends ReadonlyArray<Tool.Any>>({
     config,
     options,
-    capabilities,
-    include,
     toolNameMapper
   }: {
     readonly config: typeof Config.Service
     readonly options: LanguageModel.ProviderOptions
-    readonly include: Set<IncludeEnum>
-    readonly capabilities: ModelCapabilities
     readonly toolNameMapper: Tool.NameMapper<Tools>
-  }): Effect.fn.Return<ReadonlyArray<InputItem>, AiError.AiError> {
-    const hasConversation = Predicate.isNotNullish(config.conversation)
-
-    // Handle Included Features
-    if (config.top_logprobs !== undefined) {
-      include.add("message.output_text.logprobs")
-    }
-    if (config.store === false && capabilities.isReasoningModel) {
-      include.add("reasoning.encrypted_content")
-    }
-
-    const messages: Array<InputItem> = []
+  }): Effect.fn.Return<ReadonlyArray<ChatCompletionRequestMessage>, AiError.AiError> {
+    const messages: Array<ChatCompletionRequestMessage> = []
 
     for (const message of options.prompt.content) {
       switch (message.role) {
@@ -830,17 +831,28 @@ const prepareMessages = Effect.fnUntraced(
                 } else if (part.mediaType === "application/pdf") {
                   if (typeof part.data === "string" && isFileId(part.data, config)) {
                     content.push({ type: "input_file", file_id: part.data })
-                  }
-
-                  if (part.data instanceof URL) {
-                    content.push({ type: "input_file", file_url: part.data.toString() })
-                  }
-
-                  if (part.data instanceof Uint8Array) {
-                    const base64 = Base64.encode(part.data)
-                    const fileName = part.fileName ?? `part-${index}.pdf`
-                    const fileData = `data:application/pdf;base64,${base64}`
-                    content.push({ type: "input_file", filename: fileName, file_data: fileData })
+                  } else if (
+                    part.data instanceof URL || (typeof part.data === "string" && /^https?:\/\//i.test(part.data))
+                  ) {
+                    return yield* AiError.make({
+                      module: "OpenAiLanguageModel",
+                      method: "prepareMessages",
+                      reason: new AiError.InvalidUserInputError({
+                        description: "Chat Completions does not support PDF URLs. " +
+                          "Pass PDF bytes, base64 data, or a configured file ID instead."
+                      })
+                    })
+                  } else {
+                    const fileData = part.data instanceof Uint8Array
+                      ? `data:application/pdf;base64,${Base64.encode(part.data)}`
+                      : /^data:/i.test(part.data)
+                      ? part.data
+                      : `data:application/pdf;base64,${part.data}`
+                    content.push({
+                      type: "input_file",
+                      filename: part.fileName ?? `part-${index}.pdf`,
+                      file_data: fileData
+                    })
                   }
                 } else {
                   return yield* AiError.make({
@@ -855,155 +867,60 @@ const prepareMessages = Effect.fnUntraced(
             }
           }
 
-          messages.push({ role: "user", content })
+          messages.push({ role: "user", content: toChatMessageContent(content) })
 
           break
         }
 
         case "assistant": {
-          const reasoningMessages: Record<string, DeepMutable<ReasoningItem>> = Object.create(null)
+          let content: string | null = null
+          let reasoning = ""
+          let reasoningField: ReasoningField | undefined
+          const toolCalls: Array<ChatCompletionRequestToolCall> = []
 
           for (const part of message.content) {
             switch (part.type) {
               case "text": {
-                const id = getItemId(part)
-
-                // When in conversation mode, skip items that already exist in the
-                // conversation context to avoid "Duplicate item found" errors
-                if (hasConversation && Predicate.isNotNull(id)) {
-                  break
-                }
-
-                if (config.store === true && Predicate.isNotNull(id)) {
-                  messages.push({ type: "item_reference", id })
-                  break
-                }
-
-                messages.push({
-                  id: id!,
-                  type: "message",
-                  role: "assistant",
-                  status: part.options.openai?.status ?? "completed",
-                  content: [{
-                    type: "output_text",
-                    text: part.text,
-                    annotations: part.options.openai?.annotations ?? [],
-                    logprobs: []
-                  }]
-                })
-
+                content = (content ?? "") + part.text
                 break
               }
 
               case "reasoning": {
-                const id = getItemId(part)
-                const encryptedContent = getEncryptedContent(part)
-
-                if (hasConversation && Predicate.isNotNull(id)) {
-                  break
-                }
-
-                if (Predicate.isNotNull(id)) {
-                  const message = reasoningMessages[id]
-
-                  if (config.store === true) {
-                    // Use item references to refer to reasoning (single reference)
-                    // when the first part is encountered
-                    if (Predicate.isUndefined(message)) {
-                      messages.push({ type: "item_reference", id })
-
-                      // Store unused reasoning message to mark its id as used
-                      reasoningMessages[id] = {
-                        type: "reasoning",
-                        id,
-                        summary: []
-                      }
-                    }
-                  } else {
-                    const summaryParts: Array<SummaryTextContent> = []
-
-                    if (part.text.length > 0) {
-                      summaryParts.push({ type: "summary_text", text: part.text })
-                    }
-
-                    if (Predicate.isUndefined(message)) {
-                      reasoningMessages[id] = {
-                        type: "reasoning",
-                        id,
-                        summary: summaryParts,
-                        encrypted_content: encryptedContent ?? null
-                      }
-
-                      messages.push(reasoningMessages[id])
-                    } else {
-                      message.summary.push(...summaryParts)
-
-                      // Update encrypted content to enable setting it in the
-                      // last summary part
-                      if (Predicate.isNotNull(encryptedContent)) {
-                        message.encrypted_content = encryptedContent
-                      }
-                    }
-                  }
-                }
-
+                reasoning += part.text
+                reasoningField ??= part.options["openai-compat"]?.reasoningField ?? undefined
                 break
               }
 
               case "tool-call": {
-                const id = getItemId(part)
-                const status = getStatus(part)
-
-                if (hasConversation && Predicate.isNotNull(id)) {
-                  break
-                }
-
-                if (config.store && Predicate.isNotNull(id)) {
-                  messages.push({ type: "item_reference", id })
-                  break
-                }
-
                 if (part.providerExecuted) {
                   break
                 }
 
-                const toolName = toolNameMapper.getProviderName(part.name)
                 const extraContent = getExtraContent(part)
 
-                messages.push({
-                  type: "function_call",
-                  name: toolName,
-                  call_id: part.id,
-                  arguments: JSON.stringify(part.params),
-                  ...(Predicate.isNotNull(extraContent) ? { extra_content: extraContent } : {}),
-                  ...(Predicate.isNotNull(id) ? { id } : {}),
-                  ...(Predicate.isNotNull(status) ? { status } : {})
+                toolCalls.push({
+                  id: part.id,
+                  type: "function",
+                  function: {
+                    name: toolNameMapper.getProviderName(part.name),
+                    arguments: JSON.stringify(part.params)
+                  },
+                  ...(Predicate.isNotNull(extraContent) ? { extra_content: extraContent } : undefined)
                 })
-
                 break
               }
-
-              // Assistant tool-result parts are always provider executed
-              case "tool-result": {
-                // Skip execution denied results - these have no corresponding
-                // item in OpenAI's store
-                if (
-                  Predicate.hasProperty(part.result, "type") &&
-                  part.result.type === "execution-denied"
-                ) {
-                  break
-                }
-
-                if (hasConversation) {
-                  break
-                }
-
-                if (config.store === true) {
-                  const id = getItemId(part) ?? part.id
-                  messages.push({ type: "item_reference", id })
-                }
-              }
             }
+          }
+
+          // Text, reasoning and tool calls from one prompt message are sent as a
+          // single chat message so reasoning stays attached to its tool calls
+          if (content !== null || toolCalls.length > 0) {
+            messages.push({
+              role: "assistant",
+              content,
+              ...(reasoning.length > 0 ? { [reasoningField ?? "reasoning_content"]: reasoning } : undefined),
+              ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : undefined)
+            })
           }
 
           break
@@ -1015,13 +932,14 @@ const prepareMessages = Effect.fnUntraced(
               continue
             }
 
-            const status = getStatus(part)
-
             messages.push({
-              type: "function_call_output",
-              call_id: part.id,
-              output: typeof part.result === "string" ? part.result : JSON.stringify(part.result),
-              ...(Predicate.isNotNull(status) ? { status } : {})
+              role: "tool",
+              tool_call_id: part.id,
+              content: Predicate.isNotUndefined(part.modelOutput)
+                ? Prompt.toolModelOutputToText(part.modelOutput)
+                : typeof part.result === "string"
+                ? part.result
+                : JSON.stringify(part.result)
             })
           }
 
@@ -1037,16 +955,6 @@ const prepareMessages = Effect.fnUntraced(
 // =============================================================================
 // HTTP Details
 // =============================================================================
-
-const buildHttpRequestDetails = (
-  request: HttpClientRequest.HttpClientRequest
-): typeof Response.HttpRequestDetails.Type => ({
-  method: request.method,
-  url: request.url,
-  urlParams: Array.from(request.urlParams),
-  hash: Option.getOrUndefined(request.hash),
-  headers: Redactable.redact(request.headers) as Record<string, string>
-})
 
 const buildHttpResponseDetails = (
   response: HttpClientResponse.HttpClientResponse
@@ -1075,15 +983,19 @@ type ActiveToolCall = {
 
 const makeResponse = Effect.fnUntraced(
   function*<Tools extends ReadonlyArray<Tool.Any>>({
+    config,
     options,
     rawResponse,
     response,
-    toolNameMapper
+    toolNameMapper,
+    toolCodecs
   }: {
+    readonly config: typeof Config.Service
     readonly options: LanguageModel.ProviderOptions
     readonly rawResponse: CreateResponse200
     readonly response: HttpClientResponse.HttpClientResponse
     readonly toolNameMapper: Tool.NameMapper<Tools>
+    readonly toolCodecs: ToolCodecs
   }): Effect.fn.Return<
     Array<Response.PartEncoded>,
     AiError.AiError
@@ -1096,17 +1008,17 @@ const makeResponse = Effect.fnUntraced(
       type: "response-metadata",
       id: rawResponse.id,
       modelId: rawResponse.model as string,
-      timestamp: DateTime.formatIso(DateTime.fromDateUnsafe(createdAt)),
-      request: buildHttpRequestDetails(response.request)
+      timestamp: DateTime.formatIso(DateTime.fromDateUnsafe(createdAt))
     })
 
     const choice = rawResponse.choices[0]
     const message = choice?.message
 
     if (message !== undefined) {
-      const reasoning = message.reasoning ?? message.reasoning_content
-      if (Predicate.isNotNullish(reasoning) && reasoning.length > 0) {
-        parts.push({ type: "reasoning", text: reasoning })
+      const reasoningField = getResponseReasoningField(message)
+      const reasoning = reasoningField !== undefined ? message[reasoningField] : undefined
+      if (reasoningField !== undefined && Predicate.isNotNullish(reasoning) && reasoning.length > 0) {
+        parts.push({ type: "reasoning", text: reasoning, metadata: { "openai-compat": { reasoningField } } })
       }
 
       if (
@@ -1115,7 +1027,7 @@ const makeResponse = Effect.fnUntraced(
         parts.push({ type: "text", text: message.content })
       }
 
-      if (message.tool_calls !== undefined) {
+      if (Predicate.isNotNullish(message.tool_calls)) {
         for (const [index, toolCall] of message.tool_calls.entries()) {
           const toolId = toolCall.id ?? `${rawResponse.id}_tool_${index}`
           const toolName = toolNameMapper.getCustomName(toolCall.function?.name ?? "unknown_tool")
@@ -1132,7 +1044,7 @@ const makeResponse = Effect.fnUntraced(
                 })
               })
           })
-          const params = yield* transformToolCallParams(options.tools, toolName, toolParams)
+          const params = yield* transformToolCallParams(config, options, toolName, toolParams, toolCodecs)
           hasToolCalls = true
           parts.push({
             type: "tool-call",
@@ -1140,8 +1052,8 @@ const makeResponse = Effect.fnUntraced(
             name: toolName,
             params,
             metadata: {
-              openai: {
-                ...makeItemIdMetadata(toolCall.id),
+              "openai-compat": {
+                ...makeItemIdMetadata(toolCall.id ?? undefined),
                 ...makeExtraContentMetadata(toolCall.extra_content ?? undefined)
               }
             }
@@ -1150,18 +1062,24 @@ const makeResponse = Effect.fnUntraced(
       }
     }
 
-    const finishReason = InternalUtilities.resolveFinishReason(
-      choice?.finish_reason,
-      hasToolCalls
-    )
-    const serviceTier = normalizeServiceTier(rawResponse.service_tier)
+    const refusal = message?.refusal
+    const hasRefusal = Predicate.isNotNullish(refusal) && refusal.length > 0
+    const finishReason = InternalUtilities.resolveFinishReason(choice?.finish_reason, hasToolCalls, hasRefusal)
+    const serviceTier = normalizeServiceTier(rawResponse.service_tier ?? undefined)
 
     parts.push({
       type: "finish",
       reason: finishReason,
       usage: getUsage(rawResponse.usage),
       response: buildHttpResponseDetails(response),
-      ...(serviceTier !== undefined && { metadata: { openai: { serviceTier } } })
+      ...((serviceTier !== undefined || hasRefusal) && {
+        metadata: {
+          "openai-compat": {
+            ...(serviceTier !== undefined && { serviceTier }),
+            ...(hasRefusal && { refusal })
+          }
+        }
+      })
     })
 
     return parts
@@ -1170,15 +1088,19 @@ const makeResponse = Effect.fnUntraced(
 
 const makeStreamResponse = Effect.fnUntraced(
   function*<Tools extends ReadonlyArray<Tool.Any>>({
+    config,
     options,
     stream,
     response,
-    toolNameMapper
+    toolNameMapper,
+    toolCodecs
   }: {
+    readonly config: typeof Config.Service
     readonly options: LanguageModel.ProviderOptions
     readonly stream: Stream.Stream<ResponseStreamEvent, AiError.AiError>
     readonly response: HttpClientResponse.HttpClientResponse
     readonly toolNameMapper: Tool.NameMapper<Tools>
+    readonly toolCodecs: ToolCodecs
   }): Effect.fn.Return<
     Stream.Stream<Response.StreamPartEncoded, AiError.AiError>,
     AiError.AiError
@@ -1186,6 +1108,7 @@ const makeStreamResponse = Effect.fnUntraced(
     let serviceTier: string | undefined = undefined
     let usage: CreateResponse200["usage"] = undefined
     let finishReason: string | null | undefined = undefined
+    let refusal = ""
     let metadataEmitted = false
     let textStarted = false
     let textId = ""
@@ -1203,7 +1126,7 @@ const makeStreamResponse = Effect.fnUntraced(
             parts.push({
               type: "reasoning-end",
               id: reasoningId,
-              metadata: { openai: { ...makeItemIdMetadata(reasoningId) } }
+              metadata: { "openai-compat": { ...makeItemIdMetadata(reasoningId) } }
             })
           }
 
@@ -1211,7 +1134,7 @@ const makeStreamResponse = Effect.fnUntraced(
             parts.push({
               type: "text-end",
               id: textId,
-              metadata: { openai: { ...makeItemIdMetadata(textId) } }
+              metadata: { "openai-compat": { ...makeItemIdMetadata(textId) } }
             })
           }
 
@@ -1229,7 +1152,7 @@ const makeStreamResponse = Effect.fnUntraced(
                   })
                 })
             })
-            const params = yield* transformToolCallParams(options.tools, toolCall.name, parsedParams)
+            const params = yield* transformToolCallParams(config, options, toolCall.name, parsedParams, toolCodecs)
             parts.push({ type: "tool-params-end", id: toolCall.id })
             parts.push({
               type: "tool-call",
@@ -1237,7 +1160,7 @@ const makeStreamResponse = Effect.fnUntraced(
               name: toolCall.name,
               params,
               metadata: {
-                openai: {
+                "openai-compat": {
                   ...makeItemIdMetadata(toolCall.id),
                   ...makeExtraContentMetadata(toolCall.extraContent)
                 }
@@ -1247,13 +1170,21 @@ const makeStreamResponse = Effect.fnUntraced(
           }
 
           const normalizedServiceTier = normalizeServiceTier(serviceTier)
+          const hasRefusal = refusal.length > 0
           parts.push({
             type: "finish",
-            reason: InternalUtilities.resolveFinishReason(finishReason, hasToolCalls),
+            reason: InternalUtilities.resolveFinishReason(finishReason, hasToolCalls, hasRefusal),
             usage: getUsage(usage),
             response: buildHttpResponseDetails(response),
-            ...(normalizedServiceTier !== undefined
-              ? { metadata: { openai: { serviceTier: normalizedServiceTier } } }
+            ...(normalizedServiceTier !== undefined || hasRefusal
+              ? {
+                metadata: {
+                  "openai-compat": {
+                    ...(normalizedServiceTier !== undefined ? { serviceTier: normalizedServiceTier } : undefined),
+                    ...(hasRefusal ? { refusal } : undefined)
+                  }
+                }
+              }
               : undefined)
           })
           return parts
@@ -1265,7 +1196,7 @@ const makeStreamResponse = Effect.fnUntraced(
           return parts
         }
 
-        if (event.service_tier !== undefined) {
+        if (Predicate.isNotNullish(event.service_tier)) {
           serviceTier = event.service_tier
         }
         if (event.usage !== undefined && Predicate.isNotNull(event.usage)) {
@@ -1280,8 +1211,7 @@ const makeStreamResponse = Effect.fnUntraced(
             type: "response-metadata",
             id: event.id,
             modelId: event.model,
-            timestamp: DateTime.formatIso(DateTime.fromDateUnsafe(new Date(event.created * 1000))),
-            request: buildHttpRequestDetails(response.request)
+            timestamp: DateTime.formatIso(DateTime.fromDateUnsafe(new Date(event.created * 1000)))
           })
         }
 
@@ -1290,14 +1220,17 @@ const makeStreamResponse = Effect.fnUntraced(
           return parts
         }
 
-        const reasoningDelta = choice.delta?.reasoning ?? choice.delta?.reasoning_content
-        if (Predicate.isNotNullish(reasoningDelta) && reasoningDelta.length > 0) {
+        const reasoningField = Predicate.isNotNullish(choice.delta)
+          ? getResponseReasoningField(choice.delta)
+          : undefined
+        const reasoningDelta = reasoningField !== undefined ? choice.delta?.[reasoningField] : undefined
+        if (reasoningField !== undefined && Predicate.isNotNullish(reasoningDelta) && reasoningDelta.length > 0) {
           if (!reasoningStarted) {
             reasoningStarted = true
             parts.push({
               type: "reasoning-start",
               id: reasoningId,
-              metadata: { openai: { ...makeItemIdMetadata(reasoningId) } }
+              metadata: { "openai-compat": { ...makeItemIdMetadata(reasoningId), reasoningField } }
             })
           }
           parts.push({ type: "reasoning-delta", id: reasoningId, delta: reasoningDelta })
@@ -1309,7 +1242,7 @@ const makeStreamResponse = Effect.fnUntraced(
             parts.push({
               type: "reasoning-end",
               id: reasoningId,
-              metadata: { openai: { ...makeItemIdMetadata(reasoningId) } }
+              metadata: { "openai-compat": { ...makeItemIdMetadata(reasoningId) } }
             })
           }
 
@@ -1318,10 +1251,14 @@ const makeStreamResponse = Effect.fnUntraced(
             parts.push({
               type: "text-start",
               id: textId,
-              metadata: { openai: { ...makeItemIdMetadata(textId) } }
+              metadata: { "openai-compat": { ...makeItemIdMetadata(textId) } }
             })
           }
           parts.push({ type: "text-delta", id: textId, delta: choice.delta.content })
+        }
+
+        if (Predicate.isNotNullish(choice.delta?.refusal)) {
+          refusal += choice.delta.refusal
         }
 
         if (Predicate.isNotNullish(choice.delta?.tool_calls)) {
@@ -1364,7 +1301,8 @@ const makeStreamResponse = Effect.fnUntraced(
 
         return parts
       })),
-      Stream.flattenIterable
+      Stream.filter(Arr.isArrayNonEmpty),
+      Stream.flattenArray
     )
   }
 )
@@ -1408,7 +1346,7 @@ const annotateResponse = (span: Span, response: CreateResponse200): void => {
     },
     openai: {
       response: {
-        serviceTier: response.service_tier as string | undefined
+        serviceTier: response.service_tier
       }
     }
   })
@@ -1424,7 +1362,7 @@ const annotateStreamResponse = (span: Span, part: Response.StreamPartEncoded) =>
     })
   }
   if (part.type === "finish") {
-    const serviceTier = (part.metadata as any)?.openai?.serviceTier as string | undefined
+    const serviceTier = (part.metadata as any)?.["openai-compat"]?.serviceTier as string | undefined
     addGenAIAnnotations(span, {
       response: {
         finishReasons: [part.reason]
@@ -1467,42 +1405,57 @@ const tryJsonSchema = <S extends Schema.Constraint>(schema: S, method: string) =
     catch: (error) => unsupportedSchemaError(error, method)
   })
 
-const tryToolJsonSchema = <T extends Tool.Any>(tool: T, method: string) =>
-  Effect.try({
-    try: () => Tool.getJsonSchema(tool, { transformer: toCodecOpenAI }),
-    catch: (error) => unsupportedSchemaError(error, method)
-  })
+const toolParametersError = (tool: Tool.Any, error: unknown, method: string): AiError.AiError =>
+  unsupportedSchemaError(
+    `Tool "${tool.name}" parameters: ${error instanceof Error ? error.message : String(error)}. ` +
+      "For a tool without parameters, omit `parameters` or use `Tool.EmptyParams`",
+    method
+  )
 
-const transformToolCallParams = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Tool.Any>>(
-  tools: Tools,
+const getToolStrictMode = (tool: Tool.Any, config: typeof Config.Service): boolean =>
+  Tool.getStrictMode(tool) ?? config.strictJsonSchema ?? true
+
+type ToolCodec = ReturnType<typeof toCodecOpenAI>["codec"]
+type ToolCodecs = ReadonlyMap<Tool.Any, ToolCodec>
+
+const transformToolCallParams = Effect.fnUntraced(function*(
+  config: typeof Config.Service,
+  options: LanguageModel.ProviderOptions,
   toolName: string,
-  toolParams: unknown
+  toolParams: unknown,
+  toolCodecs: ToolCodecs
 ): Effect.fn.Return<unknown, AiError.AiError> {
-  const tool = tools.find((tool) => tool.name === toolName)
+  const tool = options.tools.find((tool) => tool.name === toolName)
 
   if (Predicate.isUndefined(tool)) {
+    if (options.toolCallValidation === "deferred") {
+      return toolParams
+    }
     return yield* AiError.make({
       module: "OpenAiLanguageModel",
       method: "makeResponse",
       reason: new AiError.ToolNotFoundError({
         toolName,
-        availableTools: tools.map((tool) => tool.name)
+        availableTools: options.tools.map((tool) => tool.name)
       })
     })
   }
 
-  if (Tool.isDynamic(tool) && tool.jsonSchema !== undefined) {
+  if (!getToolStrictMode(tool, config) || (Tool.isDynamic(tool) && tool.jsonSchema !== undefined)) {
     return toolParams
   }
 
-  const { codec } = yield* tryCodecTransform(tool.parametersSchema, "makeResponse")
+  const codec = toolCodecs.get(tool) ?? (yield* tryCodecTransform(tool.parametersSchema, "makeResponse")).codec
 
   // Normalize valid parameters; leave invalid ones for Toolkit.
   return yield* (
     Schema.decodeEffect(codec)(toolParams) as Effect.Effect<unknown, Schema.SchemaError>
   ).pipe(
     Effect.flatMap((decoded) =>
-      Schema.encodeUnknownEffect(tool.parametersSchema)(decoded) as Effect.Effect<unknown, Schema.SchemaError>
+      Schema.encodeUnknownEffect(Schema.toCodecJson(tool.parametersSchema))(decoded) as Effect.Effect<
+        unknown,
+        Schema.SchemaError
+      >
     ),
     Effect.orElseSucceed(() => toolParams)
   )
@@ -1519,10 +1472,13 @@ const prepareTools = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Too
 }): Effect.fn.Return<{
   readonly tools: ReadonlyArray<OpenAiClientTool> | undefined
   readonly toolChoice: OpenAiToolChoice | undefined
+  readonly toolCodecs: ToolCodecs
 }, AiError.AiError> {
+  const toolCodecs = new Map<Tool.Any, ToolCodec>()
+
   // Return immediately if no tools are in the toolkit
   if (options.tools.length === 0) {
-    return { tools: undefined, toolChoice: undefined }
+    return { tools: undefined, toolChoice: undefined, toolCodecs }
   }
 
   const tools: Array<OpenAiClientTool> = []
@@ -1542,8 +1498,21 @@ const prepareTools = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Too
   // Convert the tools in the toolkit to the provider-defined format
   for (const tool of allowedTools) {
     if (Tool.isUserDefined(tool) || Tool.isDynamic(tool)) {
-      const strict = Tool.getStrictMode(tool) ?? config.strictJsonSchema ?? true
-      const parameters = yield* tryToolJsonSchema(tool, "prepareTools")
+      const strict = getToolStrictMode(tool, config)
+      let parameters: ReturnType<typeof Tool.getJsonSchema>
+      if (Tool.isDynamic(tool) && tool.jsonSchema !== undefined) {
+        parameters = tool.jsonSchema
+      } else {
+        const prepared = yield* Effect.try({
+          try: () => (strict ? toCodecOpenAI : LanguageModel.defaultCodecTransformer)(tool.parametersSchema),
+          catch: (error) => toolParametersError(tool, error, "prepareTools")
+        })
+        parameters = prepared.jsonSchema
+        if (strict) {
+          // Reused to normalize this tool's calls in the response.
+          toolCodecs.set(tool, prepared.codec)
+        }
+      }
       tools.push({
         type: "function",
         name: tool.name,
@@ -1578,11 +1547,13 @@ const prepareTools = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Too
     }
   }
 
-  return { tools, toolChoice }
+  return { tools, toolChoice, toolCodecs }
 })
 
-const toChatCompletionsRequest = (payload: CreateResponse): CreateResponseRequestJson => {
-  const messages = toChatMessages(payload.input)
+const toChatCompletionsRequest = (
+  payload: CreateResponse,
+  messages: ReadonlyArray<ChatCompletionRequestMessage>
+): CreateResponseRequestJson => {
   const responseFormat = toChatResponseFormat(payload.text?.format)
   const tools = payload.tools !== undefined
     ? payload.tools.map(toChatTool).filter((tool): tool is NonNullable<ReturnType<typeof toChatTool>> =>
@@ -1744,118 +1715,15 @@ const toChatTool = (
   return undefined
 }
 
-const toChatMessages = (
-  input: CreateResponse["input"]
-): Array<CreateResponseRequestJson["messages"][number]> => {
-  if (Predicate.isUndefined(input)) {
-    return []
-  }
-
-  if (typeof input === "string") {
-    return [{ role: "user", content: input }]
-  }
-
-  const messages: Array<CreateResponseRequestJson["messages"][number]> = []
-
-  for (const item of input) {
-    if (Predicate.hasProperty(item, "type") && item.type === "function_call") {
-      const previous = messages.at(-1)
-      const toolCall = toChatToolCall(item)
-      if (previous?.role === "assistant" && previous.tool_calls !== undefined) {
-        messages[messages.length - 1] = {
-          ...previous,
-          tool_calls: [...previous.tool_calls, toolCall]
-        }
-      } else {
-        messages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: [toolCall]
-        })
-      }
-    } else {
-      messages.push(...toChatMessagesFromItem(item))
-    }
-  }
-
-  return messages
-}
-
-const toChatMessagesFromItem = (
-  item: InputItem
-): Array<CreateResponseRequestJson["messages"][number]> => {
-  if (Predicate.hasProperty(item, "type") && item.type === "message") {
-    return [{
-      role: item.role,
-      content: toAssistantChatMessageContent(item.content)
-    }]
-  }
-
-  if (Predicate.hasProperty(item, "role")) {
-    return [{
-      role: item.role,
-      content: toChatMessageContent(item.content)
-    }]
-  }
-
-  switch (item.type) {
-    case "function_call": {
-      return [{
-        role: "assistant",
-        content: null,
-        tool_calls: [toChatToolCall(item)]
-      }]
-    }
-
-    case "function_call_output": {
-      return [{
-        role: "tool",
-        tool_call_id: item.call_id,
-        content: stringifyJson(item.output)
-      }]
-    }
-
-    default: {
-      return []
-    }
-  }
-}
-
-const toChatToolCall = (
-  item: Extract<InputItem, { readonly type: "function_call" }>
-): ChatCompletionRequestToolCall => ({
-  id: item.call_id,
-  type: "function",
-  function: {
-    name: item.name,
-    arguments: item.arguments
-  },
-  ...(item.extra_content !== undefined ? { extra_content: item.extra_content } : undefined)
-})
-
-const toAssistantChatMessageContent = (
-  content: ReadonlyArray<{
-    readonly type: string
-    readonly [x: string]: unknown
-  }>
-): string => {
-  let text = ""
-  for (const part of content) {
-    if (part.type === "output_text" && typeof part.text === "string") {
-      text += part.text
-    }
-    if (part.type === "refusal" && typeof part.refusal === "string") {
-      text += part.refusal
-    }
-  }
-  return text
-}
-
 const toChatMessageContent = (
   content: string | ReadonlyArray<InputContent>
 ): string | ReadonlyArray<ChatCompletionContentPart> => {
   if (typeof content === "string") {
     return content
+  }
+
+  if (content.length === 1 && content[0].type === "input_text") {
+    return content[0].text
   }
 
   const parts: Array<ChatCompletionContentPart> = []
@@ -1885,13 +1753,14 @@ const toChatMessageContent = (
         break
       }
       case "input_file": {
-        if (part.file_url !== undefined) {
-          parts.push({ type: "text", text: part.file_url })
-        } else if (part.file_data !== undefined) {
-          parts.push({ type: "text", text: part.file_data })
-        } else if (part.file_id !== undefined) {
-          parts.push({ type: "text", text: `openai://file/${part.file_id}` })
-        }
+        parts.push({
+          type: "file",
+          file: {
+            ...(part.filename !== undefined ? { filename: part.filename } : undefined),
+            ...(part.file_data !== undefined ? { file_data: part.file_data } : undefined),
+            ...(Predicate.isNotNullish(part.file_id) ? { file_id: part.file_id } : undefined)
+          }
+        })
         break
       }
     }
@@ -1908,11 +1777,6 @@ const toChatMessageContent = (
   return parts
 }
 
-const stringifyJson = (value: unknown): string =>
-  typeof value === "string"
-    ? value
-    : JSON.stringify(value)
-
 // =============================================================================
 // Utilities
 // =============================================================================
@@ -1920,27 +1784,28 @@ const stringifyJson = (value: unknown): string =>
 const isFileId = (data: string, config: typeof Config.Service): boolean =>
   config.fileIdPrefixes != null && config.fileIdPrefixes.some((prefix) => data.startsWith(prefix))
 
-const getItemId = (
-  part:
-    | Prompt.TextPart
-    | Prompt.ReasoningPart
-    | Prompt.ToolCallPart
-    | Prompt.ToolResultPart
-): string | null => part.options.openai?.itemId ?? null
-const getStatus = (
-  part:
-    | Prompt.TextPart
-    | Prompt.ToolCallPart
-    | Prompt.ToolResultPart
-): MessageStatus | null => part.options.openai?.status ?? null
-const getEncryptedContent = (
-  part: Prompt.ReasoningPart
-): string | null => part.options.openai?.encryptedContent ?? null
 const getExtraContent = (
   part: Prompt.ToolCallPart
-): Schema.JsonObject | null => part.options.openai?.extraContent ?? null
+): Schema.JsonObject | null => part.options["openai-compat"]?.extraContent ?? null
 
-const getImageDetail = (part: Prompt.FilePart): ImageDetail => part.options.openai?.imageDetail ?? "auto"
+/**
+ * The chat message field carrying reasoning text. Providers differ: DeepSeek,
+ * Kimi and GLM use `reasoning_content`, while Groq uses `reasoning` and
+ * rejects `reasoning_content` on request messages.
+ */
+type ReasoningField = "reasoning" | "reasoning_content"
+
+const getResponseReasoningField = (message: {
+  readonly reasoning?: string | null | undefined
+  readonly reasoning_content?: string | null | undefined
+}): ReasoningField | undefined =>
+  Predicate.isNotNullish(message.reasoning)
+    ? "reasoning"
+    : Predicate.isNotNullish(message.reasoning_content)
+    ? "reasoning_content"
+    : undefined
+
+const getImageDetail = (part: Prompt.FilePart): ImageDetail => part.options["openai-compat"]?.imageDetail ?? "auto"
 
 const makeItemIdMetadata = (itemId: string | undefined) => itemId !== undefined ? { itemId } : undefined
 
@@ -1982,54 +1847,6 @@ const prepareResponseFormat = Effect.fnUntraced(function*({ config, options }: {
   }
   return { type: "text" }
 })
-
-interface ModelCapabilities {
-  readonly isReasoningModel: boolean
-  readonly systemMessageMode: "remove" | "system" | "developer"
-  readonly supportsFlexProcessing: boolean
-  readonly supportsPriorityProcessing: boolean
-  /**
-   * Allow temperature, topP, logProbs when reasoningEffort is none.
-   */
-  readonly supportsNonReasoningParameters: boolean
-}
-
-const getModelCapabilities = (modelId: string): ModelCapabilities => {
-  const supportsFlexProcessing = modelId.startsWith("o3") ||
-    modelId.startsWith("o4-mini") ||
-    (modelId.startsWith("gpt-5") && !modelId.startsWith("gpt-5-chat"))
-
-  const supportsPriorityProcessing = modelId.startsWith("gpt-4") ||
-    modelId.startsWith("gpt-5-mini") ||
-    (modelId.startsWith("gpt-5") &&
-      !modelId.startsWith("gpt-5-nano") &&
-      !modelId.startsWith("gpt-5-chat")) ||
-    modelId.startsWith("o3") ||
-    modelId.startsWith("o4-mini")
-
-  // Use allowlist approach: only known reasoning models should use 'developer' role
-  // This prevents issues with fine-tuned models, third-party models, and custom models
-  const isReasoningModel = modelId.startsWith("o1") ||
-    modelId.startsWith("o3") ||
-    modelId.startsWith("o4-mini") ||
-    modelId.startsWith("codex-mini") ||
-    modelId.startsWith("computer-use-preview") ||
-    (modelId.startsWith("gpt-5") && !modelId.startsWith("gpt-5-chat"))
-
-  // https://platform.openai.com/docs/guides/latest-model#gpt-5-1-parameter-compatibility
-  // GPT-5.1 and GPT-5.2 support temperature, topP, logProbs when reasoningEffort is none
-  const supportsNonReasoningParameters = modelId.startsWith("gpt-5.1") || modelId.startsWith("gpt-5.2")
-
-  const systemMessageMode = isReasoningModel ? "developer" : "system"
-
-  return {
-    supportsFlexProcessing,
-    supportsPriorityProcessing,
-    isReasoningModel,
-    systemMessageMode,
-    supportsNonReasoningParameters
-  }
-}
 
 const getUsage = (usage: CreateResponse200["usage"]): Response.Usage => {
   if (Predicate.isNullish(usage)) {

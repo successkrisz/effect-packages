@@ -20,6 +20,7 @@ import {
   Order,
   pipe,
   Predicate,
+  Rational,
   Redacted,
   Result,
   Schema,
@@ -28,6 +29,8 @@ import {
   SchemaIssue,
   SchemaParser,
   SchemaTransformation,
+  SemVer,
+  SemVerRange,
   String as Str,
   Struct,
   Tuple
@@ -44,6 +47,7 @@ import {
   assertTrue,
   throws
 } from "../utils/assert.ts"
+import { withIgnoredProperties } from "../utils/structFields.ts"
 
 const verifyGeneration = true
 
@@ -652,6 +656,15 @@ Missing key
   })
 
   describe("Struct", () => {
+    it("discovers only enumerable own string and symbol field definitions", () => {
+      const key = Symbol("key")
+      const schema = Schema.Struct(withIgnoredProperties({ a: Schema.Number, [key]: Schema.String }))
+      const input = { a: 1, [key]: "value" }
+
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)(input), input)
+      assert.deepStrictEqual(Schema.encodeSync(schema)(input), input)
+    })
+
     it("allows duplicate property signatures in the low-level AST constructor", () => {
       const ast = new SchemaAST.Objects(
         [
@@ -1565,9 +1578,15 @@ Expected a string including "c"`
         const asserts = new TestSchema.Asserts(schema)
 
         const decoding = asserts.decoding()
+        await decoding.succeed("")
         await decoding.succeed("Abc")
+        await decoding.succeed("𐐀bc")
         await decoding.fail(
           "abc",
+          `Expected a string with the first character in uppercase`
+        )
+        await decoding.fail(
+          "𐐨bc",
           `Expected a string with the first character in uppercase`
         )
 
@@ -1584,9 +1603,15 @@ Expected a string including "c"`
         const asserts = new TestSchema.Asserts(schema)
 
         const decoding = asserts.decoding()
+        await decoding.succeed("")
         await decoding.succeed("aBC")
+        await decoding.succeed("𐐨BC")
         await decoding.fail(
           "ABC",
+          `Expected a string with the first character in lowercase`
+        )
+        await decoding.fail(
+          "𐐀BC",
           `Expected a string with the first character in lowercase`
         )
 
@@ -1967,6 +1992,33 @@ Expected a value between -2147483648 and 2147483647`
     })
 
     describe("Record checks", () => {
+      it("property counts include only enumerable own string and symbol keys", () => {
+        const key = Symbol("key")
+        const input = withIgnoredProperties({ a: 1, [key]: 2 })
+
+        assert.isTrue(Schema.is(Schema.ObjectKeyword.check(Schema.isMinProperties(2)))(input))
+        assert.isFalse(Schema.is(Schema.ObjectKeyword.check(Schema.isMinProperties(3)))(input))
+        assert.isTrue(Schema.is(Schema.ObjectKeyword.check(Schema.isMaxProperties(2)))(input))
+        assert.isFalse(Schema.is(Schema.ObjectKeyword.check(Schema.isMaxProperties(1)))(input))
+        assert.isTrue(Schema.is(Schema.ObjectKeyword.check(Schema.isBetweenProperties(2, 2)))(input))
+        assert.isFalse(Schema.is(Schema.ObjectKeyword.check(Schema.isBetweenProperties(3, 4)))(input))
+        assert.isTrue(
+          Schema.is(Schema.ObjectKeyword.check(Schema.isBetweenProperties(0, 0)))(withIgnoredProperties({}))
+        )
+      })
+
+      it("isPropertyNames validates only enumerable own string and symbol keys", () => {
+        const key = Symbol("key")
+        const schema = Schema.ObjectKeyword.check(
+          Schema.isPropertyNames(Schema.Union([Schema.Literal("a"), Schema.UniqueSymbol(key)]))
+        )
+
+        assert.isTrue(Schema.is(schema)(withIgnoredProperties({ a: 1, [key]: 2 })))
+        assert.isTrue(Schema.is(schema)(withIgnoredProperties({})))
+        assert.isFalse(Schema.is(schema)({ b: 1 }))
+        assert.isFalse(Schema.is(schema)({ [Symbol("other")]: 1 }))
+      })
+
       it("isMinProperties", async () => {
         const schema = Schema.Record(Schema.String, Schema.Finite).check(Schema.isMinProperties(1))
         const asserts = new TestSchema.Asserts(schema)
@@ -2121,6 +2173,18 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("Transformations", () => {
+    it("number string schemas preserve signed zeros", () => {
+      for (const schema of [Schema.NumberFromString, Schema.FiniteFromString]) {
+        const encode = Schema.encodeSync(schema)
+        const decode = Schema.decodeSync(schema)
+        for (const [value, text] of [[0, "0"], [-0, "-0"]] as const) {
+          const encoded = encode(value)
+          assert.strictEqual(encoded, text)
+          assert.isTrue(Object.is(decode(encoded), value))
+        }
+      }
+    })
+
     it("NumberFromString", async () => {
       const schema = Schema.NumberFromString
       const asserts = new TestSchema.Asserts(schema)
@@ -2254,14 +2318,35 @@ Expected a value between -2147483648 and 2147483647`
       const decoding = asserts.decoding()
       await decoding.succeed("0", Option.getOrThrow(BigDecimal.fromString("0")))
       await decoding.succeed("123.456", Option.getOrThrow(BigDecimal.fromString("123.456")))
+      await decoding.fail("1e300000000", `Expected a valid BigDecimal string`)
+      await decoding.fail("10e10000", `Expected a valid BigDecimal string`)
+      await decoding.succeed("1e+10000", BigDecimal.make(1n, -10_000))
 
       const encoding = asserts.encoding()
       await encoding.succeed(BigDecimal.make(0n, 0), "0")
       await encoding.succeed(BigDecimal.make(123456n, 3), "123.456")
+      await encoding.succeed(BigDecimal.make(1n, -10_000), "1e+10000")
       await encoding.fail(
         "a",
         `Expected BigDecimal`
       )
+    })
+
+    it("RationalFromString", async () => {
+      const asserts = new TestSchema.Asserts(Schema.RationalFromString)
+      if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("6/5", Rational.makeUnsafe(6n, 5n))
+      await decoding.succeed("-4/-6", Rational.makeUnsafe(2n, 3n))
+      await decoding.succeed("3", Rational.fromBigInt(3n))
+      await decoding.fail("1/0", "Expected a valid Rational string")
+      await decoding.fail("1.5", "Expected a valid Rational string")
+
+      const encoding = asserts.encoding()
+      await encoding.succeed(Rational.makeUnsafe(6n, 5n), "6/5")
+      await encoding.succeed(Rational.fromBigInt(0n), "0/1")
+      await encoding.fail("6/5", "Expected Rational")
     })
 
     it("TimeZoneNamedFromString", async () => {
@@ -3463,12 +3548,12 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.fail(
         Cause.fail("a"),
         `Expected a finite number
-  at ["failures"][0]["error"]`
+  at ["reasons"][0]["error"]`
       )
       await decoding.fail(
         Cause.die("a"),
         `Expected a finite number
-  at ["failures"][0]["defect"]`
+  at ["reasons"][0]["defect"]`
       )
 
       const encoding = asserts.encoding()
@@ -3479,12 +3564,12 @@ Expected a value between -2147483648 and 2147483647`
       await encoding.fail(
         Cause.fail("a"),
         `Expected number
-  at ["failures"][0]["error"]`
+  at ["reasons"][0]["error"]`
       )
       await encoding.fail(
         Cause.die("a"),
         `Expected number
-  at ["failures"][0]["defect"]`
+  at ["reasons"][0]["defect"]`
       )
     })
   })
@@ -3561,7 +3646,7 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.fail(
         Exit.fail(null),
         `Expected string
-  at ["cause"]["failures"][0]["error"]`
+  at ["cause"]["reasons"][0]["error"]`
       )
     })
 
@@ -3838,17 +3923,6 @@ Expected a value between -2147483648 and 2147483647`
         deepStrictEqual(instance.a, "default")
       })
 
-      it("Struct & Effect sync", async () => {
-        const schema = Schema.Struct({
-          a: Schema.FiniteFromString.pipe(Schema.withConstructorDefault(Effect.succeed(-1)))
-        })
-        const asserts = new TestSchema.Asserts(schema)
-
-        const make = asserts.make()
-        await make.succeed({ a: 1 })
-        await make.succeed({}, { a: -1 })
-      })
-
       it("Struct & Effect async", async () => {
         const schema = Schema.Struct({
           a: Schema.FiniteFromString.pipe(Schema.withConstructorDefault(
@@ -4021,6 +4095,37 @@ Expected a value between -2147483648 and 2147483647`
       await encoding.fail(null, "Expected object")
     })
 
+    it("Record(Enum, Number)", async () => {
+      enum Color {
+        // oxlint-disable-next-line typescript/no-duplicate-enum-values -- aliases must not produce duplicate keys
+        Red = "red",
+        Crimson = "red",
+        Green = "green",
+        Blue = 2
+      }
+      const schema = Schema.Record(Schema.Enum(Color), Schema.Number)
+      assert.deepStrictEqual(schema.ast.propertySignatures.map((property) => property.name), ["red", "green", 2])
+      const asserts = new TestSchema.Asserts(schema)
+
+      const decoding = asserts.decoding()
+      await decoding.succeed({ red: 1, green: 2, 2: 3 })
+      await decoding.fail(
+        { red: 1, 2: 3 },
+        `Missing key
+  at ["green"]`
+      )
+      await decoding.fail(
+        { red: 1, green: 2 },
+        `Missing key
+  at [2]`
+      )
+      await asserts.encoding().succeed({ red: 1, green: 2, 2: 3 })
+
+      const union = Schema.Record(Schema.Union([Schema.Enum(Color), Schema.Literal("red")]), Schema.Number)
+      assert.deepStrictEqual(union.ast.propertySignatures.map((property) => property.name), ["red", "green", 2])
+      await new TestSchema.Asserts(union).decoding().succeed({ red: 1, green: 2, 2: 3 })
+    })
+
     it("recursive values stay lazy", async () => {
       interface Recursive {
         readonly [key: string]: Recursive
@@ -4055,15 +4160,34 @@ Expected a value between -2147483648 and 2147483647`
         deepStrictEqual(calls, ["a", "b", "c"])
       }))
 
-    it("Record(String, optionalKey(Number)) should throw", async () => {
-      throws(
-        () => Schema.Record(Schema.String, Schema.optionalKey(Schema.Number)),
-        new Error("Cannot use `Schema.optionalKey` with index signatures, use `Schema.optional` instead.")
-      )
+    const optionalIndexSignatureError = new Error(
+      "Cannot use `Schema.optionalKey` or `Schema.optional` with index signatures. Index signatures already allow keys to be absent; use `Schema.UndefinedOr` to allow `undefined` values."
+    )
+
+    it("Record(String, optionalKey(Number)) should throw", () => {
+      for (
+        const value of [
+          Schema.optionalKey(Schema.Number),
+          Schema.optionalKey(Schema.Number).pipe(Schema.decodeTo(Schema.Number))
+        ]
+      ) {
+        throws(() => Schema.Record(Schema.String, value), optionalIndexSignatureError)
+      }
     })
 
-    it("Record(String, optional(Number))", async () => {
-      const schema = Schema.Record(Schema.String, Schema.optional(Schema.Number))
+    it("Record(String, optional(Number)) should throw", () => {
+      for (
+        const value of [
+          Schema.optional(Schema.Number),
+          Schema.optional(Schema.Number).pipe(Schema.decodeTo(Schema.UndefinedOr(Schema.Number)))
+        ]
+      ) {
+        throws(() => Schema.Record(Schema.String, value), optionalIndexSignatureError)
+      }
+    })
+
+    it("Record(String, UndefinedOr(Number))", async () => {
+      const schema = Schema.Record(Schema.String, Schema.UndefinedOr(Schema.Number))
       const asserts = new TestSchema.Asserts(schema)
 
       const make = asserts.make()
@@ -4248,6 +4372,21 @@ Expected a value between -2147483648 and 2147483647`
         await decoding.succeed({ a: 1 })
         await decoding.succeed({ b: 2 })
         await decoding.succeed({ a: 1, b: 2 })
+      })
+
+      it("Record(Literals, optional(Number))", async () => {
+        const schema = Schema.Record(Schema.Literals(["a", "b"]), Schema.optional(Schema.Number))
+        const asserts = new TestSchema.Asserts(schema)
+
+        const decoding = asserts.decoding()
+        await decoding.succeed({})
+        await decoding.succeed({ a: 1 })
+        await decoding.succeed({ a: undefined })
+
+        const encoding = asserts.encoding()
+        await encoding.succeed({})
+        await encoding.succeed({ a: 1 })
+        await encoding.succeed({ a: undefined })
       })
 
       it("Record(Literals, mutableKey(Number))", async () => {
@@ -5297,12 +5436,32 @@ Expected a value between -2147483648 and 2147483647`
     await encoding.succeed(encoder.encode("foobar"), "Zm9vYmFy")
   })
 
+  for (
+    const [name, schema] of [
+      ["StringFromBase64", Schema.StringFromBase64],
+      ["StringFromBase64Url", Schema.StringFromBase64Url],
+      ["StringFromHex", Schema.StringFromHex],
+      ["StringFromUriComponent", Schema.StringFromUriComponent]
+    ] as const
+  ) {
+    it(`${name} preserves well-formed strings and rejects unpaired surrogates`, async () => {
+      const asserts = new TestSchema.Asserts(schema)
+      for (const input of ["a\uD800b", "a\uDC00b"]) {
+        await asserts.encoding().fail(input, "Expected a well-formed Unicode string")
+        assert.isTrue(Schema.is(schema)(input))
+      }
+      const text = "😀\uFFFD"
+      assert.strictEqual(Schema.decodeSync(schema)(Schema.encodeSync(schema)(text)), text)
+    })
+  }
+
   it("StringFromBase64", async () => {
     const schema = Schema.StringFromBase64
     const asserts = new TestSchema.Asserts(schema)
 
     const decoding = asserts.decoding()
     await decoding.succeed("Zm9vYmFy", "foobar")
+    await decoding.succeed("77u/cmVwb3J0", "\uFEFFreport")
     await decoding.fail("Zm9vY", "Expected a valid Base64 string")
     await decoding.fail("Zm9vYmF-", "Expected a valid Base64 string")
     await decoding.fail("=Zm9vYmF", "Expected a valid Base64 string")
@@ -5317,6 +5476,7 @@ Expected a value between -2147483648 and 2147483647`
 
     const decoding = asserts.decoding()
     await decoding.succeed("Zm9vYmFy", "foobar")
+    await decoding.succeed("77u_cmVwb3J0", "\uFEFFreport")
     await decoding.fail("Zm9vY", "Expected a valid Base64Url string")
     await decoding.succeed("Pj8-ZD_Dnw", ">?>d?\u00DF")
     await decoding.fail("Pj8/ZD+Dnw", "Expected a valid Base64Url string")
@@ -5332,6 +5492,7 @@ Expected a value between -2147483648 and 2147483647`
 
     const decoding = asserts.decoding()
     await decoding.succeed("67", "g")
+    await decoding.succeed("efbbbf7265706f7274", "\uFEFFreport")
     await decoding.fail("0", "Expected a valid hexadecimal string")
     await decoding.fail("zd4aa", "Expected a valid hexadecimal string")
     await decoding.fail("0\x01", "Expected a valid hexadecimal string")
@@ -5350,6 +5511,7 @@ Expected a value between -2147483648 and 2147483647`
     await decoding.succeed("hello%20world", "hello world")
     await decoding.succeed("hello", "hello")
     await decoding.fail("%ZZ", "Expected a valid URI component")
+    await decoding.succeed("\uD800", "\uD800")
 
     const encoding = asserts.encoding()
     await encoding.succeed("{\"a\":1}", "%7B%22a%22%3A1%7D")
@@ -5768,6 +5930,27 @@ Expected a value between -2147483648 and 2147483647`
     await encoding.succeed(Duration.negativeInfinity, "-Infinity")
   })
 
+  it("DurationFromIsoString", async () => {
+    const schema = Schema.DurationFromIsoString
+    const asserts = new TestSchema.Asserts(schema)
+
+    const decoding = asserts.decoding()
+    await decoding.succeed("P1W2D", Duration.days(9))
+    await decoding.succeed("PT1H30M", Duration.minutes(90))
+    await decoding.succeed("-PT1.5S", Duration.millis(-1500))
+    await decoding.succeed("PT0.000000001S", Duration.nanos(1n))
+    await decoding.fail("P1Y", "Expected an ISO 8601 duration without years or months")
+    await decoding.fail("P1M", "Expected an ISO 8601 duration without years or months")
+    await decoding.fail("1 second", "Expected an ISO 8601 duration without years or months")
+
+    const encoding = asserts.encoding()
+    await encoding.succeed(Duration.zero, "PT0S")
+    await encoding.succeed(Duration.weeks(1), "P7D")
+    await encoding.succeed(Duration.nanos(-1n), "-PT0.000000001S")
+    await encoding.fail(Duration.infinity, "Expected a finite Duration")
+    await encoding.fail(Duration.negativeInfinity, "Expected a finite Duration")
+  })
+
   it("DurationFromNanos", async () => {
     const schema = Schema.DurationFromNanos
     const asserts = new TestSchema.Asserts(schema)
@@ -5855,6 +6038,48 @@ Expected a value between -2147483648 and 2147483647`
     )
   })
 
+  it("SemVer", async () => {
+    const asserts = new TestSchema.Asserts(Schema.SemVer)
+    if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+    await asserts.decoding().fail("1.2.3", "Expected SemVer")
+
+    const json = new TestSchema.Asserts(Schema.toCodecJson(Schema.SemVer))
+    await json.decoding().succeed("1.2.3-rc.1+001", SemVer.parseUnsafe("1.2.3-rc.1+001"))
+    await json.encoding().succeed(SemVer.parseUnsafe("1.2.3-rc.1+001"), "1.2.3-rc.1+001")
+  })
+
+  it("SemVerFromString", async () => {
+    const asserts = new TestSchema.Asserts(Schema.SemVerFromString)
+    await asserts.verifyRoundTrip()
+    await asserts.decoding().succeed("1.0.0-beta+exp.sha.5114f85", SemVer.parseUnsafe("1.0.0-beta+exp.sha.5114f85"))
+    await asserts.decoding().fail(
+      "v1.2.3",
+      `Invalid SemVer "v1.2.3": major must be a non-negative integer without leading zeros, received "v1"`
+    )
+    await asserts.encoding().succeed(SemVer.parseUnsafe("1.2.3+build"), "1.2.3+build")
+  })
+
+  it("SemVerRange", async () => {
+    const asserts = new TestSchema.Asserts(Schema.SemVerRange)
+    if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+    await asserts.decoding().fail("^1.2.3", "Expected SemVerRange")
+
+    const json = new TestSchema.Asserts(Schema.toCodecJson(Schema.SemVerRange))
+    await json.decoding().succeed("^1.2 || 2.x", SemVerRange.parseUnsafe("^1.2 || 2"))
+    await json.encoding().succeed(SemVerRange.parseUnsafe(">= 1.2.3 <2.x"), ">=1.2.3 <2")
+  })
+
+  it("SemVerRangeFromString", async () => {
+    const asserts = new TestSchema.Asserts(Schema.SemVerRangeFromString)
+    await asserts.verifyRoundTrip()
+    await asserts.decoding().succeed("~1.2.3-beta.1", SemVerRange.parseUnsafe("~1.2.3-beta.1"))
+    await asserts.decoding().fail(
+      "^v1",
+      `Invalid SemVer range "^v1": major must be a non-negative integer without leading zeros, received "v1"`
+    )
+    await asserts.encoding().succeed(SemVerRange.parseUnsafe("1.2.3 - 2.x"), "1.2.3 - 2")
+  })
+
   it("BigDecimal", async () => {
     const schema = Schema.BigDecimal
     const asserts = new TestSchema.Asserts(schema)
@@ -5869,6 +6094,18 @@ Expected a value between -2147483648 and 2147483647`
 
     const encoding = asserts.encoding()
     await encoding.succeed(BigDecimal.fromStringUnsafe("123.45"))
+  })
+
+  it("Rational", async () => {
+    const asserts = new TestSchema.Asserts(Schema.Rational)
+    if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+
+    await asserts.decoding().succeed(Rational.makeUnsafe(1n, 3n))
+    await asserts.decoding().fail(BigDecimal.fromBigInt(1n), "Expected Rational")
+
+    const json = new TestSchema.Asserts(Schema.toCodecJson(Schema.Rational))
+    await json.decoding().succeed("1/3", Rational.makeUnsafe(1n, 3n))
+    await json.encoding().succeed(Rational.makeUnsafe(1n, 3n), "1/3")
   })
 
   describe("BigDecimal checks", () => {
@@ -6148,6 +6385,14 @@ Expected a value between -2147483648 and 2147483647`
     })
   })
 
+  it("FormData guard", () => {
+    const is = Schema.is(Schema.FormData)
+    assertTrue(is(new FormData()))
+    for (const value of [undefined, null, {}, [], { append() {}, entries() {} }]) {
+      assertFalse(is(value))
+    }
+  })
+
   it("fromFormData", async () => {
     const schema = Schema.fromFormData(Schema.Struct({
       a: Schema.NonEmptyString,
@@ -6300,12 +6545,16 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.succeed("a")
     })
 
-    it("rejects checks on Literal, TemplateLiteral, and Union parts", () => {
+    it("rejects checks on Literal, Enum, TemplateLiteral, and Union parts", () => {
       const check = Schema.makeFilter(() => true)
 
       throws(
         () => Schema.TemplateLiteral([Schema.Literal("a").check(check)]),
         "Invalid TemplateLiteral part Literal"
+      )
+      throws(
+        () => Schema.TemplateLiteral([Schema.Enum({ A: "a" }).check(check)]),
+        "Invalid TemplateLiteral part Enum"
       )
       throws(
         () => Schema.TemplateLiteral([Schema.TemplateLiteral(["a"]).check(check)]),
@@ -6356,6 +6605,19 @@ Expected a value between -2147483648 and 2147483647`
 
       await decoding.fail(
         "a",
+        `Expected a string matching template literal parts`
+      )
+    })
+
+    it(`Enum + "_" + string`, async () => {
+      const schema = Schema.TemplateLiteral([Schema.Enum({ Task: "task", One: 1 }), "_", Schema.String])
+      const asserts = new TestSchema.Asserts(schema)
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("task_build")
+      await decoding.succeed("1_build")
+      await decoding.fail(
+        "needs_build",
         `Expected a string matching template literal parts`
       )
     })
@@ -6782,6 +7044,18 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.succeed("h1", ["h", 1])
     })
 
+    it(`"h" + Enum`, async () => {
+      const schema = Schema.TemplateLiteralParser(["h", Schema.Enum({ Task: "task", One: 1 })])
+      const asserts = new TestSchema.Asserts(schema)
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("htask", ["h", "task"])
+      await decoding.succeed("h1", ["h", 1])
+
+      const encoding = asserts.encoding()
+      await encoding.succeed(["h", 1], "h1")
+    })
+
     it(`"c" + (\`a\${string}b\`|"e") + "d"`, async () => {
       const schema = Schema.TemplateLiteralParser([
         "c",
@@ -6901,6 +7175,20 @@ Expected a value between -2147483648 and 2147483647`
       assert.strictEqual(defaults, 1)
       assert.strictEqual(checks, 1)
       assert.strictEqual(constructions, 1)
+    })
+
+    it("make preserves constructor defects", () => {
+      const defect = new Error("constructor defect")
+      class A extends Schema.Class<A>("A")({ a: Schema.String }) {
+        readonly failure = (() => {
+          throw defect
+        })()
+      }
+
+      throws(() => A.make({ a: "a" }), (error) => {
+        assertTrue(error instanceof Error)
+        assert.deepStrictEqual(error.cause, Cause.die(defect))
+      })
     })
 
     it("make with void input", () => {
@@ -7560,6 +7848,22 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("Error", () => {
+    it("make retains the caller in error stacks", () => {
+      class Untagged extends Schema.Error<Untagged>("Untagged")({ message: Schema.String }) {}
+      class Tagged extends Schema.TaggedError<Tagged>()("Tagged", { message: Schema.String }) {}
+      const limit = Error.stackTraceLimit
+      Error.stackTraceLimit = 10
+      try {
+        for (const ErrorClass of [Untagged, Tagged]) {
+          const makeErrorAtCallsite = () => ErrorClass.make({ message: "failure" })
+          const error = makeErrorAtCallsite()
+          assert.include(error.stack, "makeErrorAtCallsite")
+        }
+      } finally {
+        Error.stackTraceLimit = limit
+      }
+    })
+
     it("make with void input", () => {
       class E extends Schema.Error<E>("E")({}) {}
       deepStrictEqual(E.make(), new E())
@@ -8850,6 +9154,15 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("Struct.mapFields", () => {
+    it("discovers only enumerable own string and symbol field definitions", () => {
+      const key = Symbol("key")
+      const schema = Schema.Struct({ a: Schema.Number }).mapFields((fields) =>
+        withIgnoredProperties({ ...fields, [key]: Schema.String })
+      )
+
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)({ a: 1, [key]: "value" }), { a: 1, [key]: "value" })
+    })
+
     it("evolve", () => {
       const schema = Schema.Struct({
         a: Schema.String,
@@ -9196,14 +9509,15 @@ Expected a value between -2147483648 and 2147483647`
       await encoding.succeed(new A({ a: 1, b: "b" }), { c: "1", b: "b" })
     })
 
-    it("supports symbol source keys", () => {
+    it("renames only enumerable own string and symbol field definitions", () => {
       const field = Symbol("field")
-      const schema = Schema.Struct({
+      const schema = Schema.Struct(withIgnoredProperties({
+        a: Schema.Number,
         [field]: Schema.String
-      }).pipe(Schema.encodeKeys({ [field]: "field" }))
+      })).pipe(Schema.encodeKeys({ a: "renamed", [field]: "field" }))
 
-      deepStrictEqual(Schema.decodeUnknownSync(schema)({ field: "a" }), { [field]: "a" })
-      deepStrictEqual(Schema.encodeSync(schema)({ [field]: "a" }), { field: "a" })
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)({ renamed: 1, field: "a" }), { a: 1, [field]: "a" })
+      assert.deepStrictEqual(Schema.encodeSync(schema)({ a: 1, [field]: "a" }), { renamed: 1, field: "a" })
     })
 
     it("supports symbol destination keys", () => {
@@ -9440,6 +9754,22 @@ pointed message
   })
 
   describe("extendTo", () => {
+    it("preserves existing symbols and derives only enumerable own fields", () => {
+      const existing = Symbol("existing")
+      const added = Symbol("added")
+      const schema = Schema.Struct(withIgnoredProperties({ a: Schema.Number, [existing]: Schema.String })).pipe(
+        Schema.extendTo(withIgnoredProperties({ b: Schema.Number, [added]: Schema.String }), {
+          b: (input) => Option.some(input.a + 1),
+          [added]: (input) => Option.some(input[existing] + "!")
+        })
+      )
+
+      const encoded = { a: 1, [existing]: "value" }
+      const decoded = { a: 1, b: 2, [existing]: "value", [added]: "value!" }
+      assert.deepStrictEqual(Schema.decodeUnknownSync(schema)(encoded), decoded)
+      assert.deepStrictEqual(Schema.encodeSync(schema)(decoded), encoded)
+    })
+
     it("Struct", async () => {
       const schema = Schema.Struct({
         a: Schema.String,
@@ -9744,6 +10074,16 @@ pointed message
   })
 
   describe("withDecodingDefaultKey", () => {
+    it("keeps successful decoding defaults eager", () => {
+      const schema = Schema.Struct({
+        a: Schema.FiniteFromString.pipe(Schema.withDecodingDefaultKey(Effect.succeed("1")))
+      })
+      const effect = Schema.decodeUnknownEffect(schema)({})
+
+      assertTrue(Exit.isExit(effect))
+      assertExitSuccess(effect, { a: 1 })
+    })
+
     it("should return a decoding default value if the key is missing", async () => {
       const schema = Schema.Struct({
         a: Schema.FiniteFromString.pipe(Schema.withDecodingDefaultKey(Effect.succeed("1")))
@@ -10381,12 +10721,37 @@ describe("Getter", () => {
 })
 
 describe("Check", () => {
-  it("isStringFinite", async () => {
+  describe("isStringFinite", () => {
     const schema = Schema.String.check(Schema.isStringFinite())
+    const isFiniteString = Schema.is(schema)
+    // Number record keys also accept the non-finite literals
+    const decodeNumberKeys = Schema.decodeUnknownSync(Schema.Record(Schema.Number, Schema.String))
+    const isNumberKey = (s: string) => Object.keys(decodeNumberKeys({ [s]: "" })).length === 1
 
-    deepStrictEqual(Schema.resolveAnnotations(schema)?.representation, {
-      id: "effect/schema/isStringFinite",
-      payload: null
+    it("representation", () => {
+      deepStrictEqual(Schema.resolveAnnotations(schema)?.representation, {
+        id: "effect/schema/isStringFinite",
+        payload: null
+      })
+    })
+
+    it("accepts finite number strings", () => {
+      for (const s of ["1", "-1", "+01", "1.5", ".5", "1e5", "-.5E+5"]) {
+        assertTrue(isFiniteString(s), s)
+      }
+      for (const s of ["", ".", "1.", "1..5", "1e", "e5", "1.e5", " 1", "Infinity", "NaN"]) {
+        assertFalse(isFiniteString(s), s)
+      }
+    })
+
+    it("rejects long digit runs in linear time", () => {
+      const digits = "1".repeat(100_000)
+      for (const s of [`${digits}x`, `${digits}.`, `${digits}e`, `-${digits}x`]) {
+        assertFalse(isFiniteString(s))
+        assertFalse(isNumberKey(s))
+      }
+      assertTrue(isFiniteString(digits))
+      assertTrue(isNumberKey(digits))
     })
   })
 
@@ -10485,28 +10850,80 @@ describe("Check", () => {
 
     const decoding = asserts.decoding()
     await decoding.succeed("01H4PGGGJVN2DKP2K1H7EH996V")
+    await decoding.succeed("7" + "z".repeat(25))
+    await decoding.fail(
+      "80000000000000000000000000",
+      `Expected a string matching the RegExp ^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$`
+    )
     await decoding.fail(
       "",
-      `Expected a string matching the RegExp ^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$`
+      `Expected a string matching the RegExp ^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$`
     )
+  })
+
+  it("isAscii", async () => {
+    const schema = Schema.String.check(Schema.isAscii())
+    const asserts = new TestSchema.Asserts(schema)
+
+    if (verifyGeneration) {
+      asserts.arbitrary().verifyGeneration()
+    }
+
+    deepStrictEqual(Schema.resolveAnnotations(schema)?.representation, {
+      id: "effect/schema/isAscii",
+      payload: null
+    })
+
+    const decoding = asserts.decoding()
+    await decoding.succeed("")
+    await decoding.succeed("\x00a\x7f")
+    await decoding.fail("a\x80", `Expected an ASCII string`)
   })
 
   it("isBase64", async () => {
     const schema = Schema.String.check(Schema.isBase64())
+    const asserts = new TestSchema.Asserts(schema)
+
+    if (verifyGeneration) {
+      asserts.arbitrary().verifyGeneration()
+    }
 
     deepStrictEqual(Schema.resolveAnnotations(schema)?.representation, {
       id: "effect/schema/isBase64",
       payload: null
     })
+
+    const decoding = asserts.decoding()
+    await decoding.succeed("")
+    await decoding.succeed("Zm9v+/==")
+    await decoding.succeed("Zm8=")
+    await decoding.succeed("A".repeat(8_000_000))
+    await decoding.fail("Zm8", `Expected a base64 encoded string`)
+    await decoding.fail("Zg=", `Expected a base64 encoded string`)
+    await decoding.fail("Zm9v-_==", `Expected a base64 encoded string`)
   })
 
   it("isBase64Url", async () => {
     const schema = Schema.String.check(Schema.isBase64Url())
+    const asserts = new TestSchema.Asserts(schema)
+
+    if (verifyGeneration) {
+      asserts.arbitrary().verifyGeneration()
+    }
 
     deepStrictEqual(Schema.resolveAnnotations(schema)?.representation, {
       id: "effect/schema/isBase64Url",
       payload: null
     })
+
+    const decoding = asserts.decoding()
+    await decoding.succeed("")
+    await decoding.succeed("Zm9v-_")
+    await decoding.succeed("Zg==")
+    await decoding.succeed("A".repeat(8_000_000))
+    await decoding.fail("Zm9vZ", `Expected a base64url encoded string`)
+    await decoding.fail("Zg=", `Expected a base64url encoded string`)
+    await decoding.fail("Zm9v+/", `Expected a base64url encoded string`)
   })
 
   describe("brand", () => {

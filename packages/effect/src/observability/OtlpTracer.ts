@@ -25,7 +25,7 @@ import * as Layer from "../Layer.ts"
 import * as Option from "../Option.ts"
 import type * as Scope from "../Scope.ts"
 import * as Tracer from "../Tracer.ts"
-import type { ExtractTag } from "../Types.ts"
+import type { Concurrency, ExtractTag } from "../Types.ts"
 import * as Version from "../Version.ts"
 import * as OtlpEnv from "./internal/otlpEnv.ts"
 import * as Exporter from "./OtlpExporter.ts"
@@ -55,8 +55,18 @@ export const make: (
       readonly attributes?: Record<string, unknown>
     } | undefined
     readonly headers?: Headers.Input | undefined
+    /**
+     * Request compression. Defaults to "none". Gzip uses
+     * HttpClientRequest's default minimum body size of 1KB.
+     */
+    readonly compression?: "gzip" | "none" | undefined
     readonly exportInterval?: Duration.Input | undefined
     readonly maxBatchSize?: number | undefined
+    /** Maximum pending queued spans (does not include in-flight batches). */
+    readonly maxQueueSize?: number | undefined
+    /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+    readonly concurrency?: Concurrency | undefined
+    readonly onDrop?: ((count: number) => void) | undefined
     readonly context?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
     readonly shutdownTimeout?: Duration.Input | undefined
   }
@@ -76,8 +86,12 @@ export const make: (
     label: "OtlpTracer",
     url: options.url,
     headers: options.headers,
+    compression: options.compression,
     exportInterval: options.exportInterval ?? Duration.seconds(5),
     maxBatchSize: options.maxBatchSize ?? 1000,
+    maxQueueSize: options.maxQueueSize,
+    concurrency: options.concurrency,
+    onDrop: options.onDrop,
     body(spans) {
       const data: TraceData = {
         resourceSpans: [{
@@ -128,8 +142,18 @@ export const layer: (options: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /**
+   * Request compression. Defaults to "none". Gzip uses
+   * HttpClientRequest's default minimum body size of 1KB.
+   */
+  readonly compression?: "gzip" | "none" | undefined
   readonly exportInterval?: Duration.Input | undefined
   readonly maxBatchSize?: number | undefined
+  /** Maximum pending queued spans (does not include in-flight batches). */
+  readonly maxQueueSize?: number | undefined
+  /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly context?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
   readonly shutdownTimeout?: Duration.Input | undefined
 }) => Layer.Layer<Exporter.Flusher, never, OtlpSerialization | HttpClient.HttpClient> = flow(
@@ -140,6 +164,13 @@ export const layer: (options: {
 
 /**
  * Creates an OTLP traces layer from OpenTelemetry configuration.
+ *
+ * **Details**
+ *
+ * Compression accepts "gzip" or "none".
+ * `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION` takes precedence over
+ * `OTEL_EXPORTER_OTLP_COMPRESSION`, defaulting to "none". Gzip uses
+ * HttpClientRequest's default minimum body size of 1KB.
  *
  * @stability unstable
  * @category layers
@@ -152,6 +183,9 @@ export const layerFromConfig = (options?: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly context?: (<X>(primitive: Tracer.EffectPrimitive<X>, span: Tracer.AnySpan) => X) | undefined
 }): Layer.Layer<Exporter.Flusher, never, HttpClient.HttpClient | OtlpSerialization> =>
   Effect.gen(function*() {
@@ -165,7 +199,18 @@ export const layerFromConfig = (options?: {
       return Exporter.layerFlusher
     }
 
-    const { baseTimeout, tracesTimeout, exportTimeout, scheduleDelay, maxBatchSize } = yield* Config.all({
+    const {
+      baseCompression,
+      compression,
+      baseTimeout,
+      tracesTimeout,
+      exportTimeout,
+      scheduleDelay,
+      maxBatchSize,
+      maxQueueSize
+    } = yield* Config.all({
+      baseCompression: Config.option(Config.Literals(["gzip", "none"], "OTEL_EXPORTER_OTLP_COMPRESSION")),
+      compression: Config.option(Config.Literals(["gzip", "none"], "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")),
       baseTimeout: Config.option(Config.Int("OTEL_EXPORTER_OTLP_TIMEOUT")),
       tracesTimeout: Config.option(Config.Int("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT")),
       exportTimeout: Config.option(Config.Int("OTEL_BSP_EXPORT_TIMEOUT")),
@@ -174,7 +219,8 @@ export const layerFromConfig = (options?: {
           Config.map(Duration.millis)
         )
       ),
-      maxBatchSize: Config.option(Config.Int("OTEL_BSP_MAX_EXPORT_BATCH_SIZE"))
+      maxBatchSize: Config.option(Config.Int("OTEL_BSP_MAX_EXPORT_BATCH_SIZE")),
+      maxQueueSize: Config.option(Config.Int("OTEL_BSP_MAX_QUEUE_SIZE"))
     })
 
     const shutdownTimeout = Option.firstSomeOf([tracesTimeout, baseTimeout, exportTimeout]).pipe(
@@ -185,8 +231,12 @@ export const layerFromConfig = (options?: {
       url: endpoint.toString(),
       resource: options?.resource,
       headers: options?.headers ?? (yield* OtlpEnv.headers("TRACES")),
+      compression: Option.getOrElse(Option.firstSomeOf([compression, baseCompression]), () => "none" as const),
       exportInterval: Option.getOrUndefined(scheduleDelay),
       maxBatchSize: Option.getOrUndefined(maxBatchSize),
+      maxQueueSize: Option.getOrUndefined(maxQueueSize),
+      concurrency: options?.concurrency,
+      onDrop: options?.onDrop,
       context: options?.context,
       shutdownTimeout: Option.getOrUndefined(shutdownTimeout)
     })
@@ -252,6 +302,7 @@ class SpanImpl implements Tracer.Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    if (this.status._tag === "Ended") return
     this.status = {
       _tag: "Ended",
       startTime: this.status.startTime,
@@ -262,14 +313,17 @@ class SpanImpl implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown): void {
+    if (this.status._tag === "Ended") return
     this.attributes.set(key, value)
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
+    if (this.status._tag === "Ended") return
     this.events.push([name, startTime, attributes])
   }
 
   addLinks(links: ReadonlyArray<Tracer.SpanLink>): void {
+    if (this.status._tag === "Ended") return
     // oxlint-disable-next-line no-restricted-syntax
     this.links.push(...links)
   }
@@ -295,7 +349,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
   let otelStatus: Status
 
   if (status.exit._tag === "Success") {
-    otelStatus = { code: StatusCode.Ok }
+    otelStatus = { code: StatusCode.Unset }
   } else if (Cause.hasInterruptsOnly(status.exit.cause)) {
     otelStatus = { code: StatusCode.Unset }
     attributes.push({
@@ -308,7 +362,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
     })
     otelStatus = errors.length > 0
       ? { code: StatusCode.Error, message: errors[0].message }
-      : { code: StatusCode.Ok }
+      : { code: StatusCode.Unset }
     for (const error of errors) {
       events.push({
         name: "exception",
@@ -342,7 +396,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
   for (let i = 0; i < self.links.length; i++) {
     const link = self.links[i]
     links.push({
-      traceId: link.span.traceId,
+      traceId: link.span.traceId.padStart(32, "0"),
       spanId: link.span.spanId,
       attributes: entriesToAttributes(Object.entries(link.attributes)),
       droppedAttributesCount: 0
@@ -350,7 +404,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
   }
 
   return {
-    traceId: self.traceId,
+    traceId: self.traceId.padStart(32, "0"),
     spanId: self.spanId,
     parentSpanId: Option.isSome(self.parent) ? self.parent.value.spanId : undefined,
     name: self.name,

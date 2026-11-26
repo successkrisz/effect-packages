@@ -1,9 +1,24 @@
 /**
  * Native Deno implementation of the Effect `HttpServer`.
  *
+ * `Deno.serve` can only upgrade requests to WebSocket, so other HTTP/1.1
+ * upgrades fail. Serve them with `NodeHttpServer` from
+ * `@effect/platform-node`, which runs on Deno's `node:http`.
+ *
+ * Over HTTP/1.1, `Deno.serve` can stop delivering the request body once the
+ * handler has returned a streamed response, so a handler that streams its
+ * response while still reading the request payload can stall
+ * (denoland/deno#36966).
+ *
+ * `Deno.serve` negotiates HTTP/2 on its own: over TLS with browsers, and in
+ * cleartext with clients that request it. Deno 2.8.3 to 2.9.2 panic and exit
+ * when an HTTP/2 client cancels a request while its handler is still running
+ * (denoland/deno#36053), so this package requires Deno 2.9.3 or newer.
+ *
  * @stability unstable
  * @since 4.0.0
  */
+import * as Channel from "effect/Channel"
 import * as Config from "effect/Config"
 import type { ConfigError } from "effect/Config"
 import * as Context from "effect/Context"
@@ -11,7 +26,7 @@ import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import type * as FileSystem from "effect/FileSystem"
-import { flow } from "effect/Function"
+import { constVoid, flow } from "effect/Function"
 import * as Cookies from "effect/http/Cookies"
 import * as Etag from "effect/http/Etag"
 import * as FetchHttpClient from "effect/http/FetchHttpClient"
@@ -61,6 +76,41 @@ export type ServeOptions =
   | Omit<Deno.ServeUnixOptions, "signal" | "onError">
 
 /**
+ * WebSocket settings applied to every upgrade.
+ *
+ * **Details**
+ *
+ * Deno's upgrade options pass through to `Deno.upgradeWebSocket`.
+ * `highWaterMark` bounds the bytes of inbound messages waiting for a reader
+ * pull, including messages received before reader startup. Every message
+ * counts as at least one byte. A message that takes the queue above the limit
+ * is still queued, then the connection is closed with code 1008 and reason
+ * "Inbound message buffer limit exceeded" and later messages are discarded.
+ * Queued messages remain readable in order, followed by a `SocketError`
+ * wrapping a `SocketReadError`.
+ *
+ * **Gotchas**
+ *
+ * Inbound buffering is unbounded by default. Deno cannot pause a server
+ * WebSocket, so the limit disconnects the peer instead of slowing it down, and
+ * a peer that is still sending may not see close code 1008. The queue holds at
+ * most `highWaterMark` bytes plus one message, so size the limit above the
+ * largest expected burst.
+ *
+ * @stability unstable
+ * @category options
+ * @since 4.1.5
+ */
+export type WebSocketOptions = Deno.UpgradeWebSocketOptions & {
+  /**
+   * The number of inbound bytes that may wait for a reader pull.
+   *
+   * @default unbounded
+   */
+  readonly highWaterMark?: number | undefined
+}
+
+/**
  * Creates a scoped native Deno HTTP server.
  *
  * @stability unstable
@@ -71,14 +121,20 @@ export const make = Effect.fnUntraced(function*(
   options: ServeOptions & {
     readonly disablePreemptiveShutdown?: boolean | undefined
     readonly gracefulShutdownTimeout?: Duration.Input | undefined
-    readonly websocket?: Deno.UpgradeWebSocketOptions | undefined
+    readonly websocket?: WebSocketOptions | undefined
   }
 ) {
   const scope = yield* Effect.scope
   type Handler = (request: Request, info: Deno.ServeHandlerInfo<Deno.NetAddr | Deno.UnixAddr>) => Promise<Response>
-  const notFound: Handler = (_request, _info) => Promise.resolve(new Response("not found", { status: 404 }))
-  const handlerStack: Array<Handler> = [notFound]
-  let currentHandler = notFound
+  const unavailable: Handler = (_request, _info) =>
+    Promise.resolve(
+      new Response("service unavailable", {
+        status: 503,
+        headers: { "cache-control": "no-store", "retry-after": "1" }
+      })
+    )
+  const handlerStack: Array<Handler> = [unavailable]
+  let currentHandler = unavailable
   const {
     disablePreemptiveShutdown,
     gracefulShutdownTimeout,
@@ -87,7 +143,10 @@ export const make = Effect.fnUntraced(function*(
   } = options
   const server = Deno.serve(
     serveOptions as Deno.ServeTcpOptions,
-    (request, info) => currentHandler(request, info)
+    (request, info) =>
+      request.method === "CONNECT"
+        ? Promise.resolve(new Response(null, { status: 501 }))
+        : currentHandler(request, info)
   ) as Deno.HttpServer<Deno.NetAddr | Deno.UnixAddr>
 
   const shutdown = yield* Effect.promise(() => server.shutdown()).pipe(Effect.cached)
@@ -119,11 +178,26 @@ export const make = Effect.fnUntraced(function*(
         if (upgradedSources.has(denoRequest.source)) {
           return Effect.as(cancelResponseBody(response.body), upgradedResponse)
         }
-        return Effect.flatMap(
-          makeResponse(request, response, services, scope),
-          (response) => Effect.sync(() => denoRequest.resolve(response))
-        )
+        return Effect.matchCauseEffect(makeResponse(request, response, services, scope), {
+          onSuccess: (webResponse) => Effect.sync(() => denoRequest.resolve(webResponse)),
+          // Answer the request without waiting for body cleanup, which may never settle
+          onFailure: (cause) => {
+            denoRequest.resolve(new Response(undefined, { status: 500 }))
+            if (response.body._tag === "Raw" && response.body.body instanceof ReadableStream) {
+              cancelStreamUnsafe(response.body.body)
+            }
+            return Effect.failCause(cause)
+          }
+        })
       }, middleware)
+
+      // Join the serve scope before the first step. A body can start and exit while
+      // the handler is still running synchronously, and the request scope then
+      // closes when the request finishes, so closing the serve scope must await it.
+      const ownedHttpEffect = Effect.uninterruptible(Effect.withFiber((fiber) => {
+        Fiber.runIn(fiber, scope)
+        return httpEffect
+      }))
 
       function handler(
         request: Request,
@@ -135,7 +209,7 @@ export const make = Effect.fnUntraced(function*(
             ServerRequest.HttpServerRequest,
             new DenoServerRequest(request, info.remoteAddr, resolve, removeHost(request.url), websocket)
           )
-          const fiber = Fiber.runIn(Effect.runForkWith(context)(httpEffect), scope)
+          const fiber = Effect.runForkWith(context)(ownedHttpEffect)
           request.signal.addEventListener("abort", () => {
             fiber.interruptUnsafe(parent.id, Error.ClientAbort.annotation)
           }, { once: true })
@@ -145,7 +219,7 @@ export const make = Effect.fnUntraced(function*(
       yield* Scope.addFinalizerExit(serveScope, () => {
         const index = handlerStack.lastIndexOf(handler)
         if (index !== -1) handlerStack.splice(index, 1)
-        currentHandler = handlerStack[handlerStack.length - 1] ?? notFound
+        currentHandler = handlerStack[handlerStack.length - 1]
         return preemptiveShutdown
       })
       handlerStack.push(handler)
@@ -160,6 +234,10 @@ const makeResponse = Effect.fnUntraced(function*(
   context: Context.Context<never>,
   scope: Scope.Scope
 ) {
+  if (ServerResponse.omitsBody(response, request.method === "HEAD")) {
+    yield* cancelResponseBody(response.body)
+    return ServerResponse.toWeb(response, { withoutBody: true })
+  }
   const fields: {
     headers: globalThis.Headers
     status?: number
@@ -176,11 +254,6 @@ const makeResponse = Effect.fnUntraced(function*(
   }
   if (response.statusText !== undefined) fields.statusText = response.statusText
 
-  if (ServerResponse.omitsBody(response, request.method === "HEAD")) {
-    yield* cancelResponseBody(response.body)
-    return new Response(undefined, fields)
-  }
-  response = HttpEffect.scopeTransferToStream(response)
   const body = response.body
   switch (body._tag) {
     case "Empty":
@@ -188,24 +261,31 @@ const makeResponse = Effect.fnUntraced(function*(
     case "Uint8Array":
     case "Raw": {
       if (body.body instanceof Response) {
-        for (const [key, value] of fields.headers.entries()) body.body.headers.set(key, value)
-        return body.body
+        return ServerResponse.toWeb(response)
       }
       return new Response(body.body as any, fields)
     }
     case "FormData":
       return new Response(body.formData as any, fields)
-    case "Stream":
+    case "Stream": {
+      // Validate the fields before the stream takes over the request scope, as only reading it would close the scope
+      // oxlint-disable-next-line no-new
+      new Response(new ReadableStream(), fields)
+      const stream = (HttpEffect.scopeTransferToStream(response).body as HttpBody.Stream).stream
       return new Response(
         Stream.toReadableStreamWith(
-          Stream.unwrap(Effect.withFiber((fiber) => {
-            Fiber.runIn(fiber, scope)
-            return Effect.succeed(body.stream)
-          })),
+          // Attach before transforming: startup can suspend. Register the request finalizer before the first pull.
+          Stream.fromChannel(Channel.fromTransform((upstream, streamScope) =>
+            Effect.withFiber((fiber) => {
+              Fiber.runIn(fiber, scope)
+              return Channel.toTransform(stream.channel)(upstream, streamScope)
+            })
+          )),
           context
         ),
         fields
       )
+    }
   }
 })
 
@@ -220,7 +300,7 @@ export const layerServer: (
   options: ServeOptions & {
     readonly disablePreemptiveShutdown?: boolean | undefined
     readonly gracefulShutdownTimeout?: Duration.Input | undefined
-    readonly websocket?: Deno.UpgradeWebSocketOptions | undefined
+    readonly websocket?: WebSocketOptions | undefined
   }
 ) => Layer.Layer<Server.HttpServer, Error.ServeError> = flow(
   make,
@@ -251,7 +331,7 @@ export const layer = (
   options: ServeOptions & {
     readonly disablePreemptiveShutdown?: boolean | undefined
     readonly gracefulShutdownTimeout?: Duration.Input | undefined
-    readonly websocket?: Deno.UpgradeWebSocketOptions | undefined
+    readonly websocket?: WebSocketOptions | undefined
   }
 ): Layer.Layer<Server.HttpServer | HttpPlatform | Etag.Generator | DenoServices.DenoServices, Error.ServeError> =>
   Layer.mergeAll(layerServer(options), layerHttpServices)
@@ -284,7 +364,7 @@ export const layerConfig = (
     ServeOptions & {
       readonly disablePreemptiveShutdown?: boolean | undefined
       readonly gracefulShutdownTimeout?: Duration.Input | undefined
-      readonly websocket?: Deno.UpgradeWebSocketOptions | undefined
+      readonly websocket?: WebSocketOptions | undefined
     }
   >
 ): Layer.Layer<
@@ -296,25 +376,32 @@ export const layerConfig = (
     layerHttpServices
   )
 
+const formDecoder = new TextDecoder("utf-8", { ignoreBOM: true })
+const encoder = new TextEncoder()
+
 class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpServerRequest {
   readonly [ServerRequest.TypeId]: typeof ServerRequest.TypeId
   readonly [IncomingMessage.TypeId]: typeof IncomingMessage.TypeId
   readonly source: Request
   readonly remoteAddr: Deno.NetAddr | Deno.UnixAddr
   readonly url: string
-  readonly websocketOptions: Deno.UpgradeWebSocketOptions | undefined
+  readonly websocketOptions: WebSocketOptions | undefined
   public resolve: (response: Response) => void
   public headersOverride?: Headers.Headers | undefined
   private remoteAddressOverride?: Option.Option<string> | undefined
+  private peerAddressOverride?: Option.Option<string> | undefined
+  readonly protocol: "http" | "https" | undefined
 
   constructor(
     source: Request,
     remoteAddr: Deno.NetAddr | Deno.UnixAddr,
     resolve: (response: Response) => void,
     url: string,
-    websocketOptions: Deno.UpgradeWebSocketOptions | undefined,
+    websocketOptions: WebSocketOptions | undefined,
     headersOverride?: Headers.Headers,
-    remoteAddressOverride?: Option.Option<string>
+    remoteAddressOverride?: Option.Option<string>,
+    peerAddressOverride?: Option.Option<string>,
+    protocol?: "http" | "https"
   ) {
     super()
     this[ServerRequest.TypeId] = ServerRequest.TypeId
@@ -326,18 +413,22 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
     this.websocketOptions = websocketOptions
     this.headersOverride = headersOverride
     this.remoteAddressOverride = remoteAddressOverride
+    this.peerAddressOverride = peerAddressOverride
+    this.protocol = protocol
   }
   toJSON(): unknown {
     return IncomingMessage.inspect(this, {
       _id: "HttpServerRequest",
       method: this.method,
-      url: this.originalUrl
+      url: UrlParams.redactUrl(this.originalUrl)
     })
   }
   modify(options: {
     readonly url?: string | undefined
     readonly headers?: Headers.Headers | undefined
     readonly remoteAddress?: Option.Option<string> | undefined
+    readonly peerAddress?: Option.Option<string> | undefined
+    readonly protocol?: "http" | "https" | undefined
   }) {
     return new DenoServerRequest(
       this.source,
@@ -346,7 +437,9 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
       options.url ?? this.url,
       this.websocketOptions,
       options.headers ?? this.headersOverride,
-      "remoteAddress" in options ? options.remoteAddress : this.remoteAddressOverride
+      "remoteAddress" in options ? options.remoteAddress : this.remoteAddressOverride,
+      options.peerAddress ?? this.peerAddressOverride,
+      options.protocol ?? this.protocol
     )
   }
   get method(): HttpMethod {
@@ -360,8 +453,17 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
       ? Option.some(this.remoteAddr.hostname)
       : Option.none())
   }
+  get peerAddress(): Option.Option<string> {
+    return this.peerAddressOverride ?? this.remoteAddress
+  }
   get headers(): Headers.Headers {
-    this.headersOverride ??= Headers.fromInput(this.source.headers)
+    if (this.headersOverride === undefined) {
+      const headers = Headers.fromInput(this.source.headers)
+      // Deno builds the URL from the request authority, ahead of Host.
+      // Preserve its raw form; URL.host lowercases names and strips default ports.
+      const host = urlAuthority(this.source.url)
+      this.headersOverride = host === undefined || headers.host === host ? headers : Headers.set(headers, "host", host)
+    }
     return this.headersOverride
   }
 
@@ -371,35 +473,21 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
   }
 
   get stream(): Stream.Stream<Uint8Array, Error.HttpServerError> {
-    return this.source.body
+    const body = this.source.body
+    return body
       ? Stream.fromReadableStream({
-        evaluate: () => this.source.body ?? emptyReadableStream,
+        evaluate: () => body,
         onError: (cause) =>
           new Error.HttpServerError({
             reason: new Error.RequestParseError({ request: this, cause })
           })
       })
-      : Stream.fail(
-        new Error.HttpServerError({
-          reason: new Error.RequestParseError({
-            request: this,
-            description: "can not create stream from empty body"
-          })
-        })
-      )
+      : Stream.empty
   }
 
   private textEffect: Effect.Effect<string, Error.HttpServerError> | undefined
   get text(): Effect.Effect<string, Error.HttpServerError> {
-    return this.textEffect ??= Effect.runSync(Effect.cached(
-      Effect.tryPromise({
-        try: () => this.source.text(),
-        catch: (cause) =>
-          new Error.HttpServerError({
-            reason: new Error.RequestParseError({ request: this, cause })
-          })
-      })
-    ))
+    return this.textEffect ??= Effect.map(this.arrayBuffer, (buffer) => new TextDecoder().decode(buffer))
   }
   get json(): Effect.Effect<Schema.Json, Error.HttpServerError> {
     return Effect.flatMap(this.text, (_) =>
@@ -412,9 +500,10 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
       }))
   }
   get urlParamsBody(): Effect.Effect<UrlParams.UrlParams, Error.HttpServerError> {
-    return Effect.flatMap(this.text, (_) =>
+    return Effect.flatMap(this.arrayBuffer, (bytes) =>
       Effect.try({
-        try: () => UrlParams.fromInput(new URLSearchParams(_)),
+        // A leading "?" is form data; URLSearchParams would drop it as a query prefix.
+        try: () => UrlParams.fromInput(new URLSearchParams(formDecoder.decode(bytes).replace(/^\?/, "%3F"))),
         catch: (cause) =>
           new Error.HttpServerError({
             reason: new Error.RequestParseError({ request: this, cause })
@@ -440,40 +529,58 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
   get arrayBuffer(): Effect.Effect<ArrayBuffer, Error.HttpServerError> {
     if (this.arrayBufferEffect) return this.arrayBufferEffect
     this.arrayBufferEffect = Effect.runSync(Effect.cached(
-      Effect.tryPromise({
-        try: () => this.source.arrayBuffer(),
-        catch: (cause) =>
-          new Error.HttpServerError({
-            reason: new Error.RequestParseError({ request: this, cause })
-          })
+      // Reuse the Web reader so that MaxBodySize is enforced.
+      Effect.mapError(ServerRequest.fromWeb(this.source).arrayBuffer, (error) => {
+        if (error.reason._tag !== "RequestParseError") return error
+        const { cause, reason } = error.reason
+        return new Error.HttpServerError({
+          reason: new Error.RequestParseError({ request: this, cause, ...(reason && { reason }) })
+        })
       })
     ))
-    this.textEffect = Effect.map(this.arrayBufferEffect, (_) => new TextDecoder().decode(_))
     return this.arrayBufferEffect
   }
 
+  upgradeWith(
+    options: { readonly headers?: Headers.Input | undefined }
+  ): Effect.Effect<Socket.Socket, Error.HttpServerError> {
+    if (Object.keys(Headers.fromInput(options.headers)).length === 0) return this.upgrade
+    return Effect.fail(
+      new Error.HttpServerError({
+        reason: new Error.InternalError({
+          request: this,
+          description: "WebSocket upgrades do not support custom response headers"
+        })
+      })
+    )
+  }
+
   get upgrade(): Effect.Effect<Socket.Socket, Error.HttpServerError> {
+    const { highWaterMark, ...upgradeOptions } = this.websocketOptions ?? {}
     return Effect.flatMap(
       Effect.try({
-        try: () => Deno.upgradeWebSocket(this.source, this.websocketOptions),
+        try: () => Deno.upgradeWebSocket(this.source, upgradeOptions),
         catch: (cause) =>
           new Error.HttpServerError({
             reason: new Error.RequestParseError({
               request: this,
               cause,
-              description: "Not an upgradeable ServerRequest"
+              description: isRawUpgrade(this.source)
+                ? "Deno.serve only supports WebSocket upgrades"
+                : "Not an upgradeable ServerRequest"
             })
           })
       }),
       (upgrade) => {
-        const ws = bufferedWebSocket(upgrade.socket)
+        const ws = bufferedWebSocket(upgrade.socket, highWaterMark)
         upgradedSources.add(this.source)
         this.resolve(upgrade.response)
         return Socket.fromWebSocket(
           Effect.acquireRelease(
             Effect.succeed(ws),
             () => Effect.sync(() => upgrade.socket.close(1000))
-          )
+          ),
+          { highWaterMark, disableReconnects: true }
         )
       }
     )
@@ -484,7 +591,12 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
 // upgrade and the first reader acquisition would be lost. This facade buffers
 // message, error, and close events until listeners attach, then replays them
 // so they come out of the first pull.
-const bufferedWebSocket = (ws: WebSocket): Socket.WebSocketLike => {
+//
+// With a highWaterMark, a message that takes the buffered bytes above it
+// closes the socket, and every later message is dropped. An error event is
+// buffered after that message, so the reader fails with a `SocketReadError`
+// on replay however much it drains while the events are replayed.
+const bufferedWebSocket = (ws: WebSocket, highWaterMark: number | undefined): Socket.WebSocketLike => {
   interface Entry {
     readonly listener: (event: Socket.WebSocketEvent) => void
     readonly once: boolean
@@ -492,6 +604,7 @@ const bufferedWebSocket = (ws: WebSocket): Socket.WebSocketLike => {
   const listeners = new Map<string, Array<Entry>>()
   const buffered: Array<[string, Socket.WebSocketEvent]> = []
   let buffering = true
+  let bufferedBytes = 0
 
   ws.binaryType = "arraybuffer"
 
@@ -513,7 +626,18 @@ const bufferedWebSocket = (ws: WebSocket): Socket.WebSocketLike => {
     return (event: Event) => {
       const wsEvent = event as unknown as Socket.WebSocketEvent
       if (buffering) {
+        const counted = type === "message" && highWaterMark !== undefined
+        if (counted) {
+          if (bufferedBytes > highWaterMark) return
+          const data = wsEvent.data as string | ArrayBuffer
+          bufferedBytes += (typeof data === "string" ? encoder.encode(data).byteLength : data.byteLength) || 1
+        }
         buffered.push([type, wsEvent])
+        if (counted && bufferedBytes > highWaterMark) {
+          const error = new globalThis.Error(`Socket highWaterMark of ${highWaterMark} bytes exceeded`)
+          buffered.push(["error", Object.assign(error, { type: "error" })])
+          ws.close(1008, "Inbound message buffer limit exceeded")
+        }
       } else {
         dispatch(type, wsEvent)
       }
@@ -533,7 +657,9 @@ const bufferedWebSocket = (ws: WebSocket): Socket.WebSocketLike => {
 
   return {
     get readyState() {
-      return ws.readyState
+      // Until the replay runs, report a closing socket as open, so the reader
+      // waits for the buffered messages and close instead of failing with 1006.
+      return buffering && ws.readyState >= 2 ? 1 : ws.readyState
     },
     addEventListener(type, listener, options) {
       if (type === "open") {
@@ -566,6 +692,11 @@ const upgradedResponse = ServerResponse.empty({ status: 101 })
 // Keyed by source so request copies from `modify` share the upgrade state.
 const upgradedSources = new WeakSet<Request>()
 
+const isRawUpgrade = (request: Request): boolean => {
+  const protocol = request.headers.get("upgrade")
+  return protocol !== null && protocol.toLowerCase() !== "websocket"
+}
+
 const cancelResponseBody = (body: HttpBody.HttpBody): Effect.Effect<void> => {
   if (body._tag === "Raw" && typeof ReadableStream !== "undefined" && body.body instanceof ReadableStream) {
     const stream = body.body
@@ -574,12 +705,12 @@ const cancelResponseBody = (body: HttpBody.HttpBody): Effect.Effect<void> => {
   return Effect.void
 }
 
-const emptyReadableStream = new ReadableStream<Uint8Array>({
-  start(controller) {
-    controller.enqueue(new Uint8Array())
-    controller.close()
-  }
-})
+const cancelStreamUnsafe = (stream: ReadableStream): void => {
+  void stream.cancel().catch(constVoid)
+}
+
+const authorityPattern = /^[^:/?#]+:\/\/([^/?#]*)/
+const urlAuthority = (url: string): string | undefined => authorityPattern.exec(url)?.[1]
 
 const removeHost = (url: string) => {
   if (url[0] === "/") return url

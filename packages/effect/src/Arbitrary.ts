@@ -126,12 +126,50 @@ export interface SampleOptions {
 }
 
 /**
+ * Describes a generation limitation encountered during sampling or property checking.
+ *
+ * **Details**
+ *
+ * Use `_tag` to distinguish diagnostic variants and access their specific fields.
+ *
+ * @see {@link UnsupportedPatternDiagnostic}
+ * @stability unstable
+ * @category models
+ * @since 4.1.5
+ */
+export type GenerationDiagnostic = UnsupportedPatternDiagnostic
+
+/**
+ * Describes a pattern that could not guide construction at a visited schema location.
+ *
+ * **Details**
+ *
+ * The pattern remains a validation filter. Its presence does not prove that it caused exhaustion. Paths are relative
+ * to the schema passed to `Arbitrary.schema`; an empty path denotes its root. Array and tuple path segments identify
+ * schema elements rather than generated element indexes, and recursive schemas can produce repeated path segments.
+ * Arbitrary composition does not prepend its own keys or indexes to these paths.
+ *
+ * @see {@link GenerationDiagnostic}
+ * @stability unstable
+ * @category models
+ * @since 4.1.5
+ */
+export interface UnsupportedPatternDiagnostic {
+  readonly _tag: "UnsupportedPattern"
+  readonly path: ReadonlyArray<PropertyKey>
+  readonly source: string
+  readonly flags: string
+}
+
+/**
  * Describes sampling exhaustion before the requested number of values was generated.
  *
  * **Details**
  *
  * The effective `seed` can be passed to {@link sampleEffect} to reproduce the exhausted run, including when sampling
  * originally selected a seed from the Effect `Random` service.
+ * `diagnostics` contains deduplicated generation limitations encountered during this execution, or an empty array
+ * when none were encountered.
  *
  * @stability unstable
  * @category errors
@@ -142,6 +180,7 @@ export interface SampleError {
   readonly generated: number
   readonly discards: number
   readonly seed: string | number
+  readonly diagnostics: ReadonlyArray<GenerationDiagnostic>
 }
 
 /**
@@ -177,6 +216,12 @@ export type Replay = string
  * Each unconstrained string, collection, or object property observes the current size independently. Recursive
  * branches instead consume one shared recursion allowance. Explicit Schema bounds and required members still apply.
  *
+ * `concurrency` is a positive safe integer, defaulting to `1`. It bounds the number of pending generated cases,
+ * including evaluations that have completed ahead of an earlier case. Results are processed in generation order.
+ * For deterministic generators and independent, repeatable properties, changing concurrency preserves the result,
+ * including the selected failure, run and discard counts, shrinks, and replay token. Later cases may execute
+ * speculatively. Their fibers are interrupted and awaited before shrinking or returning. Shrinking stays sequential.
+ *
  * `maxShrinks` bounds the number of shrink candidates inspected after the initial failure. Candidates rejected by a
  * Schema check, `filter`, `filterMap`, or dependent generation consume the same budget even though the property is not
  * evaluated. Candidates that produce a different failure class also consume the budget. When the budget is exhausted,
@@ -186,7 +231,7 @@ export type Replay = string
  * **Gotchas**
  *
  * When `replay` is present, its recorded seed, attempt, size, and shrink path control the run. The `runs`, `size`,
- * `maxDiscards`, `maxShrinks`, and `seed` options are ignored.
+ * `maxDiscards`, `maxShrinks`, `seed`, and `concurrency` options are ignored. Replay stays sequential.
  *
  * @stability unstable
  * @category models
@@ -194,6 +239,7 @@ export type Replay = string
  */
 export interface CheckOptions {
   readonly runs?: number | undefined
+  readonly concurrency?: number | undefined
   readonly size?: number | undefined
   readonly maxDiscards?: number | undefined
   readonly maxShrinks?: number | undefined
@@ -310,6 +356,8 @@ export interface Falsified<out A, out E> {
  *
  * The effective `seed` can be passed to {@link checkEffect} to reproduce the exhausted run, including when checking
  * originally selected a seed from the Effect `Random` service.
+ * `diagnostics` contains deduplicated generation limitations encountered during this execution, or an empty array
+ * when none were encountered.
  *
  * @stability unstable
  * @category models
@@ -320,6 +368,7 @@ export interface Exhausted {
   readonly runs: number
   readonly discards: number
   readonly seed: string | number
+  readonly diagnostics: ReadonlyArray<GenerationDiagnostic>
 }
 
 /**
@@ -383,9 +432,22 @@ export function formatCheckFailure<A, E>(result: CheckResult<A, E>): string | un
         `Replay: ${result.replay}`
     case "Exhausted":
       return `Property exhausted after ${result.runs} run(s) and ${result.discards} discard(s)\n` +
-        `Seed: ${Formatter.format(result.seed, { space: 2 })}`
+        `Seed: ${Formatter.format(result.seed, { space: 2 })}` +
+        result.diagnostics.map(formatGenerationDiagnostic).join("")
     case "ReplayMismatch":
       return `Property replay failed: ${result.reason}`
+  }
+}
+
+function formatGenerationDiagnostic(diagnostic: GenerationDiagnostic): string {
+  switch (diagnostic._tag) {
+    case "UnsupportedPattern":
+      return `\n\nPattern unavailable for constructive generation at ${
+        diagnostic.path.length === 0 ? "<root>" : Formatter.formatPath(diagnostic.path)
+      }:\n` +
+        `  /${diagnostic.source}/${diagnostic.flags}\n` +
+        "The pattern remains a validation filter.\n" +
+        "Consider adding a supported pattern to guide generation."
   }
 }
 
@@ -597,6 +659,8 @@ export const flatMap: {
  * Accepts a tuple or array, an iterable, or a record of Arbitraries. Tuple positions and record keys are preserved in
  * the generated value. Members are generated in a randomized internal order so recursive members share the generation
  * budget fairly, while shrinking changes one member at a time.
+ * Record inputs use own enumerable string and symbol properties.
+ * Non-enumerable and inherited properties are ignored.
  *
  * **Gotchas**
  *
@@ -608,14 +672,14 @@ export const flatMap: {
  * @category constructors
  * @since 4.0.0
  */
-export function all<const Input extends Iterable<Arbitrary<any>> | Record<string, Arbitrary<any>>>(
+export function all<const Input extends Iterable<Arbitrary<any>> | Record<PropertyKey, Arbitrary<any>>>(
   input: Input
 ): Arbitrary<
   [Input] extends [ReadonlyArray<Arbitrary<any>>] ? {
       -readonly [K in keyof Input]: [Input[K]] extends [Arbitrary<infer A>] ? A : never
     }
     : [Input] extends [Iterable<Arbitrary<infer A>>] ? Array<A>
-    : [Input] extends [Record<string, Arbitrary<any>>] ? {
+    : [Input] extends [Record<PropertyKey, Arbitrary<any>>] ? {
         -readonly [K in keyof Input]: [Input[K]] extends [Arbitrary<infer A>] ? A : never
       }
     : never
@@ -662,7 +726,8 @@ export function sampleEffect<A>(
  *
  * A property must also produce the same outcome for the same input and initial environment. The runner may evaluate
  * it repeatedly and does not restore mutable services between evaluations. Stateful properties should acquire and
- * release an independent fixture inside each evaluation.
+ * release an independent fixture inside each evaluation. Concurrent evaluations inherit the provided services;
+ * the runner does not rebuild layers. Their outcomes must not depend on scheduling or shared mutable state.
  *
  * @stability unstable
  * @category running

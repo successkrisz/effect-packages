@@ -46,6 +46,20 @@ export function lex(argv: ReadonlyArray<string>): LexResult {
   }
 }
 
+/**
+ * Formats a token as an argument. Short option clusters become one argument
+ * per flag.
+ *
+ * @internal
+ */
+export const formatToken = (token: Token): string => {
+  if (token._tag === "Value") return token.value
+  if (token._tag === "LongOption") return token.raw
+  // Numeric aliases need long-option syntax to avoid becoming negative numbers.
+  const flag = negativeNumberRegex.test(token.raw) ? `--${token.flag}` : token.raw
+  return token.value === undefined ? flag : `${flag}=${token.value}`
+}
+
 const negativeNumberRegex = /^-(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
 
 const lexTokens = (args: ReadonlyArray<string>): ReadonlyArray<Token> => {
@@ -58,8 +72,12 @@ const lexTokens = (args: ReadonlyArray<string>): ReadonlyArray<Token> => {
       const equalIndex = arg.indexOf("=")
       if (equalIndex !== -1) {
         const name = arg.slice(2, equalIndex)
-        const value = arg.slice(equalIndex + 1)
-        tokens.push({ _tag: "LongOption", name, raw: arg, value })
+        if (name === "") {
+          tokens.push({ _tag: "Value", value: arg })
+        } else {
+          const value = arg.slice(equalIndex + 1)
+          tokens.push({ _tag: "LongOption", name, raw: arg, value })
+        }
       } else {
         tokens.push({ _tag: "LongOption", name: arg.slice(2), raw: arg })
       }
@@ -67,9 +85,12 @@ const lexTokens = (args: ReadonlyArray<string>): ReadonlyArray<Token> => {
       const flags = arg.slice(1)
       const equalIndex = flags.indexOf("=")
       if (equalIndex !== -1) {
-        const flag = flags.slice(0, equalIndex)
-        const value = flags.slice(equalIndex + 1)
-        tokens.push({ _tag: "ShortOption", flag, raw: `-${flag}`, value })
+        const chars = Array.from(flags.slice(0, equalIndex))
+        const flag = chars.pop() ?? ""
+        for (const ch of chars) {
+          tokens.push({ _tag: "ShortOption", flag: ch, raw: `-${ch}` })
+        }
+        tokens.push({ _tag: "ShortOption", flag, raw: `-${flag}`, value: flags.slice(equalIndex + 1) })
       } else {
         for (const ch of flags) {
           tokens.push({ _tag: "ShortOption", flag: ch, raw: `-${ch}` })

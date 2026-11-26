@@ -3,8 +3,8 @@
  *
  * This module provides both the ClickHouse-specific {@link ClickhouseClient}
  * service and the generic {@link Client.SqlClient} service. `make` creates a
- * scoped client, checks the connection with `ping()`, maps ClickHouse errors
- * to `SqlError`, and aborts in-flight queries when interrupted. The
+ * scoped client that pings ClickHouse by default, maps failures to `SqlError`,
+ * and aborts in-flight queries when interrupted. The
  * ClickHouse-specific service adds typed parameters, command execution, insert
  * queries, query id and settings helpers, a statement compiler, and direct or
  * config-backed layers.
@@ -84,6 +84,14 @@ const classifyError = (
   return fallback === "connection" ? new ConnectionError(props) : new UnknownError(props)
 }
 
+const killQuery = (client: Clickhouse.ClickHouseClient, queryId: string) =>
+  Effect.promise(() =>
+    client.command({
+      query: "KILL QUERY WHERE query_id = {queryId:String}",
+      query_params: { queryId }
+    })
+  )
+
 /**
  * Unique runtime identifier used to tag `ClickhouseClient` values.
  *
@@ -104,16 +112,25 @@ export type TypeId = "~@effect/sql-clickhouse/ClickhouseClient"
 
 /**
  * ClickHouse-specific `SqlClient` extension with access to its configuration,
- * typed parameter fragments, command-mode execution, insert queries, and
- * per-effect query ID and ClickHouse settings.
+ * the underlying `@clickhouse/client` instance, typed parameter fragments,
+ * command-mode execution, insert queries, and per-effect query ID and
+ * ClickHouse settings.
  *
  * @stability unstable
  * @category services
  * @since 4.0.0
  */
-export interface ClickhouseClient extends Client.SqlClient {
+export interface ClickhouseClient extends Client.Base {
   readonly [TypeId]: TypeId
   readonly config: ClickhouseClientConfig
+  /**
+   * The `@clickhouse/client` instance behind this client, for driver features
+   * the SQL client does not wrap, such as `exec()` with raw output formats.
+   * Requests made on it bypass `withQueryId`, `withClickhouseSettings` and
+   * interruption handling; pass `query_id`, `clickhouse_settings` and
+   * `abort_signal` directly. It is closed with the client's scope.
+   */
+  readonly client: Clickhouse.ClickHouseClient
   readonly param: (dataType: string, value: unknown) => Statement.Fragment
   readonly asCommand: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
   readonly insertQuery: <T = unknown>(options: {
@@ -148,7 +165,9 @@ export interface ClickhouseClient extends Client.SqlClient {
  * @category services
  * @since 4.0.0
  */
-export const ClickhouseClient = Context.Service<ClickhouseClient>("@effect/sql-clickhouse/ClickhouseClient")
+export const ClickhouseClient = Context.Service<ClickhouseClient, ClickhouseClient & Client.SqlClient>(
+  "@effect/sql-clickhouse/ClickhouseClient"
+)
 
 /**
  * Configuration for creating a ClickHouse client, combining
@@ -160,15 +179,21 @@ export const ClickhouseClient = Context.Service<ClickhouseClient>("@effect/sql-c
  * @since 4.0.0
  */
 export interface ClickhouseClientConfig extends Clickhouse.ClickHouseClientConfigOptions {
+  /**
+   * Skip the startup ping (default: `false`). Set to `true` to build the
+   * client without contacting ClickHouse and handle connection failures per
+   * statement.
+   */
+  readonly disableInitialPing?: boolean | undefined
   readonly spanAttributes?: Record<string, unknown> | undefined
   readonly transformResultNames?: ((str: string) => string) | undefined
   readonly transformQueryNames?: ((str: string) => string) | undefined
 }
 
 /**
- * Creates a scoped `ClickhouseClient`, verifies connectivity with `ping()`,
- * closes the underlying client when the scope ends, maps ClickHouse failures
- * to `SqlError`, and aborts plus kills in-flight queries when interrupted.
+ * Creates a `ClickhouseClient` that pings ClickHouse by default and closes
+ * when its scope ends. It maps failures to `SqlError` and aborts and kills
+ * in-flight queries on interruption.
  *
  * @stability unstable
  * @category constructors
@@ -176,7 +201,7 @@ export interface ClickhouseClientConfig extends Clickhouse.ClickHouseClientConfi
  */
 export const make = (
   options: ClickhouseClientConfig
-): Effect.Effect<ClickhouseClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<ClickhouseClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const compiler = makeCompiler(options.transformQueryNames)
     const transformRows = options.transformResultNames
@@ -188,31 +213,33 @@ export const make = (
       (client) => Effect.promise(() => client.close())
     )
 
-    yield* Effect.tryPromise({
-      try: async () => {
-        const result = await client.ping()
-        if (!result.success) {
-          throw result.error
-        }
-        return result
-      },
-      catch: (cause) =>
-        new SqlError({ reason: classifyError(cause, "ClickhouseClient: Failed to connect", "connect", "connection") })
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: Duration.seconds(5),
-        orElse: () =>
-          Effect.fail(
-            new SqlError({
-              reason: new ConnectionError({
-                message: "ClickhouseClient: Connection timeout",
-                cause: new Error("connection timeout"),
-                operation: "connect"
+    if (!options.disableInitialPing) {
+      yield* Effect.tryPromise({
+        try: async () => {
+          const result = await client.ping()
+          if (!result.success) {
+            throw result.error
+          }
+          return result
+        },
+        catch: (cause) =>
+          new SqlError({ reason: classifyError(cause, "ClickhouseClient: Failed to connect", "connect", "connection") })
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(5),
+          orElse: () =>
+            Effect.fail(
+              new SqlError({
+                reason: new ConnectionError({
+                  message: "ClickhouseClient: Connection timeout",
+                  cause: new Error("connection timeout"),
+                  operation: "connect"
+                })
               })
-            })
-          )
-      })
-    )
+            )
+        })
+      )
+    }
 
     class ConnectionImpl implements Connection {
       private conn: Clickhouse.ClickHouseClient
@@ -267,12 +294,7 @@ export const make = (
             }
             return Effect.suspend(() => {
               controller.abort()
-              return Effect.promise(() =>
-                this.conn.command({
-                  query: "KILL QUERY WHERE query_id = {queryId:String}",
-                  query_params: { queryId }
-                })
-              )
+              return killQuery(this.conn, queryId)
             })
           })
         })
@@ -319,16 +341,30 @@ export const make = (
         params: ReadonlyArray<unknown>,
         transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined
       ) {
-        return this.runRaw(sql, params, "JSONEachRow").pipe(
-          Effect.map((result) => {
-            if (!("stream" in result)) {
-              return Stream.empty
-            }
-            return NodeStream.fromReadable<ReadonlyArray<Clickhouse.Row<any, "JSONEachRow">>, SqlError>({
-              evaluate: () => result.stream() as any,
-              onError: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute stream", "stream") })
+        const conn = this.conn
+        return Effect.withFiber((fiber) => {
+          const queryId = fiber.getRef(QueryId) ?? Crypto.randomUUID()
+          return this.runRaw(sql, params, "JSONEachRow").pipe(
+            Effect.provideService(QueryId, queryId),
+            Effect.map((result) => {
+              if (!("stream" in result)) {
+                return Stream.empty
+              }
+              // Closing the socket does not stop a query the server is still
+              // computing, so kill it unless the response was read to the end.
+              let done = false
+              return NodeStream.fromReadable<ReadonlyArray<Clickhouse.Row<any, "JSONEachRow">>, SqlError>({
+                evaluate: () => result.stream() as any,
+                onError: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute stream", "stream") })
+              }).pipe(
+                Stream.onEnd(Effect.sync(() => {
+                  done = true
+                })),
+                Stream.ensuring(Effect.suspend(() => done ? Effect.void : Effect.ignoreCause(killQuery(conn, queryId))))
+              )
             })
-          }),
+          )
+        }).pipe(
           Stream.unwrap,
           Stream.chunks,
           Stream.mapEffect((chunk) => {
@@ -352,6 +388,7 @@ export const make = (
 
     return Object.assign(
       yield* Client.make({
+        driver: "clickhouse",
         acquirer: Effect.succeed(connection),
         compiler,
         spanAttributes: [
@@ -365,6 +402,7 @@ export const make = (
       {
         [TypeId]: TypeId as TypeId,
         config: options,
+        client,
         param(dataType: string, value: unknown) {
           return Statement.fragment([clickhouseParam(dataType, value)])
         },
@@ -395,12 +433,7 @@ export const make = (
             )
             return Effect.suspend(() => {
               controller.abort()
-              return Effect.promise(() =>
-                client.command({
-                  query: "KILL QUERY WHERE query_id = {queryId:String}",
-                  query_params: { queryId }
-                })
-              )
+              return killQuery(client, queryId)
             })
           })
         },
@@ -520,7 +553,7 @@ const typeFromUnknown = (value: unknown): string => {
       return "Bool"
     case "object":
       if (value instanceof Date) {
-        return "DateTime()"
+        return "DateTime"
       }
       return "String"
     default:

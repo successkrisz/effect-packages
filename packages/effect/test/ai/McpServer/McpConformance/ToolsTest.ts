@@ -13,6 +13,9 @@ import { makeServerLayer } from "../TestUtils/McpServerLayer.ts"
 import { makeMcpStdioHarness } from "../TestUtils/McpStdioHarness.ts"
 import { McpConformance, type McpConformanceLayer } from "./McpConformance.ts"
 
+// oxlint-disable-next-line @typescript-eslint/no-require-imports
+const Ajv2020 = require("ajv/dist/2020")
+
 const decodeTools = Schema.decodeUnknownEffect(McpSchema.ListToolsResult)
 const decodeCallTool = Schema.decodeUnknownEffect(McpSchema.CallToolResult)
 const decodeJsonSchema2020Tools = Schema.decodeUnknownEffect(Schema.Struct({
@@ -23,41 +26,42 @@ const decodeJsonSchema2020Tools = Schema.decodeUnknownEffect(Schema.Struct({
   }))
 }))
 
-const callTool = (name: string, arguments_: Record<string, unknown> = {}) =>
-  Effect.gen(function*() {
-    const test = yield* McpConformance
-    const initialized = yield* test.initialize({ server: "features" })
-    yield* test.notifyInitialized(initialized)
-    const response = yield* test.send(initialized, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name, arguments: arguments_ }
-    })
-    return yield* test.decodeResult(response).pipe(
-      Effect.flatMap((message) => decodeCallTool(message.result))
-    )
+const callTool = Effect.fnUntraced(function*(name: string, arguments_: Record<string, unknown> = {}) {
+  const test = yield* McpConformance
+  const initialized = yield* test.initialize({ server: "features" })
+  yield* test.notifyInitialized(initialized)
+  const response = yield* test.send(initialized, {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name, arguments: arguments_ }
   })
+  return yield* test.decodeResult(response).pipe(
+    Effect.flatMap((message) => decodeCallTool(message.result))
+  )
+})
 
-const callToolWire = (name: string) =>
-  Effect.gen(function*() {
-    const test = yield* McpConformance
-    const initialized = yield* test.initialize({ server: "features" })
-    yield* test.notifyInitialized(initialized)
-    const response = yield* test.send(initialized, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name, arguments: {} }
-    })
-    return yield* test.decodeResult(response)
+const callToolWire = Effect.fnUntraced(function*(name: string) {
+  const test = yield* McpConformance
+  const initialized = yield* test.initialize({ server: "features" })
+  yield* test.notifyInitialized(initialized)
+  const response = yield* test.send(initialized, {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name, arguments: {} }
   })
+  return yield* test.decodeResult(response)
+})
 
 // String results are mirrored as serialized JSON only where they are also returned as structured content.
 const stringResultContent = (protocol: McpProtocol.ProtocolAdapter, text: string) => [{
   type: "text" as const,
   text: protocol.protocolVersion === "2026-07-28" ? JSON.stringify(text) : text
 }]
+
+// Tests that count invocations must not observe calls made by concurrent siblings.
+const withIsolatedObservations = (layer: McpConformanceLayer) => Effect.provide(layer, { local: true })
 
 export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConformanceLayer) =>
   it.layer(layer)(`Mcp Conformance (${protocol.protocolVersion})`, (it) => {
@@ -192,7 +196,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
 
             assert.strictEqual(error.error.code, McpSchema.INVALID_PARAMS_ERROR_CODE)
             assert.strictEqual((yield* test.observations).toolInvocations, before)
-          }))
+          }).pipe(withIsolatedObservations(layer)))
 
         it.effect("SCHEMA returns text content", () =>
           Effect.gen(function*() {
@@ -279,11 +283,11 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               method: "tools/call",
               params: { name: "DefectTool", arguments: {} }
             })
-            const result = yield* test.decodeError(response)
+            // Checked before schema decoding, which would accept extra members such as `_tag`.
+            const message = (yield* readMcpHttpResponse(response)) as { readonly error: unknown }
 
-            assert.strictEqual(result.error.code, McpSchema.INTERNAL_ERROR_CODE)
-            assert.strictEqual(result.error.message, "Internal error")
-            assert.notMatch(JSON.stringify(result), /private defect details/)
+            assert.deepStrictEqual(message.error, { code: McpSchema.INTERNAL_ERROR_CODE, message: "Internal error" })
+            assert.notMatch(JSON.stringify(message), /private defect details/)
           }))
 
         it.effect.skipIf(protocol.protocolVersion === "2024-11-05")(
@@ -339,6 +343,42 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
                 const result = yield* callTool("StructuredTool")
                 assert.deepStrictEqual(result.structuredContent, { value: "structured" })
               }))
+
+            // Toolkit results are carried in their JSON-encoded form, which the advertised output schema describes.
+            for (
+              const [name, structuredContent] of [
+                ["VoidFieldTool", { reply: null, version: 1 }],
+                ["DateFieldTool", { at: "1970-01-01T00:00:00.000Z" }],
+                ["OptionalFieldTool", { note: null }],
+                ["NaNFieldTool", { value: "NaN" }]
+              ] as const
+            ) {
+              it.effect(`should return JSON structured content when ${name} encodes a non-JSON value`, () =>
+                Effect.gen(function*() {
+                  const test = yield* McpConformance
+                  const initialized = yield* test.initialize({ server: "features" })
+                  yield* test.notifyInitialized(initialized)
+                  const listed = yield* test.send(initialized, {
+                    jsonrpc: "2.0",
+                    id: 2,
+                    method: "tools/list",
+                    params: {}
+                  }).pipe(
+                    Effect.flatMap(test.decodeResult),
+                    Effect.flatMap((message) => decodeTools(message.result))
+                  )
+                  const outputSchema = listed.tools.find((tool) => tool.name === name)?.outputSchema
+                  assert.isDefined(outputSchema)
+
+                  const { result } = yield* callToolWire(name)
+
+                  assert.strictEqual(result.isError, false)
+                  assert.deepStrictEqual(result.structuredContent, structuredContent)
+                  assert.deepStrictEqual(result.content, [{ type: "text", text: JSON.stringify(structuredContent) }])
+                  const validate = new Ajv2020.default({ strict: false }).compile(outputSchema)
+                  assertTrue(validate(result.structuredContent))
+                }))
+            }
           }
         )
 
@@ -379,7 +419,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
             assert.include(text, "Expected string")
             assert.notMatch(text, /AiError|ToolParameterValidationError|Toolkit|TestTool\.handle/)
             assert.strictEqual((yield* test.observations).toolInvocations, before)
-          }))
+          }).pipe(withIsolatedObservations(layer)))
       })
     })
   })
@@ -466,7 +506,7 @@ export const statelessModernSuite = (
 
           assert.strictEqual(error.error.code, McpSchema.HEADER_MISMATCH_ERROR_CODE)
           assert.strictEqual((yield* test.observations).toolInvocations, before)
-        }))
+        }).pipe(withIsolatedObservations(layer)))
 
       it.effect("should reject a tool call when a required parameter header is missing", () =>
         Effect.gen(function*() {
@@ -488,7 +528,7 @@ export const statelessModernSuite = (
           assert.strictEqual(error.id, "missing-parameter-header")
           assert.strictEqual(error.error.code, McpSchema.HEADER_MISMATCH_ERROR_CODE)
           assert.strictEqual((yield* test.observations).toolInvocations, before)
-        }))
+        }).pipe(withIsolatedObservations(layer)))
 
       // Header extraction uses the exact JSON property path; absent parameters do not require headers.
       // https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#server-behavior-for-custom-headers
@@ -645,7 +685,7 @@ export const statelessModernSuite = (
               yield* test.decodeResult(response)
             }
           }
-        }))
+        }).pipe(withIsolatedObservations(layer)))
     })
 
     describe("Tools > Modern listing", () => {

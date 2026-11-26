@@ -480,7 +480,7 @@ export type Encoding = readonly [Link, ...Array<Link>]
  *
  * **Details**
  *
- * Pass to `Schema.decodeUnknown`, `Schema.encode`, and related APIs to customize
+ * Pass to `Schema.decodeUnknownEffect`, `Schema.encodeEffect`, and related APIs to customize
  * error reporting, excess property handling, check execution, and product
  * concurrency. Options apply throughout the parse; schema annotations do not
  * override them.
@@ -814,7 +814,13 @@ export const Declaration: new(
     let run: ReturnType<typeof this.run>
     return (input, options) => {
       if (input === InternalParser.missing) return InternalParser.missingExit
-      return (run ??= this.run(this.typeParameters))(input, this, options)
+      // Keep this declaration's initialization errors outside its callback catch.
+      run ??= this.run(this.typeParameters)
+      try {
+        return run(input, this, options)
+      } catch (error) {
+        return Effect.die(error)
+      }
     }
   }
   private _rebuild(
@@ -1357,6 +1363,9 @@ export interface Enum extends ASTNode {
   getParser(): SchemaParser.Parser
   /** @internal */
 
+  matchPart(s: string, _options: ParseOptions): string | number | undefined
+  /** @internal */
+
   toCodecStringTree(): AST
   /** @internal */
 
@@ -1409,6 +1418,10 @@ export const Enum: new(
     )
   }
   /** @internal */
+  matchPart(s: string, _options: ParseOptions): string | number | undefined {
+    return this.enums.find(([_, value]) => globalThis.String(value) === s)?.[1]
+  }
+  /** @internal */
   toCodecStringTree(): AST {
     if (this.enums.some(([_, v]) => typeof v === "number")) {
       const coercions = Object.fromEntries(this.enums.map(([_, v]) => [globalThis.String(v), v]))
@@ -1435,6 +1448,7 @@ type TemplateLiteralPart =
   | Number
   | BigInt
   | Literal
+  | Enum
   | TemplateLiteral
   | Union<TemplateLiteralPart>
 
@@ -1459,6 +1473,7 @@ function isTemplateLiteralPart(
       valid = true
       break
     case "Literal":
+    case "Enum":
       valid = !ast.checks
       break
     case "TemplateLiteral": {
@@ -2435,7 +2450,7 @@ export const Arrays: new(
         input,
         len,
         tailThreshold: Math.max(elementLen, len - tailLen),
-        output: new globalThis.Array(len),
+        output: [],
         issues: undefined,
         options
       }
@@ -2526,7 +2541,7 @@ export function stepArray(
   if (exit._tag === "Failure") {
     return wrapPropertyKeyIssue(s, s.ast, i, exit)
   }
-  const value = exit === InternalParser.sameExit
+  const value = InternalParser.isSameExit(exit)
     ? item
     : (exit as InternalParser.Success<unknown, SchemaIssue.Issue>)[InternalParser.args]
   if (value !== InternalParser.missing) {
@@ -2599,9 +2614,12 @@ const wrapPropertyKeyIssue = (
 
 /**
  * floating point or integer, with optional exponent
+ *
+ * The mantissa alternation keeps rejection linear: `\d*\.?\d+` retries
+ * every split of a long digit run.
  * @internal
  */
-export const FINITE_PATTERN = "[+-]?\\d*\\.?\\d+(?:[Ee][+-]?\\d+)?"
+export const FINITE_PATTERN = "[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?"
 
 /**
  * Returns the object keys that match the index signature parameter schema.
@@ -2730,8 +2748,10 @@ function isIndexSignatureParameter(ast: AST): ast is IndexSignatureParameter {
  *
  * **Gotchas**
  *
- * Using `Schema.optionalKey` on the value type is not allowed for index
- * signatures (throws at construction); use `Schema.optional` instead.
+ * Using `Schema.optionalKey` or `Schema.optional` on the value type is not
+ * allowed for index signatures (throws at construction). Index signatures
+ * already allow keys to be absent; use `Schema.UndefinedOr` to allow
+ * `undefined` values.
  *
  * @see {@link Objects}
  * @see {@link PropertySignature}
@@ -2764,8 +2784,10 @@ export const IndexSignature: new(parameter: AST, type: AST) => IndexSignature = 
     }
     this.parameter = parameter
     this.type = type
-    if (isOptional(type) && !containsUndefined(type)) {
-      throw new Error("Cannot use `Schema.optionalKey` with index signatures, use `Schema.optional` instead.")
+    if (isOptional(type) || (type.encoding !== undefined && isOptional(toEncoded(type)))) {
+      throw new Error(
+        "Cannot use `Schema.optionalKey` or `Schema.optional` with index signatures. Index signatures already allow keys to be absent; use `Schema.UndefinedOr` to allow `undefined` values."
+      )
     }
   }
 }
@@ -2900,7 +2922,8 @@ export const Objects: new(
         properties = ast.propertySignatures.map((ps) => ({
           parser: compileField(ps.type),
           name: ps.name,
-          type: ps.type
+          type: ps.type,
+          ownOnly: requiresOwnProperty(ps.name)
         }))
         indexes = indexCount
           ? ast.indexSignatures.map((is) => ({
@@ -2927,7 +2950,7 @@ export const Objects: new(
         if (exitValue._tag === "Failure") {
           return wrapPropertyKeyIssue(s, ast, key, exitValue) ?? Exit.void
         }
-        const value = exitValue === InternalParser.sameExit
+        const value = InternalParser.isSameExit(exitValue)
           ? inputValue
           : (exitValue as InternalParser.Success<unknown, SchemaIssue.Issue>)[InternalParser.args]
         if (k2 !== InternalParser.missing && value !== InternalParser.missing) {
@@ -2955,7 +2978,7 @@ export const Objects: new(
         if (exitKey._tag === "Failure") {
           return wrapPropertyKeyIssue(s, ast, key, exitKey) ?? Exit.void
         }
-        const k2 = exitKey === InternalParser.sameExit
+        const k2 = InternalParser.isSameExit(exitKey)
           ? key
           : (exitKey as InternalParser.Success<PropertyKey, SchemaIssue.Issue>)[InternalParser.args]
         const inputValue = s.input[key]
@@ -3021,10 +3044,10 @@ export const Objects: new(
           }
           // Only enumerable own properties can be excess. Declared fields are
           // parsed separately, regardless of their enumerability.
-          const inputKeys = Reflect.ownKeys(record)
+          const inputKeys = InternalRecord.ownEnumerableKeys(record)
           for (let i = 0; i < inputKeys.length; i++) {
             const key = inputKeys[i]
-            if (!coveredKeys.has(key) && Object.prototype.propertyIsEnumerable.call(record, key)) {
+            if (!coveredKeys.has(key)) {
               // key is unexpected
               const unexpected = new SchemaIssue.UnexpectedKey(ast, record[key], options)
               const issue = new SchemaIssue.Pointer([key], unexpected)
@@ -3101,12 +3124,14 @@ export const Objects: new(
     // Resumes at the property whose parser suspended, without replaying the
     // properties already parsed.
     const resume = (
-      state: ObjectParserState,
+      snapshot: ObjectParserState,
       index: number,
       pending: Effect.Effect<unknown, SchemaIssue.Issue, any>
     ): Effect.Effect<unknown, SchemaIssue.Issue, any> => {
       const property = properties![index]
-      return Effect.flatMap(Effect.exit(pending), (exit) => {
+      return Effect.flatMap(Effect.exit(pending), (exit): Effect.Effect<unknown, SchemaIssue.Issue, any> => {
+        // Copy the parsed prefix per execution so reruns cannot overwrite earlier results.
+        const state: ObjectParserState = { ...snapshot, out: { ...snapshot.out } }
         const terminal = stepProperty(state, property, exit)
         if (terminal) return terminal
         const done = () => InternalParser.succeed(state.out)
@@ -3137,13 +3162,13 @@ export const Objects: new(
         for (let index = 0; index < props.length; index++) {
           const property = props[index]
           const name = property.name
-          const hasKey = hasPropertySignature(record, name)
+          const hasKey = property.ownOnly ? Object.hasOwn(record, name) : name in record
           const value = hasKey ? record[name] : InternalParser.missing
           const exit = property.parser(value, options)
           if (!effectIsExit(exit)) {
             return resume(state, index, exit)
           }
-          if (exit === InternalParser.sameExit) {
+          if (InternalParser.isSameExit(exit)) {
             if (hasKey) InternalRecord.assignProperty(out, name, value)
             continue
           }
@@ -3215,6 +3240,7 @@ type ParsedProperty = {
   readonly parser: SchemaParser.Parser
   readonly name: PropertyKey
   readonly type: AST
+  readonly ownOnly: boolean
 }
 
 /** @internal */
@@ -3226,7 +3252,7 @@ export function stepProperty(
   if (exit._tag === "Failure") {
     return wrapPropertyKeyIssue(s, s.ast, p.name, exit)
   }
-  if (exit === InternalParser.sameExit) return
+  if (InternalParser.isSameExit(exit)) return
   const value = (exit as InternalParser.Success<unknown, SchemaIssue.Issue>)[InternalParser.args]
   if (value !== InternalParser.missing) {
     InternalRecord.assignProperty(s.out, p.name, value)
@@ -3249,7 +3275,7 @@ export function stepProperty(
 
 const parsePropertiesOptions = {
   onItem(s: ObjectParserState, p: ParsedProperty) {
-    if (!hasPropertySignature(s.input, p.name)) {
+    if (!(p.ownOnly ? Object.hasOwn(s.input, p.name) : p.name in s.input)) {
       return p.parser(InternalParser.missing, s.options)
     }
     const value = s.input[p.name]
@@ -3276,7 +3302,7 @@ export function struct<Fields extends Schema.Struct.Fields>(
   annotations?: Schema.Annotations.Annotations
 ): Objects {
   return new Objects(
-    Reflect.ownKeys(fields).map((key) => {
+    InternalRecord.ownEnumerableKeys(fields).map((key) => {
       return new PropertySignature(key, fields[key].ast)
     }),
     [],
@@ -3371,7 +3397,8 @@ export type Sentinel = {
   readonly literal: LiteralValue | symbol
 }
 
-const toCandidate = memoizeIdempotent((ast: AST): AST => {
+/** @internal */
+export const toCandidate = memoizeIdempotent((ast: AST): AST => {
   while (true) {
     if (isSuspend(ast)) return unknown
     const encoding = ast.encoding
@@ -3493,8 +3520,22 @@ const emptyCandidates: ReadonlyArray<never> = Object.freeze([])
 
 const getRuntimeType = (input: unknown): Type => input === null ? "null" : Array.isArray(input) ? "array" : typeof input
 
+// Snapshot once so parser initialization and code generation use the same policy.
+// Keep __proto__ own-only even when Node's --disable-proto=delete removes its accessor.
+// Avoid an iterable spread so bundles that do not use this policy can drop the snapshot.
+const objectPrototypeKeys = new Set<PropertyKey>(Reflect.ownKeys(Object.prototype)).add("__proto__")
+
+/**
+ * Fields named after `Object.prototype` members must be own properties.
+ *
+ * @internal
+ */
+export const requiresOwnProperty = (key: PropertyKey): boolean =>
+  objectPrototypeKeys.has(typeof key === "number" ? globalThis.String(key) : key)
+
+// Check own properties first so the name rule only runs for inherited keys.
 const hasPropertySignature = (input: object, key: PropertyKey): boolean =>
-  key === "__proto__" ? Object.hasOwn(input, key) : key in input
+  Object.hasOwn(input, key) || (key in input && !requiresOwnProperty(key))
 
 /** @internal */
 export function getCandidateIndex(types: ReadonlyArray<AST>): CandidateIndex {
@@ -3904,8 +3945,7 @@ function resumeUnion(
   state: UnionParserState
 ): Effect.Effect<unknown, SchemaIssue.Issue, any> {
   return Effect.flatMapEager(eff, (_) => {
-    if (state.out === InternalParser.sameExit) return Effect.succeed(state.input)
-    if (state.out) return state.out
+    if (state.out) return InternalParser.isSameExit(state.out) ? Effect.succeed(state.input) : state.out
     return Effect.fail(new SchemaIssue.AnyOf(state.ast, state.issues ?? [], state.input, state.options))
   })
 }
@@ -4248,7 +4288,6 @@ export function isFinite(annotations?: Schema.Annotations.Filter) {
         payload: null
       },
       toJsonSchema: () => ({ type: "number" }),
-      toCode: () => ({ runtime: "Schema.isFinite()" }),
       arbitraryConstraint: {
         number: "finite"
       },
@@ -4278,7 +4317,7 @@ const numberToJson = new Link(
  *
  * **Details**
  *
- * The filter can be used with `Schema.filter` or attached directly to a
+ * The filter can be used with `Schema.check` or attached directly to a
  * `String` AST node through checks. The regular expression is cloned and its
  * `lastIndex` is reset before each test, so global and sticky expressions are
  * deterministic and the provided regular expression is not mutated. The
@@ -4587,16 +4626,24 @@ function parseParameter(ast: AST): {
 } {
   const literals: Array<PropertyKey> = []
   const parameters: Array<AST> = []
+  function addLiteral(literal: PropertyKey) {
+    if (!literals.includes(literal)) {
+      literals.push(literal)
+    }
+  }
   function go(ast: AST) {
     switch (ast._tag) {
       case "Literal":
-        if (Predicate.isPropertyKey(ast.literal) && !literals.includes(ast.literal)) {
-          literals.push(ast.literal)
+        if (Predicate.isPropertyKey(ast.literal)) {
+          addLiteral(ast.literal)
         }
         return
       case "UniqueSymbol":
-        if (!literals.includes(ast.symbol)) {
-          literals.push(ast.symbol)
+        addLiteral(ast.symbol)
+        return
+      case "Enum":
+        for (const [, value] of ast.enums) {
+          addLiteral(value)
         }
         return
       case "Never":
@@ -4716,7 +4763,8 @@ export const toType = memoizeIdempotent(<A extends AST>(ast: A): A => {
       : undefined
     return copy(type, {
       encodingChecks: undefined,
-      checks: combineChecks(type.checks, checks)
+      // Match parsing order and preserve annotation precedence for decoded checks.
+      checks: combineChecks(checks, type.checks)
     })
   }
   return type
@@ -4777,7 +4825,7 @@ function flipEncoding(ast: AST, encoding: Encoding): AST {
  * **Details**
  *
  * After flipping, what was decoding becomes encoding and vice versa. This is
- * the core operation behind `Schema.encode` — encoding a value is decoding
+ * the core operation behind `Schema.encodeEffect` — encoding a value is decoding
  * with a flipped SchemaAST.
  *
  * - Memoized: same input reference → same output reference.
@@ -4800,18 +4848,6 @@ export const flip = memoize((ast: AST): AST => {
   }
   return "flip" in ast ? ast.flip(flip) : "recur" in ast ? ast.recur(flip) : ast
 })
-
-/** @internal */
-export function containsUndefined(ast: AST): boolean {
-  switch (ast._tag) {
-    case "Undefined":
-      return true
-    case "Union":
-      return ast.types.some(containsUndefined)
-    default:
-      return false
-  }
-}
 
 function fromConst<const T>(
   ast: AST,
@@ -4921,6 +4957,7 @@ const partFromString = applyToSelfOrLastLinkEncodingIdempotent((ast) => {
       return ast
     case "Number":
     case "Literal":
+    case "Enum":
     case "BigInt":
       return ast.toCodecStringTree()
     case "Union":
@@ -5110,7 +5147,7 @@ export function getConstructorDescriptor(ast: AST): ConstructorDescriptor | unde
  * **Details**
  *
  * If the node has {@link Checks}, returns annotations from the last check
- * (which is where user-supplied annotations end up after `.pipe(Schema.annotations(...))`).
+ * (which is where user-supplied annotations end up after `.pipe(Schema.annotate(...))`).
  * Otherwise returns the node's `annotations` directly.
  *
  * **Example** (Reading annotations)
@@ -5153,7 +5190,7 @@ export const resolveAt: <A>(key: string) => (ast: AST) => A | undefined = Intern
  *
  * **Details**
  *
- * The identifier is typically set by `Schema.annotations({ identifier: "..." })`
+ * The identifier is typically set by `Schema.annotate({ identifier: "..." })`
  * and is used for error messages and schema identification.
  *
  * @see {@link resolve}

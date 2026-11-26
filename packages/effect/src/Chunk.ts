@@ -355,6 +355,11 @@ export const of = <A>(a: A): NonEmptyChunk<A> => makeChunk({ _tag: "ISingleton",
 /**
  * Creates a new `Chunk` from an iterable collection of values.
  *
+ * **Details**
+ *
+ * Array inputs are copied, so later changes to the array do not affect the
+ * chunk. Use {@link fromArrayUnsafe} to wrap an array without copying.
+ *
  * **Example** (Creating chunks from iterables)
  *
  * ```ts import.meta.vitest
@@ -367,8 +372,7 @@ export const of = <A>(a: A): NonEmptyChunk<A> => makeChunk({ _tag: "ISingleton",
  * @category constructors
  * @since 2.0.0
  */
-export const fromIterable = <A>(self: Iterable<A>): Chunk<A> =>
-  isChunk(self) ? self : fromArrayUnsafe(RA.fromIterable(self))
+export const fromIterable = <A>(self: Iterable<A>): Chunk<A> => isChunk(self) ? self : fromArrayUnsafe(Array.from(self))
 
 const copyToArray = <A>(self: Chunk<A>, array: Array<any>, initial: number): void => {
   switch (self.backing._tag) {
@@ -521,6 +525,11 @@ export const reverse: <S extends Chunk<any>>(self: S) => Chunk.With<S, Chunk.Inf
  * Gets the value at an index in a `Chunk` safely, returning `None` when the index is
  * out of bounds.
  *
+ * **Details**
+ *
+ * The index is floored to an integer. `NaN` and infinite indexes are out of
+ * bounds. This never throws.
+ *
  * **Example** (Accessing elements safely)
  *
  * ```ts import.meta.vitest
@@ -545,8 +554,10 @@ export const get: {
   <A>(self: Chunk<A>, index: number): Option<A>
 } = dual(
   2,
-  <A>(self: Chunk<A>, index: number): Option<A> =>
-    index < 0 || index >= self.length ? O.none() : O.some(getUnsafe(self, index))
+  <A>(self: Chunk<A>, index: number): Option<A> => {
+    const i = Math.floor(index)
+    return i >= 0 && i < self.length ? O.some(getUnchecked(self, i)) : O.none()
+  }
 )
 
 /**
@@ -624,7 +635,8 @@ export const fromNonEmptyArrayUnsafe = <A>(self: NonEmptyReadonlyArray<A>): NonE
  *
  * **Gotchas**
  *
- * Throws if the index is out of bounds.
+ * Throws if the floored index is out of bounds, including for `NaN` and
+ * infinite indexes.
  *
  * **Example** (Accessing elements unsafely)
  *
@@ -649,32 +661,33 @@ export const getUnsafe: {
   <A>(self: Chunk<A>, index: number): A
 } = dual(2, <A>(self: Chunk<A>, index: number): A => {
   const i = Math.floor(index)
+  if (!(i >= 0 && i < self.length)) {
+    throw new Error(`Index out of bounds: ${i}`)
+  }
+  return getUnchecked(self, i)
+})
+
+const getUnchecked = <A>(self: Chunk<A>, i: number): A => {
   switch (self.backing._tag) {
     case "IEmpty": {
       throw new Error(`Index out of bounds: ${i}`)
     }
     case "ISingleton": {
-      if (index !== 0) {
-        throw new Error(`Index out of bounds: ${i}`)
-      }
       return self.backing.a
     }
     case "IArray": {
-      if (i >= self.length || i < 0) {
-        throw new Error(`Index out of bounds: ${i}`)
-      }
       return self.backing.array[i]!
     }
     case "IConcat": {
       return i < self.left.length
-        ? getUnsafe(self.left, i)
-        : getUnsafe(self.right, i - self.left.length)
+        ? getUnchecked(self.left, i)
+        : getUnchecked(self.right, i - self.left.length)
     }
     case "ISlice": {
-      return getUnsafe(self.backing.chunk, i + self.backing.offset)
+      return getUnchecked(self.backing.chunk, i + self.backing.offset)
     }
   }
-})
+}
 
 /**
  * Appends the specified element to the end of the `Chunk`.
@@ -2224,7 +2237,12 @@ export const takeWhile: {
 })
 
 /**
- * Creates a Chunks of unique values, in order, from all given Chunks.
+ * Computes the union of two chunks using Effect equality.
+ *
+ * **Gotchas**
+ *
+ * Each input must already be deduplicated. Use {@link dedupe} to remove
+ * duplicates from an input first.
  *
  * **Example** (Unioning chunks)
  *
@@ -2234,11 +2252,6 @@ export const takeWhile: {
  * const chunk1 = Chunk.make(1, 2, 3)
  * const chunk2 = Chunk.make(3, 4, 5)
  * Chunk.toArray(Chunk.union(chunk1, chunk2)) // => [1, 2, 3, 4, 5]
- *
- * // Handles duplicates within the same chunk
- * const withDupes1 = Chunk.make(1, 1, 2)
- * const withDupes2 = Chunk.make(2, 3, 3)
- * Chunk.toArray(Chunk.union(withDupes1, withDupes2)) // => [1, 2, 3]
  * ```
  *
  * @stability stable
@@ -2513,7 +2526,7 @@ export const replace: {
 export const makeBy: {
   <A>(f: (i: number) => A): (n: number) => NonEmptyChunk<A>
   <A>(n: number, f: (i: number) => A): NonEmptyChunk<A>
-} = dual(2, (n, f) => fromIterable(RA.makeBy(n, f)))
+} = dual(2, (n, f) => fromNonEmptyArrayUnsafe(RA.makeBy(n, f)))
 
 /**
  * Creates a non-empty `Chunk` of consecutive integers from `start` through

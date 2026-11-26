@@ -92,6 +92,23 @@ describe("Trie", () => {
     )
   })
 
+  it("stores the empty string key like any other key", () => {
+    const base = Trie.make(["a", 2])
+    const withEmpty = Trie.insert(base, "", 1)
+    const removed = Trie.remove(withEmpty, "")
+
+    deepStrictEqual(
+      [Trie.size(withEmpty), Trie.has(withEmpty, ""), Array.from(withEmpty)],
+      [2, true, [["", 1], ["a", 2]]]
+    )
+    deepStrictEqual(Array.from(Trie.make(["a", 2], ["", 1])), [["", 1], ["a", 2]])
+    deepStrictEqual(
+      [Array.from(base), Array.from(removed), Trie.size(removed)],
+      [[["a", 2]], [["a", 2]], 1],
+      "inserting and removing the empty key must not mutate other tries"
+    )
+  })
+
   it("fromIterable preserves an empty iterable", () => {
     const iterable: Array<[string, number]> = []
     const trie = Trie.fromIterable(iterable)
@@ -251,6 +268,16 @@ describe("Trie", () => {
     deepStrictEqual(result, ["abc", "bca", "cab"])
   })
 
+  it("entries stays exhausted while the trie remains reusable", () => {
+    const trie = Trie.make(["app", 1])
+    const iterator = Trie.entries(trie)
+
+    deepStrictEqual(Array.from(iterator), [["app", 1]])
+    deepStrictEqual(Array.from(iterator), [])
+    deepStrictEqual(Array.from(trie), [["app", 1]])
+    deepStrictEqual(Array.from(trie), [["app", 1]])
+  })
+
   it("keys orders nested prefixes alphabetically", () => {
     const trie = Trie.make(
       ["abc", 0],
@@ -348,6 +375,15 @@ describe("Trie", () => {
     deepStrictEqual(result, [3, 0])
   })
 
+  it("valuesWithPrefix resumes iteration with matching values", () => {
+    const trie = Trie.make(["app", 1], ["apple", 2], ["banana", 3])
+    const iterator = Trie.valuesWithPrefix(trie, "app")
+
+    deepStrictEqual(iterator.next(), { done: false, value: 1 })
+    deepStrictEqual(Array.from(iterator), [2])
+    deepStrictEqual(Array.from(iterator), [])
+  })
+
   it("entriesWithPrefix returns matching entries in key order", () => {
     const trie = pipe(
       Trie.empty<number>(),
@@ -361,16 +397,15 @@ describe("Trie", () => {
     deepStrictEqual(result, [["she", 3], ["shells", 0]])
   })
 
-  it("toEntriesWithPrefix returns matching entries as an array", () => {
-    const trie = Trie.empty<number>().pipe(
-      Trie.insert("shells", 0),
-      Trie.insert("sells", 1),
-      Trie.insert("sea", 2),
-      Trie.insert("she", 3)
-    )
+  it("toEntriesWithPrefix preserves prefix boundaries and UTF-16 order", () => {
+    const trie = Trie.make(["a\uE000", 2], ["a😀", 1], ["a", undefined], ["", 0])
+    const matches: Array<[string, number | undefined]> = [["a", undefined], ["a😀", 1], ["a\uE000", 2]]
 
-    const result = Trie.toEntriesWithPrefix(trie, "she")
-    deepStrictEqual(result, [["she", 3], ["shells", 0]])
+    deepStrictEqual(Trie.toEntriesWithPrefix(trie, "a"), matches)
+    deepStrictEqual(Trie.toEntriesWithPrefix(trie, "a\uD83D"), [["a😀", 1]])
+    deepStrictEqual(Trie.toEntriesWithPrefix(trie, ""), [["", 0], ...matches])
+    deepStrictEqual(Trie.toEntriesWithPrefix(trie, "ab"), [])
+    deepStrictEqual(Trie.toEntriesWithPrefix(Trie.empty(), "a"), [])
   })
 
   it("longestPrefixOf returns the longest stored key that prefixes the input", () => {
@@ -384,6 +419,14 @@ describe("Trie", () => {
     assertSome(Trie.longestPrefixOf(trie, "sells"), ["sells", 1])
     assertSome(Trie.longestPrefixOf(trie, "shell"), ["she", 2])
     assertSome(Trie.longestPrefixOf(trie, "shellsort"), ["shells", 0])
+  })
+
+  it("longestPrefixOf falls back to a stored empty key", () => {
+    const trie = Trie.make(["", 1], ["a", 2])
+
+    assertSome(Trie.longestPrefixOf(trie, "xyz"), ["", 1])
+    assertSome(Trie.longestPrefixOf(trie, ""), ["", 1])
+    assertSome(Trie.longestPrefixOf(trie, "ab"), ["a", 2])
   })
 
   it("longestPrefixOf ignores valued sibling nodes that do not match the input", () => {

@@ -3,7 +3,10 @@ import type {
   ArrayOptions,
   CheckOptions,
   CheckResult,
+  Exhausted,
+  GenerationDiagnostic,
   GlobalOptions,
+  Passed,
   PropertyError,
   PropertyFailure,
   Replay,
@@ -13,12 +16,16 @@ import type {
   SchemaOptions
 } from "../../Arbitrary.ts"
 import * as Effect from "../../Effect.ts"
+import * as Fiber from "../../Fiber.ts"
 import * as Option from "../../Option.ts"
 import { pipeArguments } from "../../Pipeable.ts"
+import * as Queue from "../../Queue.ts"
 import * as Random from "../../Random.ts"
 import type * as Result from "../../Result.ts"
 import * as Scheduler from "../../Scheduler.ts"
 import type * as Schema from "../../Schema.ts"
+import * as Scope from "../../Scope.ts"
+import * as Semaphore from "../../Semaphore.ts"
 import { done } from "../core.ts"
 import * as InternalRecord from "../record.ts"
 import * as Arrays from "./array.ts"
@@ -186,12 +193,15 @@ const generateAttemptRaw = <A>(
   seed: SeedState,
   attempt: number,
   size: number,
-  shrinks: boolean
+  shrinks: boolean,
+  diagnostics?: Array<GenerationDiagnostic>
 ): Model.Generation<A> => {
   const biasFactor = 2 + Math.floor(Math.log10(attempt + 1))
   return generator.generate({
     size,
     shrinks,
+    diagnostics,
+    diagnosticPath: [],
     // This is fast-check v4.9.0's run-dependent numeric bias schedule (MIT). It makes short checks edge-heavy while
     // progressively dedicating more attempts to the complete domain, without becoming part of the public API.
     // https://github.com/dubzzz/fast-check/blob/v4.9.0/packages/fast-check/src/check/property/IRawProperty.ts#L92-L95
@@ -207,9 +217,10 @@ const generateAttempt = <A>(
   seed: SeedState,
   attempt: number,
   size: number,
-  shrinks: boolean
+  shrinks: boolean,
+  diagnostics?: Array<GenerationDiagnostic>
 ): Effect.Effect<Model.Attempt<A>> =>
-  Model.toEffectGeneration(generateAttemptRaw(generator, seed, attempt, size, shrinks))
+  Model.toEffectGeneration(generateAttemptRaw(generator, seed, attempt, size, shrinks, diagnostics))
 
 const resolveMasterSeed = (seed: string | number | undefined): Effect.Effect<string | number> =>
   seed === undefined ? Random.nextInt : Effect.succeed(seed)
@@ -325,11 +336,13 @@ export function array<A>(item: Arbitrary<A>, options?: ArrayOptions): Arbitrary<
 
 /** @internal */
 export function all(
-  input: Iterable<Arbitrary<any>> | Record<string, Arbitrary<any>>
+  input: Iterable<Arbitrary<any>> | Record<PropertyKey, Arbitrary<any>>
 ): Arbitrary<any> {
   const iterable = Symbol.iterator in input
-  const keys = iterable ? undefined : Object.keys(input)
-  const members = iterable ? Array.from(input as Iterable<Arbitrary<any>>) : keys!.map((key) => input[key])
+  const keys = iterable ? undefined : InternalRecord.ownEnumerableKeys(input)
+  const members = iterable
+    ? Array.from(input as Iterable<Arbitrary<any>>)
+    : keys!.map((key) => (input as Record<PropertyKey, Arbitrary<any>>)[key])
   const generators = members.map((member) => member.gen)
   let minCost = 0
   for (let index = 0; index < generators.length; index++) minCost += generators[index].minCost
@@ -362,10 +375,7 @@ function makeGenerationState(
   remaining: number
 ): Model.GenerationState {
   return {
-    size: state.size,
-    shrinks: state.shrinks,
-    biasFactor: state.biasFactor,
-    nullPrototype: state.nullPrototype,
+    ...state,
     random,
     budget: { remaining }
   }
@@ -476,16 +486,23 @@ export const sampleEffect = Effect.fnUntraced(function*<A>(self: Arbitrary<A>, o
   const seed = yield* resolveMasterSeed(seedOption)
   const seedState = hashSeed(seed)
   const values: Array<A> = []
+  const diagnostics: Array<GenerationDiagnostic> = []
   let discards = 0
   let attemptIndex = 0
   let attemptsSinceYield = 0
   while (values.length < count) {
-    const generated = generateAttemptRaw(self.gen, seedState, attemptIndex++, size, false)
+    const generated = generateAttemptRaw(self.gen, seedState, attemptIndex++, size, false, diagnostics)
     const attempt = Model.isAttempt(generated) ? generated : yield* generated
     if (attempt._tag === "Generated") {
       values.push(attempt.value)
     } else if (++discards > maxDiscards) {
-      const error: SampleError = { _tag: "SampleError", generated: values.length, discards, seed }
+      const error: SampleError = {
+        _tag: "SampleError",
+        generated: values.length,
+        discards,
+        seed,
+        diagnostics: diagnostics.slice()
+      }
       return yield* Effect.fail(error)
     }
     if (++attemptsSinceYield >= maxOpsBeforeYield) {
@@ -582,6 +599,114 @@ const followReplay = Effect.fnUntraced(function*<A, E, R>(
   return { _tag: "Replayed", current, failure } as const
 })
 
+interface SearchOptions {
+  readonly runs: number
+  readonly size: number
+  readonly maxDiscards: number
+  readonly seed: string | number
+  readonly maxOpsBeforeYield: number
+}
+
+interface SearchCase<A> {
+  readonly sample: Model.Sample<A>
+  readonly attempt: number
+  readonly size: number
+  readonly runs: number
+  readonly discards: number
+}
+
+interface Found<A, E> extends SearchCase<A> {
+  readonly _tag: "Found"
+  readonly failure: PropertyFailure<E>
+}
+
+type SearchResult<A, E> = Passed | Exhausted | Found<A, E>
+
+// Only the search advances this cursor. Each generated case advances size, while discards retain it.
+// This gives both search strategies the sequential seed and size schedule, independently of evaluation timing.
+const makeSearch = <A>(self: Arbitrary<A>, options: SearchOptions) => {
+  const seed = hashSeed(options.seed)
+  const diagnostics: Array<GenerationDiagnostic> = []
+  let runs = 0
+  let discards = 0
+  let attemptIndex = 0
+  return Effect.gen(function*(): Effect.fn.Return<SearchCase<A> | Exhausted> {
+    const size = options.runs === 1 ? options.size : Math.round(runs * options.size / (options.runs - 1))
+    while (true) {
+      const index = attemptIndex++
+      const sample = yield* generateAttempt(self.gen, seed, index, size, true, diagnostics)
+      if (sample._tag === "Generated") {
+        return { sample, attempt: index, size, runs: ++runs, discards }
+      }
+      if (++discards > options.maxDiscards) {
+        return { _tag: "Exhausted", runs, discards, seed: options.seed, diagnostics: diagnostics.slice() }
+      }
+      if (options.maxOpsBeforeYield <= 1 || discards % options.maxOpsBeforeYield === 0) yield* Effect.yieldNow
+    }
+  })
+}
+
+const searchSequential = Effect.fnUntraced(function*<A, E, R>(
+  next: Effect.Effect<SearchCase<A> | Exhausted>,
+  property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
+  runs: number
+): Effect.fn.Return<SearchResult<A, E>, never, R> {
+  while (true) {
+    const current = yield* next
+    if ("_tag" in current) return current
+    const outcome = yield* evaluateProperty(property, current.sample.value)
+    if (outcome._tag !== "Passed") return { ...current, _tag: "Found", failure: outcome }
+    if (current.runs === runs) return { _tag: "Passed", runs, discards: current.discards }
+  }
+})
+
+const searchConcurrent = Effect.fnUntraced(function*<A, E, R>(
+  next: Effect.Effect<SearchCase<A> | Exhausted>,
+  property: (value: A) => boolean | Effect.Effect<boolean, E, R>,
+  runs: number,
+  concurrency: number
+): Effect.fn.Return<SearchResult<A, E>, never, R> {
+  interface Pending extends SearchCase<A> {
+    readonly fiber: Fiber.Fiber<typeof passedProperty | PropertyFailure<E>>
+  }
+  const queue = yield* Queue.make<Pending | Exhausted>()
+  const window = yield* Semaphore.make(concurrency)
+  const scope = yield* Scope.make("parallel")
+  const produce = Effect.gen(function*() {
+    for (let index = 0; index < runs; index++) {
+      // Hold each permit until its result is consumed, bounding both work and buffered results.
+      yield* window.take(1)
+      const current = yield* next
+      if ("_tag" in current) {
+        yield* Queue.offer(queue, current)
+        return
+      }
+      const fiber = yield* Effect.forkIn(Effect.suspend(() => evaluateProperty(property, current.sample.value)), scope)
+      yield* Queue.offer(queue, { ...current, fiber })
+    }
+  }).pipe(
+    // Queue failure follows already queued cases, so speculative generation defects cannot overtake them.
+    Effect.catchCause((cause) => Queue.failCause(queue, cause)),
+    Effect.awaitAllChildren
+  )
+  return yield* Effect.acquireUseRelease(
+    Effect.forkIn(produce, scope),
+    () =>
+      Effect.gen(function*(): Effect.fn.Return<SearchResult<A, E>, never, R> {
+        while (true) {
+          const current = yield* Queue.take(queue)
+          if ("_tag" in current) return current
+          const outcome = yield* Fiber.join(current.fiber)
+          if (outcome._tag !== "Passed") return { ...current, _tag: "Found", failure: outcome }
+          if (current.runs === runs) return { _tag: "Passed", runs, discards: current.discards }
+          yield* window.release(1)
+        }
+      }),
+    // Generator and evaluation finalizers can depend on each other, so interrupt them independently before awaiting.
+    (_, exit) => Scope.close(scope, exit)
+  )
+})
+
 /** @internal */
 export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
   self: Arbitrary<A>,
@@ -612,6 +737,7 @@ export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
 
   const defaults = globalOptions.check
   const runsTarget = positive(options?.runs ?? defaults?.runs, 100, "runs")
+  const concurrency = positive(options?.concurrency ?? defaults?.concurrency, 1, "concurrency")
   const size = natural(options?.size ?? defaults?.size, 10, "size")
   const maxDiscards = natural(
     options?.maxDiscards ?? defaults?.maxDiscards,
@@ -622,41 +748,26 @@ export const checkEffect = Effect.fnUntraced(function*<A, E, R>(
   const seedOption = options?.seed ?? defaults?.seed
   const maxOpsBeforeYield = yield* Scheduler.MaxOpsBeforeYield
   const seed = yield* resolveMasterSeed(seedOption)
-  const seedState = hashSeed(seed)
-  let runs = 0
-  let discards = 0
-  let attemptIndex = 0
-  while (runs < runsTarget) {
-    const currentAttempt = attemptIndex++
-    const currentSize = runsTarget === 1 ? size : Math.round(runs * size / (runsTarget - 1))
-    const attempt = yield* generateAttempt(self.gen, seedState, currentAttempt, currentSize, true)
-    if (attempt._tag === "Discarded") {
-      if (++discards > maxDiscards) return { _tag: "Exhausted", runs, discards, seed }
-      if (maxOpsBeforeYield <= 1 || discards % maxOpsBeforeYield === 0) yield* Effect.yieldNow
-      continue
-    }
-    const outcome = yield* evaluateProperty(property, attempt.value)
-    if (outcome._tag === "Passed") {
-      runs++
-      continue
-    }
-    const minimized = yield* shrink(attempt, outcome, property, maxShrinks)
-    return {
-      _tag: "Falsified",
-      initialInput: attempt.value,
-      shrunkInput: minimized.current.value,
-      failure: minimized.failure,
-      runs: runs + 1,
-      discards,
-      shrinks: minimized.shrinks,
-      replay: makeReplay({
-        seed,
-        attempt: currentAttempt,
-        size: currentSize,
-        path: minimized.path,
-        failureTag: outcome._tag
-      })
-    }
+  const next = makeSearch(self, { runs: runsTarget, size, maxDiscards, seed, maxOpsBeforeYield })
+  const result = yield* concurrency === 1
+    ? searchSequential(next, property, runsTarget)
+    : searchConcurrent(next, property, runsTarget, concurrency)
+  if (result._tag !== "Found") return result
+  const minimized = yield* shrink(result.sample, result.failure, property, maxShrinks)
+  return {
+    _tag: "Falsified",
+    initialInput: result.sample.value,
+    shrunkInput: minimized.current.value,
+    failure: minimized.failure,
+    runs: result.runs,
+    discards: result.discards,
+    shrinks: minimized.shrinks,
+    replay: makeReplay({
+      seed,
+      attempt: result.attempt,
+      size: result.size,
+      path: minimized.path,
+      failureTag: result.failure._tag
+    })
   }
-  return { _tag: "Passed", runs, discards }
 })

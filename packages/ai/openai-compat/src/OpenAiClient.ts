@@ -21,6 +21,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Layer from "effect/Layer"
 import * as Redacted from "effect/Redacted"
+import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import * as Errors from "./internal/errors.ts"
@@ -216,9 +217,9 @@ export const make = Effect.fnUntraced(
       const stream = response.stream.pipe(
         Stream.decodeText(),
         Stream.pipeThroughChannel(Sse.decode()),
-        Stream.flatMap((event) => {
+        Stream.filterMap((event) => {
           const data = decodeChatCompletionSseData(event.data)
-          return Stream.fromIterable(data !== undefined ? [data] : [])
+          return data !== undefined ? Result.succeed(data) : Result.failVoid
         }),
         Stream.takeUntil((event) => event === "[DONE]"),
         Stream.catchTags({
@@ -895,7 +896,7 @@ export type ResponseStreamEvent =
 export type Embedding = {
   readonly embedding: ReadonlyArray<number> | string
   readonly index: number
-  readonly object?: string | undefined
+  readonly object?: string | null | undefined
 }
 
 /**
@@ -923,11 +924,14 @@ export type CreateEmbeddingRequest = {
 export type CreateEmbeddingResponse = {
   readonly data: ReadonlyArray<Embedding>
   readonly model: string
-  readonly object?: "list" | undefined
-  readonly usage?: {
-    readonly prompt_tokens: number
-    readonly total_tokens: number
-  } | undefined
+  readonly object?: "list" | null | undefined
+  readonly usage?:
+    | {
+      readonly prompt_tokens: number
+      readonly total_tokens: number
+    }
+    | null
+    | undefined
 }
 
 /**
@@ -965,6 +969,14 @@ export type ChatCompletionContentPart =
       readonly detail?: "low" | "high" | "auto" | undefined
     }
   }
+  | {
+    readonly type: "file"
+    readonly file: {
+      readonly filename?: string | undefined
+      readonly file_data?: string | undefined
+      readonly file_id?: string | undefined
+    }
+  }
 /**
  * Tool call data attached to an assistant chat completion message.
  *
@@ -993,6 +1005,15 @@ export type ChatCompletionRequestMessage =
     readonly role: "system" | "developer" | "user" | "assistant"
     readonly content: string | ReadonlyArray<ChatCompletionContentPart> | null
     readonly tool_calls?: ReadonlyArray<ChatCompletionRequestToolCall> | undefined
+    /**
+     * Assistant reasoning replayed for providers that read it from
+     * `reasoning_content`.
+     */
+    readonly reasoning_content?: string | undefined
+    /**
+     * Assistant reasoning replayed for providers that read it from `reasoning`.
+     */
+    readonly reasoning?: string | undefined
   }
   | {
     readonly role: "tool"
@@ -1107,22 +1128,22 @@ export type CreateResponse200Sse = ChatCompletionStreamEvent
 const EmbeddingSchema = Schema.Struct({
   embedding: Schema.Union([Schema.Array(Schema.Finite), Schema.String]),
   index: Schema.Int,
-  object: Schema.optionalKey(Schema.String)
+  object: Schema.optionalKey(Schema.NullOr(Schema.String))
 })
 
 const CreateEmbeddingResponseSchema = Schema.Struct({
   data: Schema.Array(EmbeddingSchema),
   model: Schema.String,
-  object: Schema.optionalKey(Schema.Literal("list")),
-  usage: Schema.optionalKey(Schema.Struct({
+  object: Schema.optionalKey(Schema.NullOr(Schema.Literal("list"))),
+  usage: Schema.optionalKey(Schema.NullOr(Schema.Struct({
     prompt_tokens: Schema.Int,
     total_tokens: Schema.Int
-  }))
+  })))
 })
 
 const ChatCompletionToolFunction = Schema.Struct({
   name: Schema.String,
-  arguments: Schema.optionalKey(Schema.String)
+  arguments: Schema.optionalKey(Schema.NullOr(Schema.String))
 })
 
 const ChatCompletionToolFunctionDelta = Schema.Struct({
@@ -1130,13 +1151,13 @@ const ChatCompletionToolFunctionDelta = Schema.Struct({
   // streamed tool-call continuation fragments. `name` must be nullable, else
   // the whole chunk fails validation and its argument delta is dropped.
   name: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  arguments: Schema.optionalKey(Schema.String)
+  arguments: Schema.optionalKey(Schema.NullOr(Schema.String))
 })
 
 const ChatCompletionToolCall = Schema.Struct({
-  id: Schema.optionalKey(Schema.String),
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   index: Schema.optionalKey(Schema.Int),
-  type: Schema.optionalKey(Schema.String),
+  type: Schema.optionalKey(Schema.NullOr(Schema.String)),
   extra_content: Schema.optionalKey(Schema.NullOr(Schema.JsonObject)),
   function: Schema.optionalKey(ChatCompletionToolFunction)
 })
@@ -1145,7 +1166,7 @@ const ChatCompletionToolCallDelta = Schema.Struct({
   // Some providers send `id: null` on tool-call continuation fragments.
   id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   index: Schema.optionalKey(Schema.Int),
-  type: Schema.optionalKey(Schema.String),
+  type: Schema.optionalKey(Schema.NullOr(Schema.String)),
   extra_content: Schema.optionalKey(Schema.NullOr(Schema.JsonObject)),
   function: Schema.optionalKey(ChatCompletionToolFunctionDelta)
 })
@@ -1155,7 +1176,8 @@ const ChatCompletionMessage = Schema.Struct({
   content: Schema.optionalKey(Schema.NullOr(Schema.String)),
   reasoning: Schema.optionalKey(Schema.NullOr(Schema.String)),
   reasoning_content: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  tool_calls: Schema.optionalKey(Schema.Array(ChatCompletionToolCall))
+  refusal: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  tool_calls: Schema.optionalKey(Schema.NullOr(Schema.Array(ChatCompletionToolCall)))
 })
 
 const ChatCompletionDelta = Schema.Struct({
@@ -1164,6 +1186,7 @@ const ChatCompletionDelta = Schema.Struct({
   content: Schema.optionalKey(Schema.NullOr(Schema.String)),
   reasoning: Schema.optionalKey(Schema.NullOr(Schema.String)),
   reasoning_content: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  refusal: Schema.optionalKey(Schema.NullOr(Schema.String)),
   // Some OpenAI-compatible providers send `tool_calls: null` when a streamed
   // chunk contains only text. Accepting null keeps the text-bearing chunk from
   // being classified as an unknown event.
@@ -1191,7 +1214,7 @@ const ChatCompletionResponse = Schema.Struct({
   created: Schema.Int,
   choices: Schema.Array(ChatCompletionChoice),
   usage: Schema.optionalKey(Schema.NullOr(ChatCompletionUsage)),
-  service_tier: Schema.optionalKey(Schema.String)
+  service_tier: Schema.optionalKey(Schema.NullOr(Schema.String))
 })
 
 const ChatCompletionChunk = Schema.Struct({
@@ -1200,7 +1223,7 @@ const ChatCompletionChunk = Schema.Struct({
   created: Schema.Int,
   choices: Schema.Array(ChatCompletionChoice),
   usage: Schema.optionalKey(Schema.NullOr(ChatCompletionUsage)),
-  service_tier: Schema.optionalKey(Schema.String)
+  service_tier: Schema.optionalKey(Schema.NullOr(Schema.String))
 })
 
 /**

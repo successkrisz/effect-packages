@@ -9,6 +9,7 @@
  * @since 4.0.0
  */
 import * as Tool from "effect/ai/Tool"
+import * as Context from "effect/Context"
 import * as Schema from "effect/Schema"
 import * as Generated from "./Generated.ts"
 
@@ -361,7 +362,7 @@ const CodeExecution_20250522_Parameters = Schema.Union([
 // -----------------------------------------------------------------------------
 
 /**
- * Schema for the 2025-08-25 code execution tool input, containing the code to execute.
+ * Schema for the code-only input variant of the 2025-08-25 code execution tool.
  *
  * **When to use**
  *
@@ -381,7 +382,7 @@ export const CodeExecution_20250825_Parameters = Schema.Struct({
   code: Schema.String
 })
 /**
- * Input payload for the 2025-08-25 Anthropic code execution tool.
+ * Code-only input payload for the 2025-08-25 Anthropic code execution tool.
  *
  * **When to use**
  *
@@ -430,7 +431,10 @@ export const CodeExecution_20250522 = Tool.providerDefined({
   customName: "AnthropicCodeExecution",
   providerName: "code_execution",
   parameters: CodeExecution_20250522_Parameters,
-  success: Generated.BetaResponseCodeExecutionResultBlock,
+  success: Schema.Union([
+    Generated.BetaResponseCodeExecutionResultBlock,
+    Generated.BetaResponseEncryptedCodeExecutionResultBlock
+  ]),
   failure: Generated.BetaResponseCodeExecutionToolResultError
 })
 
@@ -444,11 +448,11 @@ export const CodeExecution_20250522 = Tool.providerDefined({
  *
  * **Details**
  *
- * Requires the `code-execution-2025-08-25` beta header and uses
- * `CodeExecution_20250825_Parameters` as its input schema.
+ * Requires the `code-execution-2025-08-25` beta header. Accepts code-only input,
+ * bash commands, and text editor view, create, and replace operations.
  *
  * @see {@link CodeExecution_20250522} for the older 2025-05-22 code execution tool
- * @see {@link CodeExecution_20250825_Parameters} for the input schema consumed by this tool
+ * @see {@link CodeExecution_20250825_Parameters} for the code-only input schema
  *
  * @stability unstable
  * @category tools
@@ -458,9 +462,16 @@ export const CodeExecution_20250825 = Tool.providerDefined({
   id: "anthropic.code_execution_20250825",
   customName: "AnthropicCodeExecution",
   providerName: "code_execution",
-  parameters: CodeExecution_20250825_Parameters,
+  parameters: Schema.Union([
+    CodeExecution_20250825_Parameters,
+    CodeExecutionBashCommand,
+    CodeExecutionTextEditorView,
+    CodeExecutionTextEditorCreate,
+    CodeExecutionTextEditorStrReplace
+  ]),
   success: Schema.Union([
     Generated.BetaResponseCodeExecutionResultBlock,
+    Generated.BetaResponseEncryptedCodeExecutionResultBlock,
     Generated.BetaResponseBashCodeExecutionResultBlock,
     Generated.BetaResponseTextEditorCodeExecutionViewResultBlock,
     Generated.BetaResponseTextEditorCodeExecutionCreateResultBlock,
@@ -1342,7 +1353,7 @@ const ComputerUse_20251124_Actions = Schema.Union([
 export const ComputerUse_20241022 = Tool.providerDefined({
   id: "anthropic.computer_use_20241022",
   customName: "AnthropicComputerUse",
-  providerName: "computer_use",
+  providerName: "computer",
   requiresHandler: true,
   args: ComputerUse_20241022_Args,
   parameters: ComputerUse_20241022_Actions,
@@ -1874,6 +1885,13 @@ export type TextEditorStrReplaceCommand = typeof TextEditorStrReplaceCommand.Typ
  * Inserts the new text after the specified line number. Use `0` to insert at
  * the beginning of the file; other values are 1-indexed.
  *
+ * **Gotchas**
+ *
+ * Used by `text_editor_20241022` and `text_editor_20250124`. Later versions
+ * send `insert_text` instead.
+ *
+ * @see {@link TextEditorInsertTextCommand} for the `insert_text` variant
+ *
  * @stability unstable
  * @category schemas
  * @since 4.0.0
@@ -1901,6 +1919,40 @@ export const TextEditorInsertCommand = Schema.Struct({
  * @since 4.0.0
  */
 export type TextEditorInsertCommand = typeof TextEditorInsertCommand.Type
+
+/**
+ * Inserts text at a specific line number in a file. Used by
+ * `text_editor_20250429` and `text_editor_20250728`, which send `insert_text`.
+ *
+ * @see {@link TextEditorInsertCommand} for the `new_str` variant
+ *
+ * @stability unstable
+ * @category schemas
+ * @since 4.1.1
+ */
+export const TextEditorInsertTextCommand = Schema.Struct({
+  command: Schema.Literal("insert"),
+  /**
+   * Path to the file to modify.
+   */
+  path: Schema.String,
+  /**
+   * The line number after which to insert (0 = beginning, 1-indexed).
+   */
+  insert_line: Schema.Int,
+  /**
+   * The text to insert.
+   */
+  insert_text: Schema.String
+})
+/**
+ * Text editor command payload for inserting text after a specific line number in a file.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.1
+ */
+export type TextEditorInsertTextCommand = typeof TextEditorInsertTextCommand.Type
 
 /**
  * Undoes the last edit made to a file.
@@ -1953,7 +2005,7 @@ const TextEditor_StrReplaceBasedEdit_Commands = Schema.Union([
   TextEditorViewCommand,
   TextEditorCreateCommand,
   TextEditorStrReplaceCommand,
-  TextEditorInsertCommand
+  TextEditorInsertTextCommand
 ])
 
 // -----------------------------------------------------------------------------
@@ -2509,7 +2561,8 @@ export const WebFetch_20250910 = Tool.providerDefined({
  * **Details**
  *
  * Claude constructs regex patterns using Python's `re.search()` syntax.
- * Maximum query length: 200 characters.
+ * Maximum pattern length: 200 characters. The optional `limit` caps the
+ * number of returned tools (1 to 10,000, default 5).
  *
  * @stability unstable
  * @category schemas
@@ -2519,7 +2572,11 @@ export const ToolSearchRegexParameters = Schema.Struct({
   /**
    * Python regex pattern to search for tools.
    */
-  query: Schema.String
+  pattern: Schema.String,
+  /**
+   * Maximum number of tools to return.
+   */
+  limit: Schema.optionalKey(Schema.Int)
 })
 /**
  * Type of the parameters Claude supplies when invoking regex-based Anthropic tool search.
@@ -2527,7 +2584,7 @@ export const ToolSearchRegexParameters = Schema.Struct({
  * **Details**
  *
  * Claude constructs regex patterns using Python's `re.search()` syntax.
- * Maximum query length: 200 characters.
+ * Maximum pattern length: 200 characters.
  *
  * @stability unstable
  * @category models
@@ -2546,7 +2603,8 @@ export type ToolSearchRegexParameters = typeof ToolSearchRegexParameters.Type
  * **Details**
  *
  * The payload contains Claude's natural-language `query`. BM25 searches tool
- * names, descriptions, argument names, and argument descriptions.
+ * names, descriptions, argument names, and argument descriptions. The optional
+ * `limit` caps the number of returned tools (1 to 10,000, default 5).
  *
  * @see {@link ToolSearchBM25_20251119} for the provider-defined tool that consumes these parameters
  *
@@ -2558,7 +2616,11 @@ export const ToolSearchBM25Parameters = Schema.Struct({
   /**
    * Natural language query to search for tools.
    */
-  query: Schema.String
+  query: Schema.String,
+  /**
+   * Maximum number of tools to return.
+   */
+  limit: Schema.optionalKey(Schema.Int)
 })
 /**
  * Type of the parameters Claude supplies when invoking BM25 natural-language Anthropic tool search.
@@ -2572,6 +2634,51 @@ export type ToolSearchBM25Parameters = typeof ToolSearchBM25Parameters.Type
 // -----------------------------------------------------------------------------
 // Tool Search Tool Definitions
 // -----------------------------------------------------------------------------
+
+/**
+ * Annotation that defers loading a user-defined tool until Claude discovers it
+ * through tool search.
+ *
+ * **When to use**
+ *
+ * Use with `ToolSearchRegex_20251119` or `ToolSearchBM25_20251119` to keep
+ * large tool catalogs out of the initial context.
+ *
+ * **Details**
+ *
+ * When `true`, the tool definition is sent with `defer_loading: true`. The
+ * default is `false`, which sends no `defer_loading` field.
+ *
+ * **Gotchas**
+ *
+ * Anthropic requires at least one non-deferred tool, normally the tool search
+ * tool itself. The annotation has no effect on provider-defined tools.
+ *
+ * **Example** (Deferring a tool until it is searched)
+ *
+ * ```ts
+ * import { AnthropicTool } from "@effect/ai-anthropic"
+ * import { Tool, Toolkit } from "effect/ai"
+ *
+ * const ListContacts = Tool.make("ListContacts")
+ *   .annotate(AnthropicTool.DeferLoading, true)
+ *
+ * export const toolkit = Toolkit.make(
+ *   ListContacts,
+ *   AnthropicTool.ToolSearchBM25_20251119()
+ * )
+ * ```
+ *
+ * @see {@link ToolSearchRegex_20251119} for regex-based tool search
+ * @see {@link ToolSearchBM25_20251119} for natural-language tool search
+ *
+ * @stability unstable
+ * @category annotations
+ * @since 4.1.2
+ */
+export const DeferLoading = Context.Reference<boolean>("@effect/ai-anthropic/AnthropicTool/DeferLoading", {
+  defaultValue: () => false
+})
 
 /**
  * Defines regex-based tool search for Claude models.

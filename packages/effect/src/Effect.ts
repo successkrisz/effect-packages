@@ -1,3 +1,5 @@
+/// <reference lib="esnext.disposable" preserve="true" />
+
 /**
  * Describes workflows that run only when executed by the Effect runtime.
  *
@@ -7,6 +9,25 @@
  * concurrently, or inspected by the runtime. This module is the main API for
  * creating effects, combining them, handling failures, managing resources, and
  * running effect programs.
+ *
+ * A fiber runs in either an interruptible or an uninterruptible region.
+ * `interruptible`, `uninterruptible`, and `uninterruptibleMask` change the
+ * region for the effect they wrap.
+ *
+ * Interrupting a fiber records a request. In an interruptible region the
+ * fiber stops its current work. In an uninterruptible region it continues
+ * until it next enters an interruptible region, where the request takes effect.
+ *
+ * An interrupted fiber skips ordinary continuations and failure handlers in
+ * interruptible regions. By default, `onExit` runs cleanup and `Scope.close`
+ * runs registered finalizers in an uninterruptible region.
+ *
+ * Fork and run APIs start fibers in an interruptible region by default,
+ * regardless of the caller's region. Concurrent `all` and `forEach` effects
+ * inherit the caller's region. Any contender a race or timeout starts is
+ * initially interruptible.
+ *
+ * `Fiber.interrupt` waits for the fiber to finish, including its cleanup.
  *
  * @stability stable
  * @since 2.0.0
@@ -20,7 +41,7 @@ import type * as ExecutionPlan from "./ExecutionPlan.ts"
 import * as Exit from "./Exit.ts"
 import type { Fiber } from "./Fiber.ts"
 import type * as Filter from "./Filter.ts"
-import { constant, dual, type LazyArg } from "./Function.ts"
+import { dual, type LazyArg } from "./Function.ts"
 import type { TypeLambda } from "./HKT.ts"
 import type { Inspectable } from "./Inspectable.ts"
 import * as core from "./internal/core.ts"
@@ -63,6 +84,7 @@ import type {
   ExcludeTag,
   ExtractReason,
   ExtractTag,
+  IsUnion,
   NarrowReason,
   NoInfer,
   OmitReason,
@@ -335,7 +357,7 @@ export declare namespace All {
    * @since 2.0.0
    */
   export type ReturnObject<T, Discard extends boolean, Mode extends boolean = false> = [T] extends [
-    Record<string, EffectAny>
+    Record<PropertyKey, EffectAny>
   ] ? Effect<
       Discard extends true ? void
         : {
@@ -375,7 +397,7 @@ export declare namespace All {
    * @since 2.0.0
    */
   export type Return<
-    Arg extends Iterable<EffectAny> | Record<string, EffectAny>,
+    Arg extends Iterable<EffectAny> | Record<PropertyKey, EffectAny>,
     O extends {
       readonly concurrency?: Concurrency | undefined
       readonly discard?: boolean | undefined
@@ -383,7 +405,7 @@ export declare namespace All {
     }
   > = [Arg] extends [ReadonlyArray<EffectAny>] ? ReturnTuple<Arg, IsDiscard<O>, IsResult<O>>
     : [Arg] extends [Iterable<EffectAny>] ? ReturnIterable<Arg, IsDiscard<O>, IsResult<O>>
-    : [Arg] extends [Record<string, EffectAny>] ? ReturnObject<Arg, IsDiscard<O>, IsResult<O>>
+    : [Arg] extends [Record<PropertyKey, EffectAny>] ? ReturnObject<Arg, IsDiscard<O>, IsResult<O>>
     : never
 
   type ObjectValues<T> = T extends unknown ? T[keyof T] : never
@@ -404,6 +426,8 @@ export declare namespace All {
  * results under the same keys. By default, the combined effect fails on the
  * first failure; with concurrent execution, effects that have already started
  * may be interrupted, while effects not yet started are skipped.
+ * Record inputs use own enumerable string and symbol properties.
+ * Non-enumerable and inherited properties are ignored.
  *
  * Options:
  *
@@ -411,6 +435,18 @@ export declare namespace All {
  * `mode: "result"` to run every effect and collect each success or failure as a
  * `Result` in the same output shape. Use `discard: true` to ignore successful
  * values and return `void`.
+ *
+ * With concurrent execution, a failure requests interruption of other effects
+ * that have already started. The returned effect waits for those fibers to finish,
+ * including their finalizers. Uninterruptible regions can delay completion.
+ * This fail-fast behavior does not apply to `mode: "result"`. Concurrent
+ * effects inherit the surrounding region's interruptibility.
+ *
+ * **Gotchas**
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Collecting tuple results in order)
  *
@@ -505,7 +541,7 @@ export declare namespace All {
 export const all: <
   const Arg extends
     | Iterable<Effect<any, any, any>>
-    | Record<string, Effect<any, any, any>>,
+    | Record<PropertyKey, Effect<any, any, any>>,
   O extends {
     readonly concurrency?: Concurrency | undefined
     readonly discard?: boolean | undefined
@@ -741,8 +777,8 @@ export const findFirstFilter: {
  * The `forEach` function applies a provided operation to each element in the
  * iterable, producing a new effect that returns an array of results.
  *
- * If any effect fails, the iteration stops immediately (short-circuiting), and
- * the error is propagated.
+ * If any effect fails, the iteration short-circuits and propagates the error
+ * after cleanup.
  *
  * Concurrency:
  *
@@ -753,6 +789,17 @@ export const findFirstFilter: {
  *
  * If the `discard` option is set to `true`, the intermediate results are not
  * collected, and the final result of the operation is `void`.
+ *
+ * With concurrent execution, a failure requests interruption of other effects
+ * that have already started. The returned effect waits for those fibers to finish,
+ * including their finalizers. Uninterruptible regions can delay completion.
+ * Concurrent effects inherit the surrounding region's interruptibility.
+ *
+ * **Gotchas**
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Mapping over an iterable with effects)
  *
@@ -882,8 +929,9 @@ export const whileLoop: <A, E, R>(options: {
  *
  * **Details**
  *
- * An optional `AbortSignal` can be provided to allow for interruption of the
- * wrapped `Promise` API.
+ * If `evaluate` declares a parameter, it receives an `AbortSignal` that is
+ * aborted if the effect is interrupted. Zero-argument thunks do not allocate
+ * an `AbortController`.
  *
  * **Gotchas**
  *
@@ -892,6 +940,13 @@ export const whileLoop: <A, E, R>(options: {
  *
  * Interruption aborts the provided `AbortSignal`, but the underlying
  * asynchronous operation only stops if it observes that signal.
+ *
+ * The parameter check reads the `length` property of `evaluate`, which does
+ * not count a rest parameter or any parameter from the first default value
+ * onward. `(...args) => ...` and `(signal = fallback) => ...` therefore
+ * receive `undefined` instead of a signal, as do wrappers that forward
+ * arguments through rest parameters. Declare the signal as an ordinary
+ * parameter: `(signal) => ...`.
  *
  * **Example** (Wrapping a non-rejecting Promise)
  *
@@ -937,15 +992,23 @@ export const promise: <A>(
  * Passing `{ try, catch }` uses `catch` to map failures to an error of type
  * `E`.
  *
- * The thunk receives an `AbortSignal` that is aborted if the effect is
- * interrupted. The underlying asynchronous operation only stops if it observes
- * that signal.
+ * If the thunk declares a parameter, it receives an `AbortSignal` that is
+ * aborted if the effect is interrupted. The underlying asynchronous operation
+ * only stops if it observes that signal. Zero-argument thunks do not allocate
+ * an `AbortController`.
  *
  * **Gotchas**
  *
  * If `catch` throws while mapping the error, that thrown value is treated as a
  * defect. Return the error value you want in the error channel instead of
  * throwing it.
+ *
+ * The parameter check reads the thunk's `length` property, which does not
+ * count a rest parameter or any parameter from the first default value
+ * onward. `(...args) => ...` and `(signal = fallback) => ...` therefore
+ * receive `undefined` instead of a signal, as do wrappers that forward
+ * arguments through rest parameters. Declare the signal as an ordinary
+ * parameter: `(signal) => ...`.
  *
  * **Example** (Wrapping a fetch request that may fail)
  *
@@ -1075,6 +1138,11 @@ export const succeedSome: <A>(value: A) => Effect<Option<A>> = internal.succeedS
  * functions, and helping TypeScript unify return types when branches construct
  * different effects. Any side effects or scoped captures inside the thunk are
  * re-executed on each invocation.
+ *
+ * **Gotchas**
+ *
+ * If the thunk throws, the thrown value is treated as a defect, not as a typed
+ * failure. Use `Effect.try` when a throw should become a typed failure.
  *
  * **Example** (Lazily evaluating side effects)
  *
@@ -1230,10 +1298,20 @@ export {
  *
  * **Details**
  *
- * The registration function receives a `resume` callback and, when requested,
- * an `AbortSignal`. Call `resume` at most once with the effect that should
- * complete the fiber; later calls are ignored. Return an optional cleanup
- * effect from the registration function to run if the fiber is interrupted.
+ * The registration function receives a `resume` callback and, if it declares
+ * a second parameter, an `AbortSignal` that is aborted if the fiber is
+ * interrupted. Call `resume` at most once with the effect that should complete
+ * the fiber; later calls are ignored. Return an optional cleanup effect from
+ * the registration function to run if the fiber is interrupted.
+ *
+ * **Gotchas**
+ *
+ * The parameter check reads the registration function's `length` property,
+ * which must be at least `2` and does not count a rest parameter or any
+ * parameter from the first default value onward. `(...args) => ...` and
+ * `(resume, signal = fallback) => ...` therefore receive `undefined` instead
+ * of a signal, as do wrappers that forward arguments through rest parameters.
+ * Declare both as ordinary parameters: `(resume, signal) => ...`.
  *
  * **Example** (Integrating callback APIs)
  *
@@ -1889,7 +1967,9 @@ export const fromResult: <A, E>(result: Result.Result<A, E>) => Effect<A, E> = i
  * `Option.some` becomes a successful effect with the contained value, while
  * `Option.none` becomes a failed effect. By default the failure is a
  * `NoSuchElementError`, but you can provide an `onNone` callback to customize
- * the error value.
+ * the error value. For `Option.none`, `onNone` is evaluated on each execution,
+ * not when the effect is constructed. It is never called for `Option.some`.
+ * If `onNone` throws, the effect dies with the thrown value as a defect.
  *
  * **Example** (Converting an Option into an Effect)
  *
@@ -2302,9 +2382,12 @@ export const tap: {
  *
  * **Gotchas**
  *
- * `result` only captures typed, recoverable failures. Defects and
- * interruptions are not captured inside the `Result` and still fail the
- * effect.
+ * `result` only captures typed, recoverable failures. If the cause contains a
+ * defect, nothing is captured and every typed error is converted to a defect,
+ * preserving reason order and interrupts. A cause with only interruptions
+ * still fails the effect, but an interruption alongside a typed error does not
+ * prevent capture. The first typed error becomes a `Result.Failure` and the
+ * interruption is discarded.
  *
  * **Example** (Capturing success or failure as Result)
  *
@@ -2346,9 +2429,12 @@ export const result: <A, E, R>(self: Effect<A, E, R>) => Effect<Result.Result<A,
  *
  * **Gotchas**
  *
- * `option` only captures typed, recoverable failures as `Option.none`.
- * Defects and interruptions are not captured inside the `Option` and still
- * fail the effect.
+ * `option` only captures typed, recoverable failures as `Option.none`. If the
+ * cause contains a defect, nothing is captured and every typed error is
+ * converted to a defect, preserving reason order and interrupts. A cause with
+ * only interruptions still fails the effect, but an interruption alongside a
+ * typed error does not prevent capture. The effect succeeds with
+ * `Option.none()` and the interruption is discarded.
  *
  * `option` also discards typed failure values. Use `result` if the failure
  * value matters.
@@ -2389,9 +2475,8 @@ export const option: <A, E, R>(self: Effect<A, E, R>) => Effect<Option<A>, never
  * `exit` wraps an effect's success or failure inside an `Exit` type, allowing
  * you to handle both cases explicitly.
  *
- * The resulting effect cannot fail because the failure is encapsulated within
- * the `Exit.Failure` type. The error type is set to `never`, indicating that
- * the effect is structured to never fail directly.
+ * If the running fiber is interrupted in an interruptible region, `exit`
+ * does not turn that interruption into an `Exit` value.
  *
  * **Example** (Capturing completion as Exit)
  *
@@ -2409,6 +2494,7 @@ export const option: <A, E, R>(self: Effect<A, E, R>) => Effect<Option<A>, never
  * Effect.runSync(program2) // => Exit.fail("Something went wrong")
  * ```
  *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  * @see {@link option} for a version that uses `Option` instead.
  * @see {@link result} for a version that uses `Result` instead.
  *
@@ -2752,6 +2838,11 @@ export {
    * `catch` only handles recoverable errors. It will not recover from
    * unrecoverable defects.
    *
+   * Defects take precedence over typed errors. If the cause also contains a
+   * defect, the handler does not run and the failure is propagated with every
+   * typed error converted to a defect. An interruption alongside a typed error
+   * does not prevent recovery.
+   *
    * @see {@link catchCause} for a version that can recover from both recoverable and unrecoverable errors.
    *
    * @stability stable
@@ -2774,6 +2865,12 @@ export {
  *
  * The error type must have a readonly `_tag` field. `catchTag` matches that
  * field and only handles errors with the requested tag.
+ *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
  *
  * **Example** (Handling a tagged error)
  *
@@ -2836,12 +2933,13 @@ export const catchTag: {
   >
   <
     A,
-    E,
-    R,
-    const K extends Tags<E> | Arr.NonEmptyReadonlyArray<Tags<E>>,
-    R1,
-    E1,
-    A1,
+    // Default `E` to `any` so `K` is not rejected while TS defers an inline `self` (e.g. `Effect.map(...)`)
+    E = any,
+    R = unknown,
+    const K extends Tags<E> | Arr.NonEmptyReadonlyArray<Tags<E>> = never,
+    R1 = unknown,
+    E1 = unknown,
+    A1 = unknown,
     A2 = unassigned,
     E2 = never,
     R2 = never
@@ -2876,6 +2974,12 @@ export const catchTag: {
  *
  * The error type must have a readonly `_tag` field to use `catchTags`. This
  * field is used to identify and match errors.
+ *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
  *
  * **Example** (Handling multiple tagged errors)
  *
@@ -2986,6 +3090,12 @@ export const catchTags: {
  * Use this to handle nested error causes without removing the parent error
  * from the error channel. The handler receives the unwrapped reason.
  *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
+ *
  * **Example** (Handling an error reason)
  *
  * ```ts import.meta.vitest
@@ -3081,8 +3191,32 @@ export const catchReason: {
   >
 } = internal.catchReason
 
+type RequiredCaseKeys<Cases> = {
+  [RK in keyof Cases & string]: {} extends Record<RK, 1> ? never
+    : [Cases] extends [Record<RK, (...args: Array<any>) => any>] ? RK
+    : never
+}[keyof Cases & string]
+
+type CaseReturn<Cases> = Cases extends unknown ? ReturnType<Extract<Cases[keyof Cases], (...args: Array<any>) => any>>
+  : never
+
+type UnhandledParent<E, K extends string, Handled extends string> = {} extends Record<K, 1> ? ExtractTag<E, K>
+  : IsUnion<K> extends true ? ExtractTag<E, K>
+  : ExtractTag<E, K> extends infer P
+    ? P extends { readonly reason: { readonly _tag: string } } ? [ExcludeReason<P, Handled>] extends [never] ? never : P
+    : P
+  : never
+
 /**
  * Catches multiple reasons within a tagged error using an object of handlers.
+ *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
+ *
+ * Only own enumerable properties of `cases` are matched; inherited properties are ignored.
  *
  * **Example** (Handling multiple error reasons)
  *
@@ -3131,37 +3265,57 @@ export const catchReasons: {
         error: NarrowReason<ExtractTag<NoInfer<E>, K>, RK>
       ) => Effect<any, any, any>
     },
-    A2 = unassigned,
+    // `A2`, `E2` and `R2` are only for calls that pass explicit type arguments.
+    A2 = never,
     E2 = never,
-    R2 = never
+    R2 = never,
+    Ret extends Effect<any, any, any> = Effect<A2, E2, R2>
+  >(
+    errorTag: K,
+    cases: Cases,
+    orElse: (
+      reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>,
+      error: OmitReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>
+    ) => Ret
+  ): <A, R>(
+    self: Effect<A, E, R>
+  ) => Effect<
+    A | Success<Ret | CaseReturn<Cases>>,
+    | ExcludeTag<E, K>
+    | UnhandledParent<E, K, string>
+    | Error<Ret | CaseReturn<Cases>>,
+    R | Services<Ret | CaseReturn<Cases>>
+  >
+  <
+    K extends Tags<E>,
+    E,
+    Cases extends {
+      [RK in ReasonTags<ExtractTag<NoInfer<E>, K>>]+?: (
+        reason: ExtractReason<ExtractTag<NoInfer<E>, K>, RK>,
+        error: NarrowReason<ExtractTag<NoInfer<E>, K>, RK>
+      ) => Effect<any, any, any>
+    },
+    A2 = never,
+    E2 = never,
+    R2 = never,
+    Ret extends Effect<any, any, any> = Effect<A2, E2, R2>
   >(
     errorTag: K,
     cases: Cases,
     orElse?:
       | ((
-        reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>,
-        error: OmitReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>
-      ) => Effect<A2, E2, R2>)
+        reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>,
+        error: OmitReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>
+      ) => Ret)
       | undefined
   ): <A, R>(
     self: Effect<A, E, R>
   ) => Effect<
-    | A
-    | Exclude<A2, unassigned>
-    | {
-      [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect<infer A, any, any> ? A : never
-    }[keyof Cases],
+    A | Success<Ret | CaseReturn<Cases>>,
     | ExcludeTag<E, K>
-    | E2
-    | (A2 extends unassigned ? ExtractTag<E, K> : never)
-    | {
-      [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect<any, infer E, any> ? E : never
-    }[keyof Cases],
-    | R
-    | R2
-    | {
-      [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect<any, any, infer R> ? R : never
-    }[keyof Cases]
+    | UnhandledParent<E, K, RequiredCaseKeys<Cases>>
+    | Error<Ret | CaseReturn<Cases>>,
+    R | Services<Ret | CaseReturn<Cases>>
   >
   <
     A,
@@ -3174,36 +3328,56 @@ export const catchReasons: {
         error: NarrowReason<ExtractTag<E, K>, RK>
       ) => Effect<any, any, any>
     },
-    A2 = unassigned,
+    A2 = never,
     E2 = never,
-    R2 = never
+    R2 = never,
+    Ret extends Effect<any, any, any> = Effect<A2, E2, R2>
+  >(
+    self: Effect<A, E, R>,
+    errorTag: K,
+    cases: Cases,
+    orElse: (
+      reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>,
+      error: OmitReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>
+    ) => Ret
+  ): Effect<
+    A | Success<Ret | CaseReturn<Cases>>,
+    | ExcludeTag<E, K>
+    | UnhandledParent<E, K, string>
+    | Error<Ret | CaseReturn<Cases>>,
+    R | Services<Ret | CaseReturn<Cases>>
+  >
+  <
+    A,
+    E,
+    R,
+    K extends Tags<E>,
+    Cases extends {
+      [RK in ReasonTags<ExtractTag<E, K>>]+?: (
+        reason: ExtractReason<ExtractTag<E, K>, RK>,
+        error: NarrowReason<ExtractTag<E, K>, RK>
+      ) => Effect<any, any, any>
+    },
+    A2 = never,
+    E2 = never,
+    R2 = never,
+    Ret extends Effect<any, any, any> = Effect<A2, E2, R2>
   >(
     self: Effect<A, E, R>,
     errorTag: K,
     cases: Cases,
     orElse?:
       | ((
-        reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>,
-        error: OmitReason<ExtractTag<NoInfer<E>, K>, Extract<keyof Cases, string>>
-      ) => Effect<A2, E2, R2>)
+        reason: ExcludeReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>,
+        error: OmitReason<ExtractTag<NoInfer<E>, K>, RequiredCaseKeys<Cases>>
+      ) => Ret)
       | undefined
   ): Effect<
-    | A
-    | Exclude<A2, unassigned>
-    | {
-      [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect<infer A, any, any> ? A : never
-    }[keyof Cases],
+    A | Success<Ret | CaseReturn<Cases>>,
     | ExcludeTag<E, K>
-    | E2
-    | (A2 extends unassigned ? ExtractTag<E, K> : never)
-    | {
-      [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect<any, infer E, any> ? E : never
-    }[keyof Cases],
-    | R
-    | R2
-    | {
-      [RK in keyof Cases]: Cases[RK] extends (...args: Array<any>) => Effect<any, any, infer R> ? R : never
-    }[keyof Cases]
+    | UnhandledParent<E, K, RequiredCaseKeys<Cases>>
+    | Error<Ret | CaseReturn<Cases>>,
+    R | Services<Ret | CaseReturn<Cases>>
   >
 } = internal.catchReasons
 
@@ -3286,8 +3460,7 @@ export const unwrapReason: {
 } = internal.unwrapReason
 
 /**
- * Handles both recoverable and unrecoverable errors by providing a recovery
- * effect.
+ * Runs a recovery effect with the full cause of failure.
  *
  * **When to use**
  *
@@ -3297,7 +3470,15 @@ export const unwrapReason: {
  *
  * **Details**
  *
- * When to Recover from Defects:
+ * The handler can recover from an interruption in the cause, such as one from
+ * `Effect.interrupt` or from joining an interrupted fiber.
+ *
+ * Interruption of the fiber running `catchCause` is different. In an
+ * interruptible region, the handler is skipped and the fiber runs its cleanup
+ * before exiting. A handler in an uninterruptible region can handle an
+ * interruption delivered in an inner interruptible region. A pending request
+ * alone neither invokes that handler nor adds an interruption to an unrelated
+ * failure while the fiber remains uninterruptible.
  *
  * Defects are unexpected errors that typically shouldn't be recovered from, as
  * they often indicate serious issues. However, in some cases, such as
@@ -3358,6 +3539,12 @@ export const catchCause: {
  * they often indicate serious issues. In some cases, such as dynamically loaded
  * plugins, controlled recovery may be needed.
  *
+ * **Gotchas**
+ *
+ * `catchDefect` recovers any cause that contains a defect, including causes
+ * that also contain typed errors. Typed error handlers such as `catch` skip
+ * those causes, so defects always take precedence.
+ *
  * **Example** (Recovering from defects)
  *
  * ```ts import.meta.vitest
@@ -3406,6 +3593,12 @@ export const catchDefect: {
  * Use a `Refinement` for type narrowing or a `Predicate` for simple boolean
  * matching. Non-matching errors re-fail with the original cause. Defects and
  * interrupts are not caught.
+ *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
  *
  * **Example** (Recovering when a predicate matches)
  *
@@ -3456,7 +3649,7 @@ export const catchIf: {
   ) => Effect<A | A2 | Exclude<A3, unassigned>, E2 | E3 | (A3 extends unassigned ? E : never), R | R2 | R3>
   <A, E, R, EB extends E, A2, E2, R2, A3 = unassigned, E3 = never, R3 = never>(
     self: Effect<A, E, R>,
-    refinement: Predicate.Refinement<E, EB>,
+    refinement: Predicate.Refinement<NoInfer<E>, EB>,
     f: (e: EB) => Effect<A2, E2, R2>,
     orElse?: ((e: Exclude<E, EB>) => Effect<A3, E3, R3>) | undefined
   ): Effect<A | A2 | Exclude<A3, unassigned>, E2 | E3 | (A3 extends unassigned ? Exclude<E, EB> : never), R | R2 | R3>
@@ -3483,6 +3676,12 @@ export const catchIf: {
  * filter results are passed to `f`; failed filter results are passed to
  * `orElse` when provided. Without `orElse`, the original failure cause is
  * preserved.
+ *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
  *
  * @see {@link catchIf} for predicate-based recovery from typed errors
  * @see {@link catchTag} for recovering from a single tagged error
@@ -3561,6 +3760,9 @@ export const catchNoSuchElement: <A, E, R>(
  * that match a specific predicate. This is useful when you want to handle
  * only certain types of errors while letting others propagate.
  *
+ * The failure handler is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
  * **Example** (Recovering from selected causes)
  *
  * ```ts import.meta.vitest
@@ -3619,6 +3821,9 @@ export const catchCauseIf: {
  * receives the selected value and the original cause. When it fails, the effect
  * re-fails with the residual cause returned by the filter.
  *
+ * The failure handler is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
  * @see {@link catchCauseIf} for predicate-based cause selection
  * @see {@link catchFilter} for filtering typed error values instead of full causes
  * @see {@link catchCause} for recovering from every cause without filtering
@@ -3651,6 +3856,9 @@ export const catchCauseFilter: {
  *
  * Only the failure channel is transformed. The success channel and requirements
  * are preserved.
+ *
+ * Maps every typed error in the cause, preserving defects, interrupts and
+ * reason order. Unlike typed recovery, mapping does not convert errors to defects.
  *
  * **Example** (Transforming the error channel)
  *
@@ -3698,6 +3906,9 @@ export const mapError: {
  * and one for the success channel. You can use it when you want to modify both
  * the error and the success values without altering the overall success or
  * failure status of the effect.
+ *
+ * Maps every typed error in the cause, preserving defects, interrupts and
+ * reason order. Unlike typed recovery, mapping does not convert errors to defects.
  *
  * **Example** (Transforming success and failure channels)
  *
@@ -3886,6 +4097,9 @@ export const tapErrorTag: {
  * the operation succeeds, the original cause is preserved. If the operation
  * fails, its error is also represented in the returned effect.
  *
+ * The observer is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
  * **Example** (Observing full failure causes)
  *
  * ```ts import.meta.vitest
@@ -3902,6 +4116,8 @@ export const tapErrorTag: {
  * void output.push(Effect.runSyncExit(program))
  * output // => ["Logging cause: Something went wrong", Exit.fail("Something went wrong")]
  * ```
+ *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  *
  * @stability stable
  * @category error handling
@@ -3926,6 +4142,9 @@ export const tapCause: {
  * the cause matches a specific predicate. This is useful for conditional logging,
  * monitoring, or other side effects based on the type of failure.
  *
+ * The observer is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
  * **Example** (Observing selected failure causes)
  *
  * ```ts import.meta.vitest
@@ -3944,6 +4163,8 @@ export const tapCause: {
  * void output.push(Effect.runSyncExit(program))
  * output // => ["Logging failure cause: Network timeout", Exit.fail("Network timeout")]
  * ```
+ *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  *
  * @stability stable
  * @category error handling
@@ -3976,6 +4197,10 @@ export const tapCauseIf: {
  * original cause. A failed filter result skips the side effect and preserves the
  * original cause.
  *
+ * The observer is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  * @see {@link tapCauseIf} for selecting causes with a boolean predicate
  * @see {@link tapCause} for observing every failure cause
  * @see {@link catchCauseFilter} for recovering from selected causes instead of only observing them
@@ -4142,13 +4367,17 @@ export declare namespace Retry {
  * succeeds, the returned effect succeeds with that value. If the policy stops
  * while the effect is still failing, the last failure is propagated.
  *
+ * Scheduled delays use the context's `Clock`.
+ *
  * **Gotchas**
  *
  * The source effect is always evaluated once before any retry policy is
  * applied. For example, `Schedule.recurs(3)` allows up to three retries after
  * the initial attempt.
  *
- * Defects and interruptions are not retried.
+ * Defects take precedence over typed errors. A failure whose cause contains a
+ * defect is not retried and is propagated with every typed error converted to a
+ * defect. A typed error alongside an interruption is retried.
  *
  * **Example** (Retrying with a schedule)
  *
@@ -4218,6 +4447,16 @@ export const retry: {
  * If the retries are exhausted and the effect still fails, it runs a fallback
  * effect instead.
  *
+ * Scheduled delays use the context's `Clock`.
+ *
+ * **Gotchas**
+ *
+ * Defects take precedence over typed errors. A failure whose cause contains a
+ * defect is not retried and is propagated with every typed error converted to a
+ * defect. A typed error alongside an interruption is retried. When the cause
+ * contains a defect, `orElse` does not run.
+ * This applies to source failures only; policy failures propagate unchanged.
+ *
  * **Example** (Falling back after retries are exhausted)
  *
  * ```ts import.meta.vitest
@@ -4274,8 +4513,11 @@ export const retryOrElse: {
  * **Details**
  *
  * Use `sandbox` when downstream error handling needs to distinguish typed
- * failures, defects, and interruptions. Use `unsandbox` to restore the original
- * typed error channel after cause-level handling.
+ * failures, defects, and interruptions. Use `Effect.catch(Effect.failCause)` to
+ * restore the original typed error channel after cause-level handling.
+ *
+ * Interrupting the running fiber in an interruptible region bypasses the
+ * error channel.
  *
  * **Example** (Exposing failures as causes)
  *
@@ -4292,6 +4534,8 @@ export const retryOrElse: {
  *
  * Effect.runSync(program) // => "Caught cause: Something went wrong"
  * ```
+ *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  *
  * @stability stable
  * @category error handling
@@ -4313,6 +4557,16 @@ export const sandbox: <A, E, R>(
  *
  * Use the `log` option to emit the full {@link Cause} when the effect fails,
  * and `message` to prepend a custom log message.
+ * Set `log: "Unhandled"` to read `References.UnhandledLogLevel` when the
+ * failure occurs; `undefined` disables logging. Minimum log level filtering
+ * still applies.
+ *
+ * **Gotchas**
+ *
+ * Defects take precedence over typed errors. If the cause also contains a
+ * defect, the failure is not ignored and is propagated with every typed error
+ * converted to a defect. An interruption alongside a typed error does not
+ * prevent the error from being ignored.
  *
  * **Example** (Discarding success and failure values)
  *
@@ -4346,16 +4600,16 @@ export const sandbox: <A, E, R>(
  */
 export const ignore: <
   Arg extends Effect<any, any, any> | {
-    readonly log?: boolean | Severity | undefined
+    readonly log?: boolean | Severity | "Unhandled" | undefined
     readonly message?: string | undefined
   } | undefined = {
-    readonly log?: boolean | Severity | undefined
+    readonly log?: boolean | Severity | "Unhandled" | undefined
     readonly message?: string | undefined
   }
 >(
   effectOrOptions?: Arg,
   options?: {
-    readonly log?: boolean | Severity | undefined
+    readonly log?: boolean | Severity | "Unhandled" | undefined
     readonly message?: string | undefined
   } | undefined
 ) => [Arg] extends [Effect<infer _A, infer _E, infer _R>] ? Effect<void, never, _R>
@@ -4373,6 +4627,9 @@ export const ignore: <
  *
  * Use the `log` option to emit the full {@link Cause} when the effect fails,
  * and `message` to prepend a custom log message.
+ * Set `log: "Unhandled"` to read `References.UnhandledLogLevel` when the
+ * failure occurs; `undefined` disables logging. Minimum log level filtering
+ * still applies.
  *
  * **Example** (Ignoring failures and logging causes)
  *
@@ -4391,16 +4648,16 @@ export const ignore: <
  */
 export const ignoreCause: <
   Arg extends Effect<any, any, any> | {
-    readonly log?: boolean | Severity | undefined
+    readonly log?: boolean | Severity | "Unhandled" | undefined
     readonly message?: string | undefined
   } | undefined = {
-    readonly log?: boolean | Severity | undefined
+    readonly log?: boolean | Severity | "Unhandled" | undefined
     readonly message?: string | undefined
   }
 >(
   effectOrOptions?: Arg,
   options?: {
-    readonly log?: boolean | Severity | undefined
+    readonly log?: boolean | Severity | "Unhandled" | undefined
     readonly message?: string | undefined
   } | undefined
 ) => [Arg] extends [Effect<infer _A, infer _E, infer _R>] ? Effect<void, never, _R>
@@ -4538,6 +4795,12 @@ export const withErrorReporting: <
  *
  * Defects and interruptions are not recovered by this operator.
  *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
+ *
  * **Example** (Replacing failures with a value)
  *
  * ```ts import.meta.vitest
@@ -4637,13 +4900,24 @@ export const firstSuccessOf: <Eff extends Effect<any, any, any>>(
  *
  * The `timeout` function allows you to specify a time limit for an
  * effect's execution. If the effect does not complete within the given time, a
- * `TimeoutError` is raised. This can be useful for controlling how long your
- * program waits for a task to finish, ensuring that it doesn't hang
- * indefinitely if the task takes too long.
+ * `TimeoutError` is raised after the source fiber finishes its cleanup.
+ *
+ * Any contender the timeout starts (source or timer) is initially
+ * interruptible, even when the timeout runs in an uninterruptible region. The
+ * timer uses the context's `Clock`.
  *
  * **Gotchas**
  *
- * If the timeout wins, the source effect is interrupted.
+ * If the timeout wins, the source is interrupted and the returned effect waits
+ * for the source fiber to finish, including its finalizers. The duration
+ * determines when interruption is requested, not a deadline for completion.
+ * If the source enters its own uninterruptible region, completion can be
+ * delayed until that region finishes. The eventual source result is
+ * discarded and the timeout failure is still returned.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Failing when work takes too long)
  *
@@ -4687,6 +4961,23 @@ export const timeout: {
  * interrupted and the returned effect succeeds with `Option.none`. If the
  * source effect fails before the timeout, that failure is preserved.
  *
+ * Any contender the timeout starts (source or timer) is initially
+ * interruptible, even when the timeout runs in an uninterruptible region. The
+ * timer uses the context's `Clock`.
+ *
+ * **Gotchas**
+ *
+ * If the timeout wins, the source is interrupted and the returned effect waits
+ * for the source fiber to finish, including its finalizers. The duration
+ * determines when interruption is requested, not a deadline for completion.
+ * If the source enters its own uninterruptible region, completion can be
+ * delayed until that region finishes. The eventual source result is
+ * discarded and the timeout still produces `Option.none`.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
+ *
  * **Example** (Returning None on timeout)
  *
  * ```ts import.meta.vitest
@@ -4715,7 +5006,26 @@ export const timeoutOption: {
 
 /**
  * Applies a timeout to an effect, lazily evaluating `orElse` after interrupting
- * the source if the timeout is reached.
+ * the source and waiting for its cleanup if the timeout is reached.
+ *
+ * **Details**
+ *
+ * Any contender the timeout starts (source or timer) is initially
+ * interruptible, even when the timeout runs in an uninterruptible region. The
+ * timer uses the context's `Clock`.
+ *
+ * **Gotchas**
+ *
+ * If the timeout wins, the source is interrupted and the returned effect waits
+ * for the source fiber to finish, including its finalizers. The duration
+ * determines when interruption is requested, not a deadline for completion.
+ * If the source enters its own uninterruptible region, completion can be
+ * delayed until that region finishes. The eventual source result is
+ * discarded and the timeout still selects `orElse`.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Falling back on timeout)
  *
@@ -4756,8 +5066,8 @@ export const timeoutOrElse: {
 } = internal.timeoutOrElse
 
 /**
- * Returns an effect that is delayed from this effect by the specified
- * `Duration`.
+ * Delays the start of an effect by the specified duration using the context's
+ * `Clock`.
  *
  * **Example** (Delaying an effect)
  *
@@ -4771,6 +5081,7 @@ export const timeoutOrElse: {
  * output // => ["Delayed message"]
  * ```
  *
+ * @see {@link sleep} for waiting with the current clock
  * @stability stable
  * @category delays & timeouts
  * @since 2.0.0
@@ -4787,7 +5098,7 @@ export const delay: {
 
 /**
  * Returns an effect that suspends the current fiber for the specified duration
- * without blocking a JavaScript thread.
+ * using the context's `Clock`, without blocking a JavaScript thread.
  *
  * **Example** (Pausing without blocking)
  *
@@ -4854,9 +5165,24 @@ export const timed: <A, E, R>(self: Effect<A, E, R>) => Effect<[duration: Durati
  * **Details**
  *
  * Early failures do not finish the race; `raceAll` keeps waiting until one
- * effect succeeds or every effect has failed. When one effect succeeds, the
- * remaining effects are interrupted. If every effect fails, the returned effect
- * fails with a cause containing the collected failure reasons.
+ * effect succeeds or every effect has failed. If one succeeds, any
+ * still-running contenders are interrupted. If every effect fails, the
+ * returned effect fails with a cause containing the collected failure reasons.
+ *
+ * Any contender the race starts is initially interruptible, even when the race
+ * runs in an uninterruptible region.
+ *
+ * The returned effect completes only after the interrupted participants have
+ * finished, including their finalizers.
+ *
+ * **Gotchas**
+ *
+ * If a losing effect enters its own uninterruptible region, the race waits
+ * for that region to finish. The losing result is discarded.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Racing many effects)
  *
@@ -4892,9 +5218,24 @@ export const raceAll: <Eff extends Effect<any, any, any>>(
  *
  * **Details**
  *
- * After the first effect completes, all remaining effects are interrupted. Use
- * `raceAll` when early failures should be ignored until a success occurs or
- * all effects fail.
+ * The race requests interruption of any still-running losers. Use `raceAll`
+ * when early failures should be ignored until a success occurs or all effects
+ * fail.
+ *
+ * Any contender the race starts is initially interruptible, even when the race
+ * runs in an uninterruptible region.
+ *
+ * The returned effect completes only after the interrupted participants have
+ * finished, including their finalizers.
+ *
+ * **Gotchas**
+ *
+ * If a losing effect enters its own uninterruptible region, the race waits
+ * for that region to finish. The losing result is discarded.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Taking the first settled result)
  *
@@ -4928,8 +5269,23 @@ export const raceAllFirst: <Eff extends Effect<any, any, any>>(
  *
  * **Details**
  *
- * If one effect succeeds, the other is interrupted and `onWinner` can observe the
- * winning fiber. If both fail, the race fails.
+ * If one effect succeeds, `onWinner` can observe the winning fiber. The other
+ * effect is interrupted if it is still running. If both fail, the race fails.
+ *
+ * Any contender the race starts is initially interruptible, even when the race
+ * runs in an uninterruptible region.
+ *
+ * The returned effect completes only after the interrupted participants have
+ * finished, including their finalizers.
+ *
+ * **Gotchas**
+ *
+ * If a losing effect enters its own uninterruptible region, the race waits
+ * for that region to finish. The losing result is discarded.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Racing two effects)
  *
@@ -4979,12 +5335,27 @@ export const race: {
  *
  * **When to use**
  *
- * Use when any completion, including failure, should decide the race and
- * interrupt the losing effect.
+ * Use when any completion, including failure, should decide the race.
  *
  * **Details**
  *
- * The losing effect is interrupted, and `onWinner` can observe the winning fiber.
+ * The losing effect is interrupted if it is still running. `onWinner` can
+ * observe the winning fiber.
+ *
+ * Any contender the race starts is initially interruptible, even when the race
+ * runs in an uninterruptible region.
+ *
+ * The returned effect completes only after the interrupted participants have
+ * finished, including their finalizers.
+ *
+ * **Gotchas**
+ *
+ * If a losing effect enters its own uninterruptible region, the race waits
+ * for that region to finish. The losing result is discarded.
+ *
+ * Waiting for fiber cleanup does not ensure external work stops: a Promise
+ * can keep running unless the operation honors cancellation. Fibers started
+ * with `forkDetach` are not awaited.
  *
  * **Example** (Observing the winning fiber)
  *
@@ -5421,6 +5792,12 @@ export const when: {
  * to process the result if the effect succeeds, or handle the error if the
  * effect fails.
  *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
+ *
  * **Example** (Matching success and failure values)
  *
  * ```ts import.meta.vitest
@@ -5486,6 +5863,12 @@ export const match: {
  * the handlers immediately without fiber scheduling. For unresolved effects,
  * it falls back to the regular `match` behavior.
  *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
+ *
  * **Example** (Pattern matching eagerly when possible)
  *
  * ```ts import.meta.vitest
@@ -5537,6 +5920,9 @@ export const matchEager: {
  * The `matchCause` function allows you to handle failures with access to the
  * full cause of the failure within a fiber.
  *
+ * The failure handler is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
  * **Example** (Matching on success or failure causes)
  *
  * ```ts import.meta.vitest
@@ -5552,6 +5938,7 @@ export const matchEager: {
  * Effect.runSync(program) // => "Failed: Something went wrong"
  * ```
  *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  * @see {@link matchCauseEffect} if you need to perform side effects in the
  * handlers.
  * @see {@link match} if you don't need to handle the cause of the failure.
@@ -5587,6 +5974,9 @@ export const matchCause: {
  * effects by immediately applying the matching function instead of deferring it
  * through the effect pipeline.
  *
+ * Unless the effect is already an `Exit`, the failure handler is skipped if
+ * the running fiber is interrupted in an interruptible region.
+ *
  * **Example** (Eagerly matching already completed effects)
  *
  * ```ts import.meta.vitest
@@ -5598,6 +5988,8 @@ export const matchCause: {
  * })
  * Effect.runSync(handleResult) // => "Success: 42"
  * ```
+ *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  *
  * @stability stable
  * @category pattern matching
@@ -5630,6 +6022,10 @@ export const matchCauseEager: {
  * If the effect is an `Exit`, the matching handler runs immediately; otherwise it behaves like
  * {@link matchCauseEffect}.
  *
+ * Unless the effect is already an `Exit`, the failure handler is skipped if
+ * the running fiber is interrupted in an interruptible region.
+ *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  * @see {@link matchCauseEffect} for the non-eager effectful variant
  * @see {@link matchCauseEager} for eager cause matching with pure handlers
  * @see {@link matchEffect} for effectful matching on typed failures instead of full causes
@@ -5671,6 +6067,9 @@ export const matchCauseEffectEager: {
  * you to respond accordingly while performing side effects (like logging or
  * other operations).
  *
+ * The failure handler is skipped if the running fiber is interrupted in an
+ * interruptible region.
+ *
  * **Example** (Effectfully matching on causes)
  *
  * ```ts import.meta.vitest
@@ -5706,6 +6105,7 @@ export const matchCauseEffectEager: {
  * output // => ["Handling error: Task failed", "recovered from error"]
  * ```
  *
+ * @see {@link catchCause} for fiber interruption versus interruption in a cause
  * @see {@link matchCause} if you don't need side effects and only want to handle the result or failure.
  * @see {@link matchEffect} if you don't need to handle the cause of the failure.
  *
@@ -5740,6 +6140,12 @@ export const matchCauseEffect: {
  * Use `matchEffect` when either branch needs to return an `Effect`, such as
  * performing logging, recovery, notification, or other effectful work. The
  * returned effect succeeds or fails according to the handler that is run.
+ *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
  *
  * **Example** (Matching success and failure with effectful handlers)
  *
@@ -5976,9 +6382,9 @@ export const contextWith: <R, A, E, R2>(
 ) => Effect<A, E, R | R2> = internal.contextWith
 
 /**
- * Provides dependencies to an effect using layers or a context. Use `options.local`
- * to build the layer every time; by default, layers are shared between provide
- * calls.
+ * Provides dependencies to an effect using layers or a context. A layer already
+ * built by an enclosing `provide` or runtime is reused. Sibling `provide` calls
+ * build their own copies. Use `options.local` to build a fresh layer subtree.
  *
  * **Example** (Providing dependencies with a layer)
  *
@@ -6673,9 +7079,10 @@ export const scopedWith: <A, E, R>(
  *
  * **Details**
  *
- * If acquisition succeeds, the release finalizer is added to the current scope
- * and is guaranteed to run when that scope closes. The finalizer receives the
- * `Exit` value used to close the scope.
+ * After successful acquisition, release is registered on the scope. If the
+ * scope is open, `Scope.close` runs it according to the scope's finalizer
+ * strategy and passes it the closing `Exit`. If the scope is already closed,
+ * release runs immediately with that `Exit`.
  *
  * By default, acquisition is protected by an uninterruptible region. Pass
  * `{ interruptible: true }` to allow the acquisition effect to be interrupted.
@@ -6806,8 +7213,12 @@ export const acquireDisposable: <A extends AsyncDisposable | Disposable, E, R>(
  *      and will be executed as long as the acquisition `Effect` value
  *      successfully acquires the resource.
  *
- * During the time period between the acquisition and release of the resource,
- * the `use` `Effect` value will be executed.
+ * `use` runs with the interruptibility of the surrounding region. In an
+ * interruptible region, it can be interrupted, and `release` receives an `Exit`
+ * whose cause contains the interruption. In an uninterruptible region, `use`
+ * runs to completion unless it explicitly restores interruptibility.
+ *
+ * The returned effect waits for release to finish, including when interrupted.
  *
  * If the `release` `Effect` value fails, then the entire `Effect` value will
  * fail, even if the `use` `Effect` value succeeds. If this fail-fast behavior
@@ -6878,8 +7289,9 @@ export const acquireUseRelease: <Resource, E, R, A, E2, R2, E3, R3>(
  *
  * **Details**
  *
- * The finalizer runs when the surrounding scope is closed and receives the
- * `Exit` value used to close the scope.
+ * If the scope is open, `Scope.close` runs the finalizer according to the
+ * scope's finalizer strategy and passes it the closing `Exit`. If the scope is
+ * already closed, the finalizer runs immediately with that `Exit`.
  *
  * **Example** (Registering scope finalizers)
  *
@@ -6927,11 +7339,11 @@ export const addFinalizer: <R>(
  *
  * **Details**
  *
- * For use cases that need access to the effect's result, see `onExit`.
- *
  * Finalizers offer very powerful guarantees, but they are low-level, and
  * should generally not be used for releasing resources. For higher-level
  * logic built on `ensuring`, see the `acquireRelease` family of methods.
+ *
+ * Like {@link onExit} cleanup, the finalizer runs in an uninterruptible region.
  *
  * **Example** (Always running cleanup)
  *
@@ -7011,6 +7423,10 @@ export const onError: {
  * Runs the finalizer only when this effect fails and the `Cause` matches the
  * provided predicate.
  *
+ * **Details**
+ *
+ * Like {@link onExit} cleanup, the finalizer runs in an uninterruptible region.
+ *
  * **Example** (Running cleanup for selected failures)
  *
  * ```ts import.meta.vitest
@@ -7056,6 +7472,10 @@ export const onErrorIf: {
  * Use when cleanup or diagnostics should run only for failures whose full
  * `Cause` is accepted or transformed by a `Filter`, and the finalizer needs the
  * filter's pass value plus the original cause.
+ *
+ * **Details**
+ *
+ * Like {@link onExit} cleanup, the finalizer runs in an uninterruptible region.
  *
  * @see {@link onError} for cleanup on every failure
  * @see {@link onErrorIf} for selecting failures with a boolean predicate
@@ -7113,6 +7533,15 @@ export const onExitPrimitive: <A, E, R, XE = never, XR = never>(
  *
  * If both the effect and the cleanup function fail, the two causes are merged.
  *
+ * Cleanup runs in an uninterruptible region. `Fiber.interrupt` waits for it
+ * to finish. Wrap a part of cleanup in `Effect.interruptible` to allow that
+ * part to be interrupted.
+ *
+ * **Gotchas**
+ *
+ * If interruption is already pending, a part of cleanup wrapped in
+ * `Effect.interruptible` is interrupted before it starts.
+ *
  * **Example** (Observing every exit)
  *
  * ```ts import.meta.vitest
@@ -7149,6 +7578,10 @@ export const onExit: {
 /**
  * Runs the cleanup effect only when the `Exit` satisfies the provided
  * predicate.
+ *
+ * **Details**
+ *
+ * Like {@link onExit} cleanup, the finalizer runs in an uninterruptible region.
  *
  * **Example** (Observing selected exits)
  *
@@ -7198,6 +7631,8 @@ export const onExitIf: {
  *
  * `Result.fail` skips cleanup, and `Result.succeed` runs cleanup with the
  * selected value and the original `Exit`.
+ *
+ * Like {@link onExit} cleanup, the finalizer runs in an uninterruptible region.
  *
  * @see {@link onExit} for cleanup on every exit
  * @see {@link onExitIf} for selecting exits with a boolean predicate
@@ -7458,7 +7893,8 @@ export const cachedInvalidateWithTTL: {
 // -----------------------------------------------------------------------------
 
 /**
- * Returns an effect that is immediately interrupted.
+ * Fails with an `Interrupt` reason that names the current fiber. This does not
+ * request interruption of the fiber itself, so a cause handler can recover.
  *
  * **Example** (Creating an interrupted effect)
  *
@@ -7473,6 +7909,8 @@ export const cachedInvalidateWithTTL: {
  * Effect.runSyncExit(program)._tag // => "Failure"
  * ```
  *
+ * @see {@link catchCause} for recovering from an interruption in the cause
+ *
  * @stability stable
  * @category interruption
  * @since 2.0.0
@@ -7480,7 +7918,12 @@ export const cachedInvalidateWithTTL: {
 export const interrupt: Effect<never> = internal.interrupt
 
 /**
- * Returns a new effect that allows the effect to be interruptible.
+ * Runs an effect in an interruptible region.
+ *
+ * **Details**
+ *
+ * If interruption is pending when the fiber enters this region, it takes
+ * effect before the wrapped effect starts.
  *
  * **Example** (Allowing interruption)
  *
@@ -7493,6 +7936,8 @@ export const interrupt: Effect<never> = internal.interrupt
  * await Effect.runPromise(program) // => Option.none()
  * ```
  *
+ * @see {@link uninterruptible} for how regions defer interruption
+ *
  * @stability stable
  * @category interruption
  * @since 2.0.0
@@ -7503,6 +7948,10 @@ export const interruptible: <A, E, R>(
 
 /**
  * Runs the specified finalizer effect if this effect is interrupted.
+ *
+ * **Details**
+ *
+ * Like {@link onExit} cleanup, the finalizer runs in an uninterruptible region.
  *
  * **Example** (Running cleanup on interruption)
  *
@@ -7537,7 +7986,13 @@ export const onInterrupt: {
 } = internal.onInterrupt
 
 /**
- * Returns a new effect that disables interruption for the given effect.
+ * Runs an effect in an uninterruptible region.
+ *
+ * **Details**
+ *
+ * An interruption request remains pending while the fiber is uninterruptible.
+ * It takes effect when the fiber returns to an interruptible region or enters
+ * one explicitly with `interruptible`.
  *
  * **Example** (Preventing interruption)
  *
@@ -7568,6 +8023,12 @@ export const uninterruptible: <A, E, R>(
  * Disables interruption and provides a restore function to restore the
  * interruptible state within the effect.
  *
+ * **Details**
+ *
+ * `restore(effect)` runs `effect` in the surrounding region. If that region
+ * was interruptible, a pending interruption takes effect before `effect`
+ * starts; if it was uninterruptible, the request remains pending.
+ *
  * **Example** (Restoring interruption in protected regions)
  *
  * ```ts import.meta.vitest
@@ -7592,6 +8053,8 @@ export const uninterruptible: <A, E, R>(
  * output // => ["Uninterruptible phase...", "Interruptible phase...", "Back to uninterruptible"]
  * ```
  *
+ * @see {@link uninterruptible} for how regions defer interruption
+ *
  * @stability stable
  * @category interruption
  * @since 2.0.0
@@ -7605,6 +8068,11 @@ export const uninterruptibleMask: <A, E, R>(
 /**
  * Runs an effect in an interruptible region while providing `restore` for
  * locally restoring the previous interruptibility.
+ *
+ * **Details**
+ *
+ * A pending interruption takes effect when the fiber enters the interruptible
+ * region. Otherwise, `restore` can run a section in the surrounding region.
  *
  * **Example** (Controlling interruptibility locally)
  *
@@ -7626,9 +8094,11 @@ export const uninterruptibleMask: <A, E, R>(
  *   })
  * )
  *
- * Effect.runSync(program)
+ * Effect.runSync(Effect.uninterruptible(program))
  * output // => ["Interruptible phase...", "Uninterruptible phase...", "Back to interruptible"]
  * ```
+ *
+ * @see {@link uninterruptible} for how regions defer interruption
  *
  * @stability stable
  * @category interruption
@@ -7775,9 +8245,7 @@ export const forever: <
  * If the effect succeeds, it is repeated according to the schedule. If it
  * fails, the repetition stops immediately, and the failure is returned.
  *
- * The schedule can also specify delays between repetitions, making it useful
- * for tasks like retrying operations with backoff, periodic execution, or
- * performing a series of dependent actions.
+ * Delays between repetitions use the context's `Clock`.
  *
  * You can combine schedules for more advanced repetition logic, such as adding
  * delays, limiting recursions, or dynamically adjusting based on the outcome of
@@ -7787,6 +8255,10 @@ export const forever: <
  *
  * The source effect is always evaluated once before the schedule is stepped.
  * The schedule controls additional repetitions, not the initial execution.
+ *
+ * If the effect or policy fails with a cause that contains a defect, the
+ * failure is propagated with every typed error converted to a defect.
+ * An interruption alongside a typed error does not block the typed error path.
  *
  * **Example** (Repeating successful effects with a schedule)
  *
@@ -7876,6 +8348,15 @@ export const repeat: {
  * and the latest schedule metadata when at least one schedule step has run;
  * otherwise it receives `None`. If the schedule completes normally, the
  * returned effect succeeds with the schedule's output.
+ *
+ * Scheduled delays use the context's `Clock`.
+ *
+ * **Gotchas**
+ *
+ * Defects take precedence over typed errors from either the effect or policy.
+ * If the cause contains a defect, `orElse` does not run and every typed error
+ * is converted to a defect. An interruption alongside a typed error does not
+ * prevent `orElse` from running.
  *
  * **Example** (Recovering after repetition stops)
  *
@@ -8018,6 +8499,8 @@ export const replicateEffect: {
  * fails, and otherwise succeeds with the schedule output when the schedule
  * completes.
  *
+ * Scheduled delays use the context's `Clock`.
+ *
  * **Example** (Scheduling repeated execution)
  *
  * ```ts import.meta.vitest
@@ -8066,6 +8549,8 @@ export const schedule: {
  * fed back into the schedule to decide whether to continue. The returned effect
  * succeeds with the schedule output when the schedule completes and fails if
  * the effect or schedule fails.
+ *
+ * Scheduled delays use the context's `Clock`.
  *
  * **Example** (Scheduling from an initial value)
  *
@@ -8261,6 +8746,11 @@ export const annotateSpans: {
 /**
  * Adds an annotation to the current span if available.
  *
+ * **Details**
+ *
+ * Does nothing when there is no current span or when the nearest parent span is
+ * an `ExternalSpan`.
+ *
  * **Example** (Annotating the current span)
  *
  * ```ts import.meta.vitest
@@ -8292,8 +8782,9 @@ export const annotateCurrentSpan: {
  *
  * **Details**
  *
- * The effect fails with `NoSuchElementError` when there is no active local
- * `Span`.
+ * The effect fails with `NoSuchElementError` when there is no parent span or
+ * when the nearest parent span is an `ExternalSpan`. Use `currentParentSpan` to
+ * read either kind.
  *
  * **Example** (Reading the current span)
  *
@@ -8743,17 +9234,15 @@ export const requestUnsafe: <A extends Request.Any>(
 // -----------------------------------------------------------------------------
 
 /**
- * Returns an effect that forks this effect into its own separate fiber,
- * returning the fiber immediately, without waiting for it to begin executing
- * the effect.
+ * Forks this effect into a child fiber and returns its handle.
  *
  * **Details**
  *
  * You can use the `forkChild` method whenever you want to execute an effect in a
  * new fiber, concurrently and without "blocking" the fiber executing other
  * effects. Using fibers can be tricky, so instead of using this method
- * directly, consider other higher-level methods, such as `raceWith`,
- * `zipPar`, and so forth.
+ * directly, consider higher-level methods such as `Effect.race`,
+ * `Effect.raceFirst`, or `Effect.all` with a concurrency option.
  *
  * The fiber returned by this method has methods to interrupt the fiber and to
  * wait for it to finish executing the effect. See `Fiber` for more
@@ -8764,6 +9253,18 @@ export const requestUnsafe: <A extends Request.Any>(
  * terminates, the child fiber will be terminated as well, ensuring that no
  * fibers leak. This behavior is called "auto supervision", and if this
  * behavior is not desired, you may use the `forkDetach` or `forkIn` methods.
+ *
+ * Fork options:
+ *
+ * - `startImmediately` defaults to `false`: the fork returns before the new
+ *   fiber runs, without promising a scheduler turn. With `true`, the fiber
+ *   runs synchronously until it suspends, yields, or completes before the fork
+ *   returns.
+ * - `uninterruptible` defaults to `false`, even in an uninterruptible caller.
+ *   With `true`, the fiber starts uninterruptible: `Fiber.interrupt` waits for
+ *   completion without replacing its result. Explicit `Effect.interruptible`
+ *   regions can still be interrupted. `"inherit"` copies the caller's
+ *   interruptibility at the fork.
  *
  * **Example** (Forking a child fiber)
  *
@@ -8805,6 +9306,33 @@ export const forkChild: <
 /**
  * Forks the effect in the specified scope. The fiber will be interrupted
  * when the scope is closed.
+ *
+ * **Details**
+ *
+ * The scope owns the fiber, not the forker: it can outlive the forker's
+ * completion or interruption. Closing the scope from another fiber interrupts
+ * it and waits for completion, including finalizers.
+ *
+ * Forking and registration are interruption-safe: interrupting the forker
+ * cannot leave the new fiber outside the scope. If the scope is already
+ * closed, the effect is not started and the returned fiber is interrupted.
+ *
+ * Fork options:
+ *
+ * - `startImmediately` defaults to `false`: the fork returns before the new
+ *   fiber runs, without promising a scheduler turn. With `true`, the fiber
+ *   runs synchronously until it suspends, yields, or completes before the fork
+ *   returns.
+ * - `uninterruptible` defaults to `false`, even in an uninterruptible caller.
+ *   With `true`, the fiber starts uninterruptible: `Fiber.interrupt` waits for
+ *   completion without replacing its result. Explicit `Effect.interruptible`
+ *   regions can still be interrupted. `"inherit"` copies the caller's
+ *   interruptibility at the fork.
+ *
+ * **Gotchas**
+ *
+ * A fiber that closes its own scope is not interrupted or awaited by that
+ * close. An uninterruptible fiber can delay scope closure.
  *
  * **Example** (Forking into a supplied scope)
  *
@@ -8850,6 +9378,33 @@ export const forkIn: {
 /**
  * Forks the fiber in a `Scope`, interrupting it when the scope is closed.
  *
+ * **Details**
+ *
+ * The scope owns the fiber, not the forker: it can outlive the forker's
+ * completion or interruption. Closing the scope from another fiber interrupts
+ * it and waits for completion, including finalizers.
+ *
+ * Forking and registration are interruption-safe: interrupting the forker
+ * cannot leave the new fiber outside the scope. If the scope is already
+ * closed, the effect is not started and the returned fiber is interrupted.
+ *
+ * Fork options:
+ *
+ * - `startImmediately` defaults to `false`: the fork returns before the new
+ *   fiber runs, without promising a scheduler turn. With `true`, the fiber
+ *   runs synchronously until it suspends, yields, or completes before the fork
+ *   returns.
+ * - `uninterruptible` defaults to `false`, even in an uninterruptible caller.
+ *   With `true`, the fiber starts uninterruptible: `Fiber.interrupt` waits for
+ *   completion without replacing its result. Explicit `Effect.interruptible`
+ *   regions can still be interrupted. `"inherit"` copies the caller's
+ *   interruptibility at the fork.
+ *
+ * **Gotchas**
+ *
+ * A fiber that closes its own scope is not interrupted or awaited by that
+ * close. An uninterruptible fiber can delay scope closure.
+ *
  * **Example** (Forking into the current scope)
  *
  * ```ts import.meta.vitest
@@ -8891,9 +9446,26 @@ export const forkScoped: <
   : <A, E, R>(self: Effect<A, E, R>) => Effect<Fiber<A, E>, never, R | Scope> = internal.forkScoped
 
 /**
- * Forks the effect into a new fiber attached to the global scope. Because the
- * new fiber is attached to the global scope, when the fiber executing the
- * returned effect terminates, the forked fiber will continue running.
+ * Forks the effect into a new fiber with no parent and no scope, so its lifetime
+ * is independent of the forking fiber.
+ *
+ * **Details**
+ *
+ * The detached fiber inherits the forking fiber's context. It continues running
+ * until it completes or is explicitly interrupted through the returned handle,
+ * even after the forking fiber terminates.
+ *
+ * Fork options:
+ *
+ * - `startImmediately` defaults to `false`: the fork returns before the new
+ *   fiber runs, without promising a scheduler turn. With `true`, the fiber
+ *   runs synchronously until it suspends, yields, or completes before the fork
+ *   returns.
+ * - `uninterruptible` defaults to `false`, even in an uninterruptible caller.
+ *   With `true`, the fiber starts uninterruptible: `Fiber.interrupt` waits for
+ *   completion without replacing its result. Explicit `Effect.interruptible`
+ *   regions can still be interrupted. `"inherit"` copies the caller's
+ *   interruptibility at the fork.
  *
  * **Example** (Forking a detached fiber)
  *
@@ -9017,9 +9589,9 @@ export const fiberId: Effect<number> = internal.fiberId
  *
  * **Details**
  *
- * `signal` interrupts the fiber, `scheduler` provides the scheduler service,
- * `uninterruptible` starts the fiber uninterruptibly, and `onFiberStart`
- * receives the created fiber.
+ * `signal` can interrupt the fiber, and `scheduler` provides the scheduler
+ * service. The fiber starts interruptible unless `uninterruptible: true` is
+ * set.
  *
  * @see {@link runFork} for starting a fiber with these options
  * @see {@link runCallback} for callback-based running with these options
@@ -9045,17 +9617,23 @@ export interface RunOptions {
  *
  * Use when you need to start an effect in the background and receive a fiber.
  *
+ * **Details**
+ *
+ * The fiber starts immediately and runs synchronously until it suspends,
+ * yields, or completes. It starts interruptible unless `uninterruptible: true`
+ * is set.
+ *
  * **Example** (Running an effect in the background)
  *
  * ```ts import.meta.vitest
  * import { Effect, Fiber } from "effect"
  * const output: Array<unknown> = []
  *
- * //      ┌─── Effect<number, never, never>
+ * //      ┌─── Effect<string, never, never>
  * //      ▼
  * const program = Effect.sync(() => { output.push("running...") }).pipe(Effect.as("done"))
  *
- * //      ┌─── RuntimeFiber<number, never>
+ * //      ┌─── Fiber<string, never>
  * //      ▼
  * const fiber = Effect.runFork(program)
  *
@@ -9063,6 +9641,8 @@ export interface RunOptions {
  * output // => ["running...", "done"]
  * ```
  *
+ * @see {@link RunOptions} for configuring the fiber
+ * @see {@link forkChild} for starting a child of the current fiber
  * @stability stable
  * @category running
  * @since 2.0.0
@@ -9077,6 +9657,12 @@ export const runFork: <A, E>(effect: Effect<A, E, never>, options?: RunOptions |
  *
  * Use when an effect still requires services, you already have a `Context`, and
  * you want a background fiber.
+ *
+ * **Details**
+ *
+ * The fiber starts immediately and runs synchronously until it suspends,
+ * yields, or completes. It starts interruptible unless `uninterruptible: true`
+ * is set.
  *
  * **Example** (Running with services in the background)
  *
@@ -9105,6 +9691,8 @@ export const runFork: <A, E>(effect: Effect<A, E, never>, options?: RunOptions |
  * output // => ["Hello from service!", "done"]
  * ```
  *
+ * @see {@link RunOptions} for configuring the fiber
+ * @see {@link forkChild} for starting a child of the current fiber
  * @stability stable
  * @category running
  * @since 4.0.0
@@ -9390,9 +9978,10 @@ export const runPromiseExitWith: <R>(
  *
  * **Details**
  *
- * If the effect fails, dies, is interrupted, or performs asynchronous work,
- * `runSync` throws a `FiberFailure` instead of returning a value. Use
- * `runSyncExit` when you want the failure captured as an `Exit`.
+ * If the effect fails, dies, or is interrupted, `runSync` throws the squashed
+ * cause instead of returning a value. Typed errors can be thrown directly,
+ * including non-Error values. Asynchronous work throws `Cause.AsyncFiberError`.
+ * Use `runSyncExit` when you want the failure captured as an `Exit`.
  *
  * **Example** (Running a synchronous effect)
  *
@@ -9514,7 +10103,7 @@ export const runSyncWith: <R>(
  * import { Cause, Effect, Exit } from "effect"
  *
  * const exit = Effect.runSyncExit(Effect.promise(() => Promise.resolve(1)))
- * const isAsyncDie = Exit.hasDies(exit) && exit.cause.reasons.some(
+ * const isAsyncDie = Exit.isFailure(exit) && Exit.hasDies(exit) && exit.cause.reasons.some(
  *   (reason) => Cause.isDieReason(reason) && Cause.isAsyncFiberError(reason.defect)
  * )
  *
@@ -9669,6 +10258,18 @@ export declare namespace fn {
         : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
         : never
     >
+    <Self, Eff extends Effect<any, any, any>, AEff, Args extends Array<any>>(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>
+    ): (...args: Args) => Effect<
+      AEff,
+      [Eff] extends [never] ? never
+        : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+        : never,
+      [Eff] extends [never] ? never
+        : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+        : never
+    >
 
     <Eff extends Effect<any, any, any>, AEff, Args extends Array<any>, A>(
       body: (this: unassigned, ...args: Args) => Generator<Eff, AEff, never>,
@@ -9700,6 +10301,22 @@ export declare namespace fn {
         ...args: Args
       ) => A
     ): (this: Self, ...args: Args) => A
+    <Self, Eff extends Effect<any, any, any>, AEff, Args extends Array<any>, A>(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A
+    ): (...args: Args) => A
     <Eff extends Effect<any, any, any>, AEff, Args extends Array<any>, A, B>(
       body: (this: unassigned, ...args: Args) => Generator<Eff, AEff, never>,
       a: (
@@ -9732,6 +10349,23 @@ export declare namespace fn {
       ) => A,
       b: (_: A, ...args: Args) => B
     ): (this: Self, ...args: Args) => B
+    <Self, Eff extends Effect<any, any, any>, AEff, Args extends Array<any>, A, B>(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B
+    ): (...args: Args) => B
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -9781,6 +10415,32 @@ export declare namespace fn {
       b: (_: A, ...args: Args) => B,
       c: (_: B, ...args: Args) => C
     ): (this: Self, ...args: Args) => C
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C
+    ): (...args: Args) => C
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -9834,6 +10494,34 @@ export declare namespace fn {
       c: (_: B, ...args: Args) => C,
       d: (_: C, ...args: Args) => D
     ): (this: Self, ...args: Args) => D
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D
+    ): (...args: Args) => D
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -9891,6 +10579,36 @@ export declare namespace fn {
       d: (_: C, ...args: Args) => D,
       e: (_: D, ...args: Args) => E
     ): (this: Self, ...args: Args) => E
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E
+    ): (...args: Args) => E
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -9952,6 +10670,38 @@ export declare namespace fn {
       e: (_: D, ...args: Args) => E,
       f: (_: E, ...args: Args) => F
     ): (this: Self, ...args: Args) => F
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F
+    ): (...args: Args) => F
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10017,6 +10767,40 @@ export declare namespace fn {
       f: (_: E, ...args: Args) => F,
       g: (_: F, ...args: Args) => G
     ): (this: Self, ...args: Args) => G
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G
+    ): (...args: Args) => G
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10086,6 +10870,42 @@ export declare namespace fn {
       g: (_: F, ...args: Args) => G,
       h: (_: G, ...args: Args) => H
     ): (this: Self, ...args: Args) => H
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H
+    ): (...args: Args) => H
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10159,6 +10979,44 @@ export declare namespace fn {
       h: (_: G, ...args: Args) => H,
       i: (_: H, ...args: Args) => I
     ): (this: Self, ...args: Args) => I
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I
+    ): (...args: Args) => I
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10236,6 +11094,46 @@ export declare namespace fn {
       i: (_: H, ...args: Args) => I,
       j: (_: I, ...args: Args) => J
     ): (this: Self, ...args: Args) => J
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J
+    ): (...args: Args) => J
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10317,6 +11215,48 @@ export declare namespace fn {
       j: (_: I, ...args: Args) => J,
       k: (_: J, ...args: Args) => K
     ): (this: Self, ...args: Args) => K
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K
+    ): (...args: Args) => K
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10402,6 +11342,50 @@ export declare namespace fn {
       k: (_: J, ...args: Args) => K,
       l: (_: K, ...args: Args) => L
     ): (this: Self, ...args: Args) => L
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L
+    ): (...args: Args) => L
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10491,6 +11475,52 @@ export declare namespace fn {
       l: (_: K, ...args: Args) => L,
       m: (_: L, ...args: Args) => M
     ): (this: Self, ...args: Args) => M
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M
+    ): (...args: Args) => M
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10584,6 +11614,54 @@ export declare namespace fn {
       m: (_: L, ...args: Args) => M,
       n: (_: M, ...args: Args) => N
     ): (this: Self, ...args: Args) => N
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N
+    ): (...args: Args) => N
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10681,6 +11759,56 @@ export declare namespace fn {
       n: (_: M, ...args: Args) => N,
       o: (_: N, ...args: Args) => O
     ): (this: Self, ...args: Args) => O
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N,
+      O
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N,
+      o: (_: N, ...args: Args) => O
+    ): (...args: Args) => O
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10782,6 +11910,58 @@ export declare namespace fn {
       o: (_: N, ...args: Args) => O,
       p: (_: O, ...args: Args) => P
     ): (this: Self, ...args: Args) => P
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N,
+      O,
+      P
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N,
+      o: (_: N, ...args: Args) => O,
+      p: (_: O, ...args: Args) => P
+    ): (...args: Args) => P
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10887,6 +12067,60 @@ export declare namespace fn {
       p: (_: O, ...args: Args) => P,
       q: (_: P, ...args: Args) => Q
     ): (this: Self, ...args: Args) => Q
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N,
+      O,
+      P,
+      Q
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N,
+      o: (_: N, ...args: Args) => O,
+      p: (_: O, ...args: Args) => P,
+      q: (_: P, ...args: Args) => Q
+    ): (...args: Args) => Q
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -10996,6 +12230,62 @@ export declare namespace fn {
       q: (_: P, ...args: Args) => Q,
       r: (_: Q, ...args: Args) => R
     ): (this: Self, ...args: Args) => R
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N,
+      O,
+      P,
+      Q,
+      R
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N,
+      o: (_: N, ...args: Args) => O,
+      p: (_: O, ...args: Args) => P,
+      q: (_: P, ...args: Args) => Q,
+      r: (_: Q, ...args: Args) => R
+    ): (...args: Args) => R
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -11109,6 +12399,64 @@ export declare namespace fn {
       r: (_: Q, ...args: Args) => R,
       s: (_: R, ...args: Args) => S
     ): (this: Self, ...args: Args) => S
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N,
+      O,
+      P,
+      Q,
+      R,
+      S
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N,
+      o: (_: N, ...args: Args) => O,
+      p: (_: O, ...args: Args) => P,
+      q: (_: P, ...args: Args) => Q,
+      r: (_: Q, ...args: Args) => R,
+      s: (_: R, ...args: Args) => S
+    ): (...args: Args) => S
     <
       Eff extends Effect<any, any, any>,
       AEff,
@@ -11226,6 +12574,66 @@ export declare namespace fn {
       s: (_: R, ...args: Args) => S,
       t: (_: S, ...args: Args) => T
     ): (this: Self, ...args: Args) => T
+    <
+      Self,
+      Eff extends Effect<any, any, any>,
+      AEff,
+      Args extends Array<any>,
+      A,
+      B,
+      C,
+      D,
+      E,
+      F,
+      G,
+      H,
+      I,
+      J,
+      K,
+      L,
+      M,
+      N,
+      O,
+      P,
+      Q,
+      R,
+      S,
+      T
+    >(
+      options: { readonly self: Self },
+      body: (this: Self, ...args: Args) => Generator<Eff, AEff, never>,
+      a: (
+        _: Effect<
+          AEff,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer E, infer _R>] ? E
+            : never,
+          [Eff] extends [never] ? never
+            : [Eff] extends [Effect<infer _A, infer _E, infer R>] ? R
+            : never
+        >,
+        ...args: Args
+      ) => A,
+      b: (_: A, ...args: Args) => B,
+      c: (_: B, ...args: Args) => C,
+      d: (_: C, ...args: Args) => D,
+      e: (_: D, ...args: Args) => E,
+      f: (_: E, ...args: Args) => F,
+      g: (_: F, ...args: Args) => G,
+      h: (_: G, ...args: Args) => H,
+      i: (_: H, ...args: Args) => I,
+      j: (_: I, ...args: Args) => J,
+      k: (_: J, ...args: Args) => K,
+      l: (_: K, ...args: Args) => L,
+      m: (_: L, ...args: Args) => M,
+      n: (_: M, ...args: Args) => N,
+      o: (_: N, ...args: Args) => O,
+      p: (_: O, ...args: Args) => P,
+      q: (_: P, ...args: Args) => Q,
+      r: (_: Q, ...args: Args) => R,
+      s: (_: R, ...args: Args) => S,
+      t: (_: S, ...args: Args) => T
+    ): (...args: Args) => T
   }
 
   /**
@@ -13689,7 +15097,9 @@ export declare namespace fn {
  * boundary and does not create tracing spans. Use {@link fn} when you need
  * those stack frames or spans. Additional arguments after the generator body
  * act like `pipe` transforms: each transform receives the previous result and
- * the original function arguments. Annotate the generator return type with
+ * the original function arguments. Generator bodies may declare a `this`
+ * parameter; pass `{ self }` before the body to bind `this` when the function
+ * is created. Annotate the generator return type with
  * `Effect.fn.Return<A, E, R>` when the produced `Effect` type needs to be
  * stated explicitly.
  *
@@ -14771,31 +16181,104 @@ export const trackDuration: {
 // -----------------------------------------------------------------------------
 
 /**
+ * Why the current transaction attempt started after a previous attempt did not commit.
+ *
+ * **Details**
+ *
+ * `"retry"` means the previous attempt called {@link txRetry}. `"conflict"`
+ * means an accessed `TxRef` changed before commit. The first attempt has no
+ * retry reason.
+ *
+ * @stability stable
+ * @category models
+ * @since 4.0.0
+ */
+export type TransactionRetryReason = "retry" | "conflict"
+
+/**
+ * Journal and attempt metadata for an Effect transaction.
+ *
+ * **When to use**
+ *
+ * Use to type the value provided by {@link Transaction}.
+ *
+ * **Details**
+ *
+ * `attempt` starts at `1` and counts each run of the outermost transaction body.
+ * `retryReason` is `"retry"` after {@link txRetry} and `"conflict"` after an
+ * accessed `TxRef` changes before commit; it is unset on the first attempt.
+ * `start`, `now`, `elapsed`, and `elapsedSincePrevious` are millisecond
+ * timestamps and durations for the current attempt, matching {@link Schedule}
+ * metadata. Each journal entry stores the observed version and value of a
+ * `TxRef`. `written` is true when this transaction has updated that ref.
+ *
+ * @see {@link Transaction} for the context service that provides this metadata
+ * @see {@link TransactionRetryReason} for the retry-reason tags recorded on later attempts
+ *
+ * @stability stable
+ * @category models
+ * @since 4.0.0
+ */
+export interface TransactionMeta {
+  readonly journal: ReadonlyMap<
+    TxRef<any>,
+    {
+      readonly version: number
+      readonly value: any
+      readonly written: boolean
+    }
+  >
+  readonly attempt: number
+  readonly retryReason: TransactionRetryReason | undefined
+  readonly start: number
+  readonly now: number
+  readonly elapsed: number
+  readonly elapsedSincePrevious: number
+}
+
+/** @internal */
+export interface TransactionMetaInner {
+  retry: boolean
+  journal: Map<
+    TxRef<any>,
+    {
+      readonly version: number
+      value: any
+      written: boolean
+    }
+  >
+  attempt: number
+  retryReason: TransactionRetryReason | undefined
+  start: number
+  now: number
+  elapsed: number
+  elapsedSincePrevious: number
+}
+
+/**
  * Service that holds the current transaction state.
  *
  * **Details**
  *
- * It includes a journal that stores non-committed changes to `TxRef` values and
- * a retry flag that records whether the transaction should be retried.
+ * Nested {@link tx} calls reuse this same service instance. Yield it inside a
+ * transaction body to read {@link TransactionMeta} fields such as `attempt`
+ * and `retryReason`.
  *
- * **Example** (Building transactions)
+ * **Example** (Reading transaction metadata)
  *
  * ```ts import.meta.vitest
  * import { Effect } from "effect"
  *
- * // Transaction class for software transactional memory operations
- * const txEffect = Effect.gen(function*() {
+ * const program = Effect.tx(Effect.gen(function*() {
  *   const tx = yield* Effect.Transaction
- *   // Use transaction for coordinated state changes
- *   return "Transaction complete"
- * })
+ *   return [tx.attempt, tx.retryReason, tx.elapsed, tx.elapsedSincePrevious]
+ * }))
  *
- * const runnable = Effect.provideService(txEffect, Effect.Transaction, {
- *   retry: false,
- *   journal: new Map()
- * })
- * Effect.runSync(runnable) // => "Transaction complete"
+ * Effect.runSync(program) // => [1, undefined, 0, 0]
  * ```
+ *
+ * @see {@link tx} for the outermost transaction boundary that creates this service
+ * @see {@link TransactionMeta} for the journal and attempt metadata
  *
  * @stability stable
  * @category transactions
@@ -14803,17 +16286,7 @@ export const trackDuration: {
  */
 export class Transaction extends Context.Service<
   Transaction,
-  {
-    retry: boolean
-    readonly journal: Map<
-      TxRef<any>,
-      {
-        readonly version: number
-        value: any
-        written: boolean
-      }
-    >
-  }
+  TransactionMeta
 >()("effect/Effect/Transaction") {}
 
 /**
@@ -14867,52 +16340,77 @@ export const tx = <A, E, R>(
   effect: Effect<A, E, R>
 ): Effect<A, E, Exclude<R, Transaction>> =>
   withFiber((fiber) => {
-    let state = Context.getOrUndefined(fiber.context, Transaction)
+    const state = Context.getOrUndefined(fiber.context, Transaction)
     if (state && !completedTransactions.has(state)) {
       return effect as Effect<A, E, Exclude<R, Transaction>>
     }
+    const clock = fiber.getRef(internal.ClockRef)
+    const now = clock.currentTimeMillisUnsafe()
     // Create transaction state only at the outermost boundary
-    state = { journal: new Map(), retry: false }
+    const mutable: TransactionMetaInner = {
+      journal: new Map(),
+      retry: false,
+      attempt: 1,
+      retryReason: undefined,
+      start: now,
+      now,
+      elapsed: 0,
+      elapsedSincePrevious: 0
+    }
     let result: Exit.Exit<A, E> | undefined
-    return uninterruptibleMask((restore) =>
-      flatMap(
+    return uninterruptibleMask((restore) => {
+      const run = restore(effect).pipe(
+        provideService(Transaction, mutable),
+        tapCause((cause) => {
+          if (!mutable.retry) return void_
+          // txRetry interrupts the body; any other reason in the cause is a real failure.
+          // Roll back now so the step below fails instead of waiting or rerunning.
+          if (!internal.hasInterruptsOnly(cause)) return sync(() => clearTransaction(mutable))
+          return restore(awaitPendingTransaction(mutable))
+        }),
+        // A body that recovers the txRetry interrupt succeeds with retry still set, so wait here too.
+        tap(() => mutable.retry ? restore(awaitPendingTransaction(mutable)) : void_),
+        exit
+      )
+      return flatMap(
         whileLoop({
           while: () => !result,
-          body: constant(
-            restore(effect).pipe(
-              provideService(Transaction, state),
-              tapCause((cause) => {
-                if (!state.retry) return void_
-                // txRetry interrupts the body; any other reason in the cause is a real failure.
-                // Roll back now so the step below fails instead of waiting or rerunning.
-                if (!internal.hasInterruptsOnly(cause)) return sync(() => clearTransaction(state))
-                return restore(awaitPendingTransaction(state))
-              }),
-              exit
-            )
-          ),
+          body: () => {
+            if (mutable.attempt > 1) {
+              stampTransaction(mutable, clock.currentTimeMillisUnsafe())
+            }
+            return run
+          },
           step(exit: Exit.Exit<A, E>) {
-            if (state.retry || !isTransactionConsistent(state)) {
-              return clearTransaction(state)
+            if (mutable.retry || !isTransactionConsistent(mutable)) {
+              mutable.attempt++
+              mutable.retryReason = mutable.retry ? "retry" : "conflict"
+              return clearTransaction(mutable)
             }
             if (Exit.isSuccess(exit)) {
-              commitTransaction(fiber, state)
+              commitTransaction(fiber, mutable)
             }
-            clearTransaction(state)
-            completedTransactions.add(state)
+            clearTransaction(mutable)
+            completedTransactions.add(mutable)
             result = exit
           }
         }),
         () => result!
       )
-    )
+    })
   })
 
 // Child fibers inherit the boundary's state, so mark it completed once the
 // boundary finishes and let later `tx` calls start a fresh boundary.
 const completedTransactions = new WeakSet<Transaction["Service"]>()
 
-const isTransactionConsistent = (state: Transaction["Service"]) => {
+const stampTransaction = (state: TransactionMetaInner, now: number) => {
+  state.elapsedSincePrevious = now - state.now
+  state.now = now
+  state.elapsed = now - state.start
+}
+
+const isTransactionConsistent = (state: TransactionMeta) => {
   for (const [ref, { version }] of state.journal) {
     if (ref.version !== version) {
       return false
@@ -14921,7 +16419,7 @@ const isTransactionConsistent = (state: Transaction["Service"]) => {
   return true
 }
 
-const awaitPendingTransaction = (state: Transaction["Service"]) =>
+const awaitPendingTransaction = (state: TransactionMeta) =>
   callback<void>((resume) => {
     // Validate the read set and register the waiter in one synchronous step.
     // A commit that landed after the reads has already signalled its waiters
@@ -14946,7 +16444,7 @@ const awaitPendingTransaction = (state: Transaction["Service"]) =>
     return sync(clearPending)
   })
 
-function commitTransaction(fiber: Fiber<unknown, unknown>, state: Transaction["Service"]) {
+function commitTransaction(fiber: Fiber<unknown, unknown>, state: TransactionMeta) {
   for (const [ref, { value, written }] of state.journal) {
     if (!written) continue
     if (!Object.is(value, ref.value)) {
@@ -14960,7 +16458,7 @@ function commitTransaction(fiber: Fiber<unknown, unknown>, state: Transaction["S
   }
 }
 
-function clearTransaction(state: Transaction["Service"]) {
+function clearTransaction(state: TransactionMetaInner) {
   state.retry = false
   state.journal.clear()
 }
@@ -15005,7 +16503,8 @@ function clearTransaction(state: Transaction["Service"]) {
 export const txRetry: Effect<never, never, Transaction> = flatMap(
   Transaction,
   (state) => {
-    state.retry = true
+    const mutable = state as TransactionMetaInner
+    mutable.retry = true
     return interrupt
   }
 )
@@ -15267,7 +16766,7 @@ type EffectifyArgs<F extends (...args: Array<any>) => any> = Parameters<F> exten
  * **Details**
  *
  * The original function is called with the supplied arguments plus a final
- * callback. A non-null callback error fails the returned effect, while a
+ * callback. A truthy callback error fails the returned effect, while a
  * successful callback value becomes the effect success. Use `onError` to map
  * callback errors and `onSyncError` to turn synchronous throws into typed
  * failures; otherwise synchronous throws become defects.
@@ -15328,16 +16827,26 @@ export const effectify: {
   (<A>(fn: Function, onError?: (e: any, args: any) => any, onSyncError?: (e: any, args: any) => any) =>
   (...args: Array<any>) =>
     callback<A, globalThis.Error>((resume) => {
+      let synchronous = true
+      let pending: Effect<A, globalThis.Error> | undefined
       try {
         fn(...args, (err: globalThis.Error | null, result: A) => {
-          if (err) {
-            resume(onError ? suspend(() => fail(onError(err, args))) : fail(err))
+          const effect = err
+            ? onError ? suspend(() => fail(onError(err, args))) : fail(err)
+            : succeed(result)
+          if (synchronous) {
+            // Keep the first callback result until registration succeeds.
+            pending ??= effect
           } else {
-            resume(succeed(result))
+            resume(effect)
           }
         })
       } catch (err) {
-        resume(onSyncError ? fail(onSyncError(err, args)) : die(err))
+        pending = onSyncError ? fail(onSyncError(err, args)) : die(err)
+      }
+      synchronous = false
+      if (pending) {
+        resume(pending)
       }
     })) as any
 
@@ -15495,6 +17004,9 @@ export const mapEager: {
  * transform. Failure effects apply the mapping function immediately, and
  * pending effects fall back to regular `mapError` behavior.
  *
+ * Maps every typed error in the cause, preserving defects, interrupts and
+ * reason order. Unlike typed recovery, mapping does not convert errors to defects.
+ *
  * **Example** (Mapping errors eagerly when possible)
  *
  * ```ts import.meta.vitest
@@ -15541,6 +17053,9 @@ export const mapErrorEager: {
  * Success effects apply `onSuccess` immediately, and failure effects apply
  * `onFailure` immediately. Pending effects fall back to regular `mapBoth`
  * behavior.
+ *
+ * Maps every typed error in the cause, preserving defects, interrupts and
+ * reason order. Unlike typed recovery, mapping does not convert errors to defects.
  *
  * **Example** (Mapping both channels eagerly when possible)
  *
@@ -15636,6 +17151,12 @@ export const flatMapEager: {
  * Failure effects apply the catch function immediately, and pending effects
  * fall back to regular `catch` behavior.
  *
+ * **Gotchas**
+ *
+ * If the cause contains a defect, the handler is skipped and every typed error
+ * is converted to a defect, preserving reason order and interrupts. An
+ * interruption alongside a typed error does not prevent recovery.
+ *
  * **Example** (Catching failures eagerly when possible)
  *
  * ```ts import.meta.vitest
@@ -15692,6 +17213,8 @@ export const catchEager: {
  *
  * Executes generator functions eagerly when all yielded effects are synchronous,
  * stopping at the first async effect and deferring to normal execution.
+ * Additional arguments after the generator body act like `pipe` transforms, and
+ * `{ self }` before the body binds `this`, as with {@link fnUntraced}.
  *
  * **Example** (Defining eager untraced effect functions)
  *

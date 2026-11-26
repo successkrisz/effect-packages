@@ -102,19 +102,21 @@ describe("Context", () => {
   })
 
   it("distinguishes an undefined service from an absent service", () => {
-    const Undefined = Context.Service<undefined>("ContextTest/Undefined", { fiberCached: true })
+    const Undefined = Context.Service<number | undefined>("ContextTest/Undefined", { fiberCached: true })
     const Missing = Context.Service<undefined>("ContextTest/Missing")
     const Ref = Context.Reference<string | undefined>("ContextTest/UndefinedRef", {
       defaultValue: () => "default",
       fiberCached: true
     })
-    const context = Context.make(Undefined, undefined).pipe(Context.add(Ref, undefined))
+    const context = Context.make(Undefined, 1).pipe(Context.add(Undefined, undefined), Context.add(Ref, undefined))
 
     assertTrue(Context.getOption(context, Undefined)._tag === "Some")
     assertTrue(Context.getOption(context, Missing)._tag === "None")
     strictEqual(Context.getUnsafe(context, Undefined), undefined)
     strictEqual(Context.getOrElse(context, Undefined, () => 1), undefined)
     deepStrictEqual(Context.getOption(context, Ref), Option.some(undefined))
+    deepStrictEqual([...Context.pick(Undefined)(context).mapUnsafe], [[Undefined.key, undefined]])
+    deepStrictEqual([...Context.pick(Missing)(context).mapUnsafe], [])
     strictEqual(Context.get(context, Ref), undefined)
   })
 
@@ -175,6 +177,53 @@ describe("Context", () => {
     }
     for (let i = 0; i < pushKeys.length; i++) {
       strictEqual(Context.getUnsafe(context, pushKeys[i]), i)
+    }
+  })
+
+  it("inherits maxDepth across additions, rebases, and merge", () => {
+    // Depth has no public accessor; inspect rebase boundaries, not policy storage.
+    let context = Context.makeUnsafe(new Map(), { maxDepth: 2 })
+    for (let cycle = 0; cycle < 2; cycle++) {
+      context = Context.add(context, A, 1).pipe(Context.add(B, 2))
+      strictEqual((context as unknown as { depth: number }).depth, 2)
+      context = Context.add(context, C, 3)
+      strictEqual((context as unknown as { depth: number }).depth, 0)
+    }
+
+    context = Context.merge(context, Context.make(A, 4)).pipe(
+      Context.add(B, 5),
+      Context.add(C, 6),
+      Context.add(A, 7)
+    )
+    strictEqual((context as unknown as { depth: number }).depth, 0)
+  })
+
+  it("keeps maxDepth when picking zero or one key", () => {
+    const source = Context.makeUnsafe(new Map([[A.key, 1]]), { maxDepth: 2 })
+    for (let context of [Context.pick()(source), Context.pick(A)(source)]) {
+      context = Context.add(context, B, 2).pipe(Context.add(C, 3))
+      strictEqual((context as unknown as { depth: number }).depth, 2)
+      context = Context.add(context, A, 4)
+      strictEqual((context as unknown as { depth: number }).depth, 0)
+    }
+  })
+
+  it("uses depth 8 by default, for invalid options, and after mergeAll", () => {
+    const contexts = [
+      Context.makeUnsafe(new Map()),
+      ...[NaN, -1, 1.5, Infinity].map((maxDepth) => Context.makeUnsafe(new Map(), { maxDepth })),
+      Context.mergeAll(
+        Context.makeUnsafe(new Map([[A.key, 1]]), { maxDepth: 2 }),
+        Context.makeUnsafe(new Map([[B.key, 2]]), { maxDepth: 32 })
+      )
+    ]
+    for (let context of contexts) {
+      for (let i = 0; i < 8; i++) {
+        context = Context.add(context, A, i)
+      }
+      strictEqual((context as unknown as { depth: number }).depth, 8)
+      context = Context.add(context, B, 8)
+      strictEqual((context as unknown as { depth: number }).depth, 0)
     }
   })
 
@@ -262,9 +311,20 @@ describe("Context", () => {
     deepStrictEqual([...merged.mapUnsafe], [[A.key, 3], [B.key, 2], [C.key, 4]])
   })
 
-  it("pick and omit retain source ordering", () => {
-    const source = Context.make(A, 1).pipe(Context.add(B, 2), Context.add(C, 3))
+  it("pick and omit preserve services and source ordering", () => {
+    const source = Context.make(A, 1).pipe(Context.add(B, 2), Context.add(C, 0), Context.add(C, 3))
 
+    const impl = source as any as ContextInternals
+    strictEqual(impl._flat, undefined)
+    const empty = Context.pick()(source)
+    strictEqual(impl._flat, undefined)
+    const picked = Context.pick(C)(source)
+    strictEqual(impl._flat, undefined)
+    deepStrictEqual([...picked.mapUnsafe], [[C.key, 3]])
+    deepStrictEqual([...empty.mapUnsafe], [])
+    assertFalse(Context.hasSameCache(source, picked))
+    assertFalse(Context.hasSameCache(source, empty))
+    deepStrictEqual([...source.mapUnsafe], [[A.key, 1], [B.key, 2], [C.key, 3]])
     deepStrictEqual([...Context.pick(C, A)(source).mapUnsafe], [[A.key, 1], [C.key, 3]])
     deepStrictEqual([...Context.omit(B)(source).mapUnsafe], [[A.key, 1], [C.key, 3]])
   })
@@ -278,6 +338,7 @@ describe("Context", () => {
       }
     })
     const context = Context.empty()
+    deepStrictEqual([...Context.pick(Ref)(context).mapUnsafe], [])
 
     strictEqual(calls, 0)
     const first = Context.get(context, Ref)

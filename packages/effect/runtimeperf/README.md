@@ -5,6 +5,7 @@ processes. It supports:
 
 - focused Effect Schema diagnostics;
 - native Arbitrary comparisons against equivalent fast-check v4 arbitraries;
+- protobuf message codecs and OTLP serialization;
 - the upstream Effect, Valibot and Zod benchmark matrix;
 - paired comparisons between Git revisions or the current working tree.
 
@@ -93,6 +94,33 @@ template literals, unions, records, transformations, optional properties,
 adapters, recursion and cold paths. The `schema-benchmarks` suite contains the
 complete timing matrices exposed by the upstream Effect, Valibot and Zod
 adapters.
+
+The `datetime` suite is Effect-only. It measures `DateTime` construction from
+numbers, ISO strings and named zones, zoned arithmetic, first access to the lazy
+part caches, and cached reads over UTC, named-zone and mixed instances.
+
+The `protobuf` suite measures `ProtobufMessage` encoding and decoding of small
+messages, nested messages, packed numeric arrays, and 64 KiB byte fields. It also
+covers merged unknown fields, MessageSet extensions, descriptor construction
+through the first decode, malformed input, and the standalone writer through OTLP
+log serialization.
+Steady-state fixtures prepare descriptors and inputs outside the timed operation
+and rotate through 16 inputs. Valid message and OTLP fixtures check their wire
+bytes against protobufjs; unknown-field, MessageSet and error fixtures use explicit
+expected results. This suite measures Effect's implementation, including when
+protobufjs is used to validate its output.
+
+```sh
+pnpm runtimeperf protobuf
+pnpm runtimeperf-compare protobuf
+pnpm runtimeperf-compare protobuf --family packed --fail-on-regression
+```
+
+The `encoding` suite is Effect-only. It measures `Base64Url.decode` on small
+inputs, an ES256 signature and a JWT payload segment, a 64 KiB input and padded
+input wrapped with CRLF, plus `decodeString` on JWT claims and the failure path
+for an out-of-alphabet character. Valid fixtures check their inputs against
+Node's `base64url` decoder.
 
 The `moltar-parse-safe` and `moltar-assert-loose` suites preserve Moltar's
 object shape. Their valid cases reproduce the upstream timed operation; the

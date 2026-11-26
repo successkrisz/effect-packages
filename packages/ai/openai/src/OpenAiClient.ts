@@ -38,6 +38,8 @@ import * as Errors from "./internal/errors.ts"
 import { OpenAiConfig } from "./OpenAiConfig.ts"
 import * as OpenAiSchema from "./OpenAiSchema.ts"
 
+const decodeResponseStreamEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(OpenAiSchema.ResponseStreamEvent))
+
 // =============================================================================
 // Service Interface
 // =============================================================================
@@ -88,6 +90,13 @@ export interface Service {
   readonly createEmbedding: (
     options: typeof OpenAiSchema.CreateEmbeddingRequest.Encoded
   ) => Effect.Effect<typeof OpenAiSchema.CreateEmbeddingResponse.Type, AiError.AiError>
+
+  /**
+   * Answer decision questions using the OpenAI decisions endpoint.
+   */
+  readonly createDecisions: (
+    options: typeof OpenAiSchema.CreateDecisionsRequest.Encoded
+  ) => Effect.Effect<typeof OpenAiSchema.CreateDecisionsResponse.Type, AiError.AiError>
 }
 
 // =============================================================================
@@ -273,13 +282,15 @@ export const make = Effect.fnUntraced(
     ] => {
       const stream = response.stream.pipe(
         Stream.decodeText(),
-        Stream.pipeThroughChannel(Sse.decodeDataSchema(OpenAiSchema.ResponseStreamEvent)),
+        Stream.pipeThroughChannel(Sse.decode()),
+        // Some OpenAI-compatible servers end the stream with `data: [DONE]`
+        Stream.takeWhile((event) => event.data !== "[DONE]"),
+        Stream.mapEffect((event) => decodeResponseStreamEvent(event.data)),
         Stream.takeUntil((event) =>
-          event.data.type === "response.completed" ||
-          event.data.type === "response.incomplete" ||
-          event.data.type === "response.failed"
+          event.type === "response.completed" ||
+          event.type === "response.incomplete" ||
+          event.type === "response.failed"
         ),
-        Stream.map((event) => event.data),
         Stream.catchTags({
           // TODO: handle SSE retries
           Retry: (error) => Stream.die(error),
@@ -311,31 +322,47 @@ export const make = Effect.fnUntraced(
         )
       })
 
-    const decodeEmbedding = HttpClientResponse.schemaBodyJson(OpenAiSchema.CreateEmbeddingResponse)
+    const postJson = <Response extends Schema.Decoder<unknown>>(
+      path: string,
+      schema: Response,
+      method: string
+    ) => {
+      const decode = HttpClientResponse.schemaBodyJson(schema)
+      return (payload: unknown): Effect.Effect<Response["Type"], AiError.AiError> =>
+        resolveHttpClient.pipe(
+          Effect.flatMap((client) =>
+            client.execute(HttpClientRequest.post(path, {
+              body: HttpBody.jsonUnsafe(payload)
+            })).pipe(
+              Effect.flatMap(decode),
+              Effect.catchTags({
+                HttpClientError: (error) => Errors.mapHttpClientError(error, method),
+                SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, method))
+              })
+            )
+          ),
+          withRedactedHeaders
+        )
+    }
 
-    const createEmbedding = (
-      payload: typeof OpenAiSchema.CreateEmbeddingRequest.Encoded
-    ): Effect.Effect<typeof OpenAiSchema.CreateEmbeddingResponse.Type, AiError.AiError> =>
-      resolveHttpClient.pipe(
-        Effect.flatMap((client) =>
-          client.execute(HttpClientRequest.post("/embeddings", {
-            body: HttpBody.jsonUnsafe(payload)
-          })).pipe(
-            Effect.flatMap(decodeEmbedding),
-            Effect.catchTags({
-              HttpClientError: (error) => Errors.mapHttpClientError(error, "createEmbedding"),
-              SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createEmbedding"))
-            })
-          )
-        ),
-        withRedactedHeaders
-      )
+    const createEmbedding: Service["createEmbedding"] = postJson(
+      "/embeddings",
+      OpenAiSchema.CreateEmbeddingResponse,
+      "createEmbedding"
+    )
+
+    const createDecisions: Service["createDecisions"] = postJson(
+      "/decisions",
+      OpenAiSchema.CreateDecisionsResponse,
+      "createDecisions"
+    )
 
     return OpenAiClient.of({
       client: httpClient,
       createResponse,
       createResponseStream,
-      createEmbedding
+      createEmbedding,
+      createDecisions
     })
   },
   withRedactedHeaders
@@ -499,7 +526,11 @@ const makeSocket = Effect.gen(function*() {
       const httpClient = Predicate.isNotUndefined(config?.transformClient)
         ? config.transformClient(client.client)
         : client.client
-      return Effect.orDie(httpClient.preprocess(HttpClientRequest.post("/responses")))
+      return Effect.catchTag(
+        httpClient.preprocess(HttpClientRequest.post("/responses")),
+        "HttpClientError",
+        (error) => Errors.mapHttpClientError(error, "createResponseStream")
+      )
     }
   )
   const makeWebSocket = yield* Socket.WebSocketConstructor
@@ -515,11 +546,15 @@ const makeSocket = Effect.gen(function*() {
     current: Turn | undefined
   }
 
-  const queueRef: RcRef.RcRef<SocketConnection> = yield* RcRef.make({
+  // Reuse the connection request to avoid exchanging credentials on each turn.
+  let connectionRequest: HttpClientRequest.HttpClientRequest | undefined
+
+  const queueRef: RcRef.RcRef<SocketConnection, AiError.AiError> = yield* RcRef.make({
     idleTimeToLive: 60_000,
     acquire: Effect.gen(function*() {
       const scope = yield* Effect.scope
       const request = yield* makeRequest
+      connectionRequest = request
       const socket = yield* Socket.makeWebSocket(request.url.replace(/^http/, "ws")).pipe(
         Effect.provideService(Socket.WebSocketConstructor, (url) =>
           makeWebSocket(url, {
@@ -546,13 +581,8 @@ const makeSocket = Effect.gen(function*() {
                 method: "createResponseStream",
                 reason: new AiError.NetworkError({
                   reason: "TransportError",
-                  request: {
-                    method: "POST",
-                    url: request.url,
-                    urlParams: [],
-                    hash: undefined,
-                    headers: request.headers
-                  },
+                  method: request.method,
+                  url: request.url,
                   description: "Failed to send message over WebSocket"
                 })
               })
@@ -572,12 +602,12 @@ const makeSocket = Effect.gen(function*() {
         if (event.type === "error") {
           const status = "status" in event ? Number(event.status) : NaN
           const error = ("error" in event ? event.error : event) as {
-            readonly type?: string
-            readonly code?: string
-            readonly message: string
+            readonly type?: string | null
+            readonly code?: string | null
+            readonly message?: string
           }
           const errorType = error.code ??
-            (error.type === "api_error" && /^gRPC error: Response with id=\S+ not found$/.test(error.message)
+            (error.type === "api_error" && /^gRPC error: Response with id=\S+ not found$/.test(error.message ?? "")
               ? "previous_response_not_found"
               : error.type ?? "unknown")
           const json = JSON.stringify(error)
@@ -603,14 +633,7 @@ const makeSocket = Effect.gen(function*() {
                   : status,
                 metadata: error as any,
                 http: {
-                  body: json,
-                  request: {
-                    method: "POST",
-                    url: request.url,
-                    urlParams: [],
-                    hash: undefined,
-                    headers: request.headers
-                  }
+                  body: json
                 }
               })
             }))
@@ -643,13 +666,8 @@ const makeSocket = Effect.gen(function*() {
             method: "createResponseStream",
             reason: new AiError.NetworkError({
               reason: "TransportError",
-              request: {
-                method: "POST",
-                url: request.url,
-                urlParams: [],
-                hash: undefined,
-                headers: request.headers
-              },
+              method: request.method,
+              url: request.url,
               description: error.message
             })
           })),
@@ -666,12 +684,11 @@ const makeSocket = Effect.gen(function*() {
     })
   })
 
-  // Prime the websocket
-  yield* Effect.scoped(RcRef.get(queueRef))
+  // Prime the socket; let the first response stream report preparation failures.
+  yield* Effect.ignore(Effect.scoped(RcRef.get(queueRef)))
 
   // Websocket mode only allows one request at a time
   const semaphore = Semaphore.makeUnsafe(1)
-  const request = yield* makeRequest
 
   return OpenAiSocket.context({
     createResponseStream(options) {
@@ -700,10 +717,13 @@ const makeSocket = Effect.gen(function*() {
         return Stream.fromQueue(turn)
       }))
 
-      return Effect.succeed([
-        HttpClientResponse.fromWeb(request, new Response()),
-        stream
-      ])
+      return Effect.map(
+        Effect.suspend(() => connectionRequest === undefined ? makeRequest : Effect.succeed(connectionRequest)),
+        (request) => [
+          HttpClientResponse.fromWeb(request, new Response()),
+          stream
+        ]
+      )
     }
   }).pipe(
     Context.add(ResponseIdTracker.ResponseIdTracker, tracker)
@@ -716,11 +736,14 @@ const ErrorEvent = Schema.Struct({
   ),
   status: Schema.optionalKey(Schema.Int),
   // xAI sends `code` in place of `type`, e.g. `previous_response_not_found`
-  error: Schema.Struct({
-    type: Schema.optional(Schema.String),
-    code: Schema.optional(Schema.String),
-    message: Schema.String
-  })
+  error: Schema.StructWithRest(
+    Schema.Struct({
+      type: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      code: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      message: Schema.optionalKey(Schema.String)
+    }),
+    [Schema.Record(Schema.String, Schema.Unknown)]
+  )
 })
 
 const errorTypeToStatus: Record<string, number> = {
@@ -746,11 +769,13 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(AllEvents))
  *
  * This only works with the following WebSocket constructor layers:
  *
- * - `NodeSocket.layerWebSocketConstructorWS`
+ * - `NodeSocket.layerWebSocketConstructor`
+ * - `NodeWS.layerWebSocketConstructor`
  * - `BunSocket.layerWebSocketConstructor`
  *
  * These constructor layers support the non-standard options needed to set the
- * Authorization header.
+ * Authorization header. The header is resolved each time a socket connects, and
+ * the socket keeps it until it closes.
  *
  * @see {@link layerWebSocketMode} for providing WebSocket mode through a layer
  * @see {@link OpenAiSocket} for direct access to the WebSocket-backed streaming service
@@ -785,11 +810,13 @@ export const withWebSocketMode = <A, E, R>(
  *
  * This only works with the following WebSocket constructor layers:
  *
- * - `NodeSocket.layerWebSocketConstructorWS`
+ * - `NodeSocket.layerWebSocketConstructor`
+ * - `NodeWS.layerWebSocketConstructor`
  * - `BunSocket.layerWebSocketConstructor`
  *
  * These constructor layers support the non-standard options needed to set the
- * Authorization header.
+ * Authorization header. The header is resolved each time a socket connects, and
+ * the socket keeps it until it closes.
  *
  * @see {@link withWebSocketMode} for enabling WebSocket mode around a single effect
  *

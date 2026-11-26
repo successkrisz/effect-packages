@@ -1,106 +1,103 @@
 import * as OpenApiGenerator from "@effect/openapi-generator/OpenApiGenerator"
 import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
+import * as Sse from "effect/encoding/Sse"
+import * as Exit from "effect/Exit"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api"
 import type { OpenAPISpec, OpenAPISpecOperation, OpenAPISpecPathItem } from "effect/http-api/OpenApi"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import type * as JsonSchema from "effect/JsonSchema"
-import { spawnSync } from "node:child_process"
+import * as Schema from "effect/Schema"
+import { spawn } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { withGeneratedModule } from "../../../effect/test/utils/generatedModule.ts"
 
-// These integration checks start a fresh TypeScript compiler under CI load.
+// The first compile check starts the shared TypeScript compiler runs under CI load.
 const compilationTimeout = 60_000
 
-function assertRuntime(spec: OpenAPISpec, expected: string) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
+const assertRuntime = Effect.fnUntraced(function*(spec: OpenAPISpec, expected: string) {
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
 
-    const result = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient"
-    })
+  const result = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient"
+  })
 
-    // console.log(result)
-    assert.strictEqual(result, expected)
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerSchema)
-  )
-}
+  // console.log(result)
+  assert.strictEqual(result, expected)
+}, Effect.provide(OpenApiGenerator.layerTransformerSchema))
 
-function assertTypeOnly(spec: OpenAPISpec, expected: string) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
+const assertTypeOnly = Effect.fnUntraced(function*(spec: OpenAPISpec, expected: string) {
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
 
-    const result = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient-type-only"
-    })
+  const result = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient-type-only"
+  })
 
-    // console.log(result)
-    assert.strictEqual(result, expected)
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerTs)
-  )
-}
+  // console.log(result)
+  assert.strictEqual(result, expected)
+}, Effect.provide(OpenApiGenerator.layerTransformerTs))
 
-function assertRuntimeIncludes(
+const assertRuntimeIncludes = Effect.fnUntraced(function*(
   spec: OpenAPISpec,
   includes: ReadonlyArray<string>,
   excludes: ReadonlyArray<string> = []
 ) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
 
-    const result = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient"
-    })
+  const result = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient"
+  })
 
-    for (const expected of includes) {
-      assert.include(result, expected)
-    }
-    for (const excluded of excludes) {
-      assert.notInclude(result, excluded)
-    }
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerSchema)
-  )
-}
+  for (const expected of includes) {
+    assert.include(result, expected)
+  }
+  for (const excluded of excludes) {
+    assert.notInclude(result, excluded)
+  }
+}, Effect.provide(OpenApiGenerator.layerTransformerSchema))
 
-function assertTypeOnlyIncludes(
+const assertTypeOnlyIncludes = Effect.fnUntraced(function*(
   spec: OpenAPISpec,
   includes: ReadonlyArray<string>,
   excludes: ReadonlyArray<string> = []
 ) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
 
-    const result = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient-type-only"
-    })
+  const result = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient-type-only"
+  })
 
-    for (const expected of includes) {
-      assert.include(result, expected)
-    }
-    for (const excluded of excludes) {
-      assert.notInclude(result, excluded)
-    }
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerTs)
-  )
+  for (const expected of includes) {
+    assert.include(result, expected)
+  }
+  for (const excluded of excludes) {
+    assert.notInclude(result, excluded)
+  }
+}, Effect.provide(OpenApiGenerator.layerTransformerTs))
+
+interface CompileOptions {
+  readonly exactOptionalPropertyTypes?: boolean | undefined
+  readonly formats?: ReadonlyArray<OpenApiGenerator.OpenApiGeneratorFormat> | undefined
+  readonly usage?: string | undefined
 }
 
-function assertGeneratedClientsCompile(
-  spec: OpenAPISpec,
-  options: {
-    readonly exactOptionalPropertyTypes?: boolean | undefined
-    readonly formats?: ReadonlyArray<"httpclient" | "httpclient-type-only"> | undefined
-    readonly usage?: string | undefined
-  } = {}
-) {
+const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..")
+
+// Every case is registered while the file is collected, so a single compiler
+// run per tsconfig variant can check all generated clients.
+const compileCases: Array<{ readonly spec: OpenAPISpec; readonly options: CompileOptions }> = []
+
+const generateClients = ({ options, spec }: (typeof compileCases)[number]) => {
   const generate = (
-    format: "httpclient" | "httpclient-type-only",
+    format: OpenApiGenerator.OpenApiGeneratorFormat,
     layer: typeof OpenApiGenerator.layerTransformerSchema
   ) =>
     Effect.gen(function*() {
@@ -108,79 +105,161 @@ function assertGeneratedClientsCompile(
       return yield* generator.generate(spec, { name: "TestClient", format })
     }).pipe(Effect.provide(layer))
 
-  return Effect.gen(function*() {
-    const formats = options.formats ?? ["httpclient", "httpclient-type-only"]
-    const clients = yield* Effect.all(formats.map((format) =>
-      generate(
-        format,
-        format === "httpclient"
-          ? OpenApiGenerator.layerTransformerSchema
-          : OpenApiGenerator.layerTransformerTs
-      )
-    ))
-    const directory = mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".generated-clients-"))
-    try {
-      const files = clients.map((client, index) => {
-        const path = join(directory, `Client${index}.ts`)
-        writeFileSync(path, `${client}\n${options.usage ?? ""}`)
-        return path
-      })
-      const configPath = join(directory, "tsconfig.json")
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          compilerOptions: {
-            allowImportingTsExtensions: true,
-            exactOptionalPropertyTypes: options.exactOptionalPropertyTypes ?? true,
-            lib: ["ESNext", "DOM"],
-            module: "NodeNext",
-            noEmit: true,
-            skipLibCheck: true,
-            strict: true,
-            target: "ES2022",
-            types: [],
-            verbatimModuleSyntax: true
-          },
-          files
-        })
-      )
-      const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..")
-      const result = spawnSync(join(repositoryRoot, "node_modules/.bin/tsc"), ["-p", configPath, "--pretty", "false"], {
-        cwd: repositoryRoot,
-        encoding: "utf8"
-      })
-      assert.strictEqual(result.status, 0, `${result.stdout}${result.stderr}`)
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
-    }
-  })
+  const formats = options.formats ?? ["httpclient", "httpclient-type-only"]
+  return Effect.all(formats.map((format) =>
+    generate(
+      format,
+      format === "httpclient-type-only"
+        ? OpenApiGenerator.layerTransformerTs
+        : OpenApiGenerator.layerTransformerSchema
+    ).pipe(Effect.map((client) => `${client}\n${options.usage ?? ""}`))
+  ))
 }
 
-function assertHttpApiIncludes(
+const runTsc = (configPath: string) =>
+  Effect.callback<{ readonly status: number | null; readonly output: string }>((resume) => {
+    const child = spawn(join(repositoryRoot, "node_modules/.bin/tsc"), ["-p", configPath, "--pretty", "false"], {
+      cwd: repositoryRoot
+    })
+    let output = ""
+    child.stdout.on("data", (chunk) => output += chunk)
+    child.stderr.on("data", (chunk) => output += chunk)
+    child.on("error", (error) => resume(Effect.die(error)))
+    child.on("close", (status) => resume(Effect.succeed({ status, output })))
+    return Effect.sync(() => child.kill())
+  })
+
+// Each diagnostic starts on an unindented line; indented lines continue the
+// previous diagnostic.
+const parseDiagnostics = (output: string) => {
+  const diagnostics: Array<string> = []
+  for (const line of output.split(/\r?\n/)) {
+    if (line === "") continue
+    if (/^\s/.test(line) && diagnostics.length > 0) {
+      diagnostics[diagnostics.length - 1] += `\n${line}`
+      continue
+    }
+    diagnostics.push(line)
+  }
+  return diagnostics
+}
+
+// Type-checks every case with one compiler run per tsconfig variant and
+// returns the diagnostics that fail each case. A syntax error in one file makes
+// tsc skip semantic checks for the whole program, so a failed run cannot show
+// which cases are clean; each of its cases is then checked on its own.
+const typeCheckCases = Effect.fnUntraced(
+  function*(
+    cases: ReadonlyArray<{ readonly sources: ReadonlyArray<string>; readonly exactOptionalPropertyTypes: boolean }>
+  ) {
+    const directory = mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".generated-clients-"))
+    return yield* Effect.gen(function*() {
+      const files = cases.map(({ sources }, caseIndex) =>
+        sources.map((source, sourceIndex) => {
+          const path = join(directory, `Case${caseIndex}Client${sourceIndex}.ts`)
+          writeFileSync(path, source)
+          return path
+        })
+      )
+      // Returns every diagnostic of one compiler run, or an empty list when it succeeds.
+      const check = (name: string, exactOptionalPropertyTypes: boolean, caseIndexes: ReadonlyArray<number>) => {
+        const configPath = join(directory, `tsconfig.${name}.json`)
+        writeFileSync(
+          configPath,
+          JSON.stringify({
+            compilerOptions: {
+              allowImportingTsExtensions: true,
+              exactOptionalPropertyTypes,
+              lib: ["ESNext", "DOM"],
+              module: "NodeNext",
+              noEmit: true,
+              skipLibCheck: true,
+              strict: true,
+              target: "ES2022",
+              types: ["node"],
+              verbatimModuleSyntax: true
+            },
+            files: caseIndexes.flatMap((caseIndex) => files[caseIndex])
+          })
+        )
+        return runTsc(configPath).pipe(Effect.map(({ output, status }) => {
+          if (status === 0) return []
+          const diagnostics = parseDiagnostics(output)
+          return diagnostics.length === 0 ? [`tsc exited with ${status}`] : diagnostics
+        }))
+      }
+      const failures: Array<ReadonlyArray<string>> = cases.map(() => [])
+      const variants = [true, false].map((exactOptionalPropertyTypes) => ({
+        exactOptionalPropertyTypes,
+        caseIndexes: cases.flatMap((testCase, caseIndex) =>
+          testCase.exactOptionalPropertyTypes === exactOptionalPropertyTypes ? [caseIndex] : []
+        )
+      })).filter(({ caseIndexes }) => caseIndexes.length > 0)
+      yield* Effect.forEach(variants, ({ caseIndexes, exactOptionalPropertyTypes }) =>
+        Effect.gen(function*() {
+          const batch = yield* check(String(exactOptionalPropertyTypes), exactOptionalPropertyTypes, caseIndexes)
+          if (batch.length === 0) return
+          const isolated = yield* Effect.forEach(
+            caseIndexes,
+            (caseIndex) => check(`case${caseIndex}`, exactOptionalPropertyTypes, [caseIndex]),
+            { concurrency: 4 }
+          )
+          // If every case compiles alone, the failure comes from combining them, so it fails every case.
+          const combined = isolated.every((diagnostics) => diagnostics.length === 0)
+          caseIndexes.forEach((caseIndex, i) => {
+            failures[caseIndex] = combined ? batch : isolated[i]
+          })
+        }), { concurrency: "unbounded", discard: true })
+      return failures
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(directory, { recursive: true, force: true }))))
+  }
+)
+
+const compileAll = Effect.gen(function*() {
+  const generated = yield* Effect.forEach(compileCases, (testCase) => Effect.exit(generateClients(testCase)))
+  const failures = yield* typeCheckCases(generated.map((exit, caseIndex) => ({
+    sources: Exit.isSuccess(exit) ? exit.value : [],
+    exactOptionalPropertyTypes: compileCases[caseIndex].options.exactOptionalPropertyTypes ?? true
+  })))
+  return { generated, failures }
+})
+
+const compiled = Effect.runSync(Effect.cached(compileAll))
+
+const itGeneratedClientsCompile = (name: string, spec: OpenAPISpec, options: CompileOptions = {}) => {
+  const caseIndex = compileCases.push({ spec, options }) - 1
+  it.effect(name, () =>
+    Effect.gen(function*() {
+      const result = yield* compiled
+      const generated = result.generated[caseIndex]
+      if (Exit.isFailure(generated)) {
+        return yield* Effect.failCause(generated.cause)
+      }
+      assert.strictEqual(result.failures[caseIndex].join("\n"), "")
+    }), compilationTimeout)
+}
+
+const assertHttpApiIncludes = Effect.fnUntraced(function*(
   spec: OpenAPISpec,
   includes: ReadonlyArray<string>,
   excludes: ReadonlyArray<string> = []
 ) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
 
-    const result = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpapi"
-    })
+  const result = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpapi"
+  })
 
-    for (const expected of includes) {
-      assert.include(result, expected)
-    }
-    for (const excluded of excludes) {
-      assert.notInclude(result, excluded)
-    }
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerSchema)
-  )
-}
+  for (const expected of includes) {
+    assert.include(result, expected)
+  }
+  for (const excluded of excludes) {
+    assert.notInclude(result, excluded)
+  }
+}, Effect.provide(OpenApiGenerator.layerTransformerSchema))
 
-function assertHttpApiWithWarnings(
+const assertHttpApiWithWarnings = Effect.fnUntraced(function*(
   spec: OpenAPISpec,
   options: {
     readonly includes?: ReadonlyArray<string> | undefined
@@ -196,115 +275,134 @@ function assertHttpApiWithWarnings(
     >
   }
 ) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
-    const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
 
-    const result = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpapi",
-      onWarning: (warning) => {
-        warnings.push(warning)
-      }
-    })
+  const result = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpapi",
+    onWarning: (warning) => {
+      warnings.push(warning)
+    }
+  })
 
-    for (const expected of options.includes ?? []) {
-      assert.include(result, expected)
-    }
-    for (const excluded of options.excludes ?? []) {
-      assert.notInclude(result, excluded)
-    }
-    for (const { substring, count } of options.occurrences ?? []) {
-      assert.strictEqual(result.split(substring).length - 1, count)
-    }
+  for (const expected of options.includes ?? []) {
+    assert.include(result, expected)
+  }
+  for (const excluded of options.excludes ?? []) {
+    assert.notInclude(result, excluded)
+  }
+  for (const { substring, count } of options.occurrences ?? []) {
+    assert.strictEqual(result.split(substring).length - 1, count)
+  }
 
-    assert.deepStrictEqual(
-      warnings.map((warning) => ({
-        code: warning.code,
-        path: warning.path,
-        method: warning.method,
-        operationId: warning.operationId
-      })),
-      options.warnings
-    )
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerSchema)
+  assert.deepStrictEqual(
+    warnings.map((warning) => ({
+      code: warning.code,
+      path: warning.path,
+      method: warning.method,
+      operationId: warning.operationId
+    })),
+    options.warnings
   )
+}, Effect.provide(OpenApiGenerator.layerTransformerSchema))
+
+const generateHttpApi = Effect.fnUntraced(function*(spec: OpenAPISpec) {
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
+
+  const source = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpapi",
+    onWarning: (warning) => {
+      warnings.push(warning)
+    }
+  })
+
+  return { source, warnings }
+}, Effect.provide(OpenApiGenerator.layerTransformerSchema))
+
+const withReexportedHttpApi = (source: string, check: (spec: OpenAPISpec) => void) =>
+  Effect.promise(() =>
+    withGeneratedModule<{ TestClient: HttpApi.HttpApi<string, never> }>(
+      source,
+      ({ TestClient }) => check(OpenApi.fromApi(TestClient))
+    )
+  )
+
+const findEndpoint = (source: string, method: string, path: string): string => {
+  const line = source.split("\n").find((line) =>
+    line.includes(`HttpApiEndpoint.${method}(`) && line.includes(`", ${JSON.stringify(path)}`)
+  )
+  assert.isDefined(line, `Expected ${method} ${path} in:\n${source}`)
+  return line!
 }
 
-function assertRuntimeStableWithWarnings(
+const assertRuntimeStableWithWarnings = Effect.fnUntraced(function*(
   spec: OpenAPISpec,
   expectedWarnings: ReadonlyArray<
     Pick<OpenApiGenerator.OpenApiGeneratorWarning, "code" | "path" | "method" | "operationId">
   >
 ) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
-    const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
 
-    const baseline = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient"
-    })
-    const withWarnings = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient",
-      onWarning: (warning) => {
-        warnings.push(warning)
-      }
-    })
+  const baseline = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient"
+  })
+  const withWarnings = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient",
+    onWarning: (warning) => {
+      warnings.push(warning)
+    }
+  })
 
-    assert.strictEqual(withWarnings, baseline)
-    assert.deepStrictEqual(
-      warnings.map((warning) => ({
-        code: warning.code,
-        path: warning.path,
-        method: warning.method,
-        operationId: warning.operationId
-      })),
-      expectedWarnings
-    )
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerSchema)
+  assert.strictEqual(withWarnings, baseline)
+  assert.deepStrictEqual(
+    warnings.map((warning) => ({
+      code: warning.code,
+      path: warning.path,
+      method: warning.method,
+      operationId: warning.operationId
+    })),
+    expectedWarnings
   )
-}
+}, Effect.provide(OpenApiGenerator.layerTransformerSchema))
 
-function assertTypeOnlyStableWithWarnings(
+const assertTypeOnlyStableWithWarnings = Effect.fnUntraced(function*(
   spec: OpenAPISpec,
   expectedWarnings: ReadonlyArray<
     Pick<OpenApiGenerator.OpenApiGeneratorWarning, "code" | "path" | "method" | "operationId">
   >
 ) {
-  return Effect.gen(function*() {
-    const generator = yield* OpenApiGenerator.OpenApiGenerator
-    const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
+  const generator = yield* OpenApiGenerator.OpenApiGenerator
+  const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
 
-    const baseline = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient-type-only"
-    })
-    const withWarnings = yield* generator.generate(spec, {
-      name: "TestClient",
-      format: "httpclient-type-only",
-      onWarning: (warning) => {
-        warnings.push(warning)
-      }
-    })
+  const baseline = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient-type-only"
+  })
+  const withWarnings = yield* generator.generate(spec, {
+    name: "TestClient",
+    format: "httpclient-type-only",
+    onWarning: (warning) => {
+      warnings.push(warning)
+    }
+  })
 
-    assert.strictEqual(withWarnings, baseline)
-    assert.deepStrictEqual(
-      warnings.map((warning) => ({
-        code: warning.code,
-        path: warning.path,
-        method: warning.method,
-        operationId: warning.operationId
-      })),
-      expectedWarnings
-    )
-  }).pipe(
-    Effect.provide(OpenApiGenerator.layerTransformerTs)
+  assert.strictEqual(withWarnings, baseline)
+  assert.deepStrictEqual(
+    warnings.map((warning) => ({
+      code: warning.code,
+      path: warning.path,
+      method: warning.method,
+      operationId: warning.operationId
+    })),
+    expectedWarnings
   )
-}
+}, Effect.provide(OpenApiGenerator.layerTransformerTs))
 
 const regressionSpec: OpenAPISpec = {
   openapi: "3.1.0",
@@ -640,8 +738,93 @@ function multipartSpec(schema: JsonSchema.JsonSchema, schemas: JsonSchema.Defini
   }
 }
 
-// spawnSync blocks this worker, so compilation must not consume another test's deadline.
-describe("OpenApiGenerator", { concurrent: false }, () => {
+function sharedMultipartSpec(
+  schema: JsonSchema.JsonSchema,
+  schemas: JsonSchema.Definitions,
+  json: Record<string, unknown> = { schema }
+): OpenAPISpec {
+  const spec = multipartSpec(schema, schemas)
+  return {
+    ...spec,
+    paths: {
+      ...spec.paths,
+      "/json": {
+        post: {
+          operationId: "createJson",
+          parameters: [],
+          requestBody: { required: true, content: { "application/json": json } } as any,
+          responses: { "204": { description: "Created" } },
+          tags: ["Upload"],
+          security: []
+        }
+      }
+    }
+  }
+}
+
+const attachmentRef = { $ref: "#/components/schemas/Attachment" }
+
+function attachmentSpec(paths: Record<string, OpenAPISpecPathItem>): OpenAPISpec {
+  return {
+    openapi: "3.1.0",
+    info: { title: "Attachment API", version: "1.0.0" },
+    paths: {
+      "/attachments": {
+        post: {
+          operationId: "createAttachment",
+          parameters: [],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: attachmentRef } }
+          },
+          responses: {
+            "200": { description: "Created", content: { "application/json": { schema: attachmentRef } } }
+          },
+          tags: ["Attachments"],
+          security: []
+        }
+      },
+      ...paths
+    },
+    components: {
+      schemas: {
+        Attachment: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            data: { type: "string", format: "binary" }
+          },
+          required: ["name", "data"],
+          additionalProperties: false
+        }
+      },
+      securitySchemes: {}
+    },
+    security: [],
+    tags: [{ name: "Attachments" }]
+  }
+}
+
+const cookieParameterSpec: OpenAPISpec = {
+  openapi: "3.1.0",
+  info: { title: "Cookie parameter API", version: "1.0.0" },
+  paths: {
+    "/greeting": {
+      get: {
+        operationId: "getGreeting",
+        parameters: [{ name: "locale", in: "cookie", required: true, schema: { type: "string" } }],
+        responses: { "204": { description: "No content" } },
+        tags: ["Greeting"],
+        security: []
+      }
+    }
+  },
+  components: { schemas: {}, securitySchemes: {} },
+  security: [],
+  tags: [{ name: "Greeting" }]
+}
+
+describe("OpenApiGenerator", () => {
   describe("schema", () => {
     it.effect("get operation", () =>
       assertRuntime(
@@ -708,8 +891,13 @@ import type * as HttpClient from "effect/http/HttpClient"
 import * as HttpClientError from "effect/http/HttpClientError"
 import * as HttpClientRequest from "effect/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
-// schemas
+
+export type GetUserPathParams = { readonly "id": string }
+
+export const GetUserPathParams = Schema.Struct({ "id": Schema.String })
+
 export type GetUser200 = { readonly "id": string, readonly "name": string }
+
 export const GetUser200 = Schema.Struct({ "id": Schema.String, "name": Schema.String }).annotate({ "description": "User object" })
 
 export interface OperationConfig {
@@ -736,12 +924,12 @@ export type WithOptionalResponse<A, Config extends OperationConfig | undefined> 
   : Config extends { readonly includeResponse?: false | undefined } | undefined ? A
   : A | [A, HttpClientResponse.HttpClientResponse]
 
-export const make = (
-  httpClient: HttpClient.HttpClient,
+export const make = <E, R>(
+  httpClient: HttpClient.HttpClient.With<E, R>,
   options: {
-    readonly transformClient?: ((client: HttpClient.HttpClient) => Effect.Effect<HttpClient.HttpClient>) | undefined
+    readonly transformClient?: ((client: HttpClient.HttpClient.With<E, R>) => Effect.Effect<HttpClient.HttpClient.With<E, R>>) | undefined
   } = {}
-): TestClient => {
+): TestClient<E, R> => {
   const unexpectedStatus = (response: HttpClientResponse.HttpClientResponse) =>
     Effect.flatMap(
       Effect.orElseSucceed(response.json, () => "Unexpected status code"),
@@ -758,7 +946,7 @@ export const make = (
     )
   const withResponse = <Config extends OperationConfig>(config: Config | undefined) => (
     f: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<any, any>,
-  ): (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<any, any> => {
+  ): (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<any, any, R> => {
     const withOptionalResponse = (
       config?.includeResponse
         ? (response: HttpClientResponse.HttpClientResponse) => Effect.map(f(response), (a) => [a, response])
@@ -772,10 +960,38 @@ export const make = (
           )
       : (request) => Effect.flatMap(httpClient.execute(request), withOptionalResponse)
   }
-  const __encodePathParam = encodeURIComponent
+  const __encodePathParam = (
+    name: string,
+    value: unknown,
+    style: "simple" | "label" | "matrix",
+    explode: boolean,
+  ): string => {
+    const encode = (value: unknown): string => {
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        throw new TypeError("Path parameters must be scalars or arrays of scalars")
+      }
+      return encodeURIComponent(String(value)).replace(/[!'()*]/g, (char) => "%" + char.charCodeAt(0).toString(16).toUpperCase())
+    }
+    const values = Array.isArray(value) ? value.map(encode) : [encode(value)]
+    if (values.length === 0) throw new TypeError("Path parameter arrays must be non-empty")
+    switch (style) {
+      case "simple": {
+        const result = values.join(",")
+        if (result === "") throw new TypeError("Path parameters must be non-empty")
+        return result
+      }
+      case "label": return "." + values.join(explode ? "." : ",")
+      case "matrix": {
+        const prefix = ";" + encode(name)
+        return explode
+          ? values.map((value) => prefix + (value === "" ? "" : "=" + value)).join("")
+          : prefix + "=" + values.join(",")
+      }
+    }
+  }
   const __makePathRequest = (
     method: (url: string) => HttpClientRequest.HttpClientRequest,
-    parameters: ReadonlyArray<string>,
+    parameters: ReadonlyArray<unknown>,
     getPath: () => string,
   ) => Effect.suspend(() => {
     const fail = (description: string, cause?: unknown) => Effect.fail(
@@ -787,7 +1003,7 @@ export const make = (
         }),
       }),
     )
-    if (parameters.some((value) => value === "" || /^(?:\\.|%2e){1,2}$/i.test(value))) {
+    if (parameters.some((value) => typeof value === "string" && (value === "" || /^(?:\\.|%2e){1,2}$/i.test(value)))) {
       return fail("Path parameters must be non-empty and cannot be dot segments")
     }
     let path: string
@@ -805,16 +1021,9 @@ export const make = (
     <Schema extends Schema.Constraint>(schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
       HttpClientResponse.schemaBodyJson(schema)(response)
-  const decodeError =
-    <const Tag extends string, Schema extends Schema.Constraint>(tag: Tag, schema: Schema) =>
-    (response: HttpClientResponse.HttpClientResponse) =>
-      Effect.flatMap(
-        HttpClientResponse.schemaBodyJson(schema)(response),
-        (cause) => Effect.fail(TestClientError(tag, cause, response)),
-      )
   return {
     httpClient,
-    "getUser": (id, options: Parameters<TestClient["getUser"]>[1]) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam(id) + "").pipe(
+    "getUser": (id, options: Parameters<TestClient["getUser"]>[1]) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam("id", id, "simple", false) + "").pipe(
     Effect.flatMap((request) => request.pipe(
       withResponse(options?.config)(HttpClientResponse.matchStatus({
       "2xx": decodeSuccess(GetUser200),
@@ -825,11 +1034,11 @@ export const make = (
   }
 }
 
-export interface TestClient {
-  readonly httpClient: HttpClient.HttpClient
+export interface TestClient<E = HttpClientError.HttpClientError, R = never> {
+  readonly httpClient: HttpClient.HttpClient.With<E, R>
   readonly "getUser": {
-    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<typeof GetUser200.Type, Config>, HttpClientError.HttpClientError | SchemaError>;
-    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<typeof GetUser200.Type, Config | undefined>, HttpClientError.HttpClientError | SchemaError>;
+    <Config extends OperationConfig | undefined = undefined>(id: (typeof GetUserPathParams.Encoded)["id"], options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<GetUser200, Config>, E | HttpClientError.HttpClientError | SchemaError, R>;
+    <Config extends OperationConfig | undefined = undefined>(id: (typeof GetUserPathParams.Encoded)["id"], options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<GetUser200, Config | undefined>, E | HttpClientError.HttpClientError | SchemaError, R>;
   }
 }
 
@@ -857,7 +1066,8 @@ export const TestClientError = <Tag extends string, E>(
     cause,
     response,
     request: response.request,
-  }) as any`
+  }) as any
+`
       ))
 
     it.effect("resolves JSON Pointer-escaped local references", () =>
@@ -962,7 +1172,7 @@ export const TestClientError = <Tag extends string, E>(
         },
         [
           `import * as Sse from "effect/encoding/Sse"`,
-          `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: typeof StreamEvents200Sse.Type }, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
+          `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: StreamEvents200Sse }, E | HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, R | typeof StreamEvents200Sse.DecodingServices>`,
           `"streamEventsSse": () => HttpClientRequest.get("/events").pipe(`,
           `sseRequest(StreamEvents200Sse)`,
           `schema: Schema.ConstraintDecoder<Type, DecodingServices>`
@@ -1024,7 +1234,7 @@ export const TestClientError = <Tag extends string, E>(
         [
           `"id": Schema.optionalKey(Schema.String), "event": Schema.Literal("message"), "data": Schema.String`,
           `"id": Schema.optionalKey(Schema.String), "event": Schema.Literal("effect/http-api/stream/failure"), "data": Schema.String`,
-          `readonly "streamEventsSse": () => Stream.Stream<typeof StreamEvents200Sse.Type, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
+          `readonly "streamEventsSse": () => Stream.Stream<StreamEvents200Sse, E | HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, R | typeof StreamEvents200Sse.DecodingServices>`,
           `sseEventRequest(StreamEvents200Sse)`,
           `Stream.pipeThroughChannel(Sse.decodeSchema(schema))`
         ]
@@ -1100,6 +1310,7 @@ export const TestClientError = <Tag extends string, E>(
         `Schema.Literal("InvalidRequestError")`,
         `Schema.Literal("DeviceTokenOAuthError")`,
         `"400": decodeError("PollDeviceToken400", PollDeviceToken400)`,
+        `TestClientError<"PollDeviceToken400", PollDeviceToken400>`,
         `export type DownloadArchive404 = { readonly "title": string }`,
         `const decodeBinary = (response: HttpClientResponse.HttpClientResponse) =>`,
         `Effect.map(response.arrayBuffer, (buffer) => new Uint8Array(buffer))`,
@@ -1107,17 +1318,17 @@ export const TestClientError = <Tag extends string, E>(
         `readonly "downloadArchive": {`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
-        `readonly "downloadArchiveStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
-        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadArchiveStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
+        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
         `"downloadAvatar": (options: Parameters<TestClient["downloadAvatar"]>[0]) => HttpClientRequest.get("/avatar").pipe(
       withResponse(options?.config)(HttpClientResponse.matchStatus({
       "2xx": decodeBinary`,
-        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
         `"400": decodeError("DownloadMixedContent400", DownloadMixedContent400)`,
         `readonly "downloadMixedContent": {`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
-        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
         `"200": () => Effect.void`,
         `"404": decodeVoidError("404")`,
         `"500": decodeVoidError("500")`,
@@ -1125,7 +1336,7 @@ export const TestClientError = <Tag extends string, E>(
         `TestClientError<"500", undefined>`
       ], [
         `"200": decodeSuccess(DownloadMixedContent200)`,
-        `typeof DownloadMixedContent200.Type | Uint8Array`
+        `DownloadMixedContent200 | Uint8Array`
       ]))
 
     it.effect("routes mixed and non-2xx bodiless success responses", () =>
@@ -1133,8 +1344,46 @@ export const TestClientError = <Tag extends string, E>(
         `"200": decodeSuccess(MixedSuccess200)`,
         `"204": () => Effect.void`,
         `"304": () => Effect.void`,
-        `WithOptionalResponse<typeof MixedSuccess200.Type | void, Config>`
+        `WithOptionalResponse<MixedSuccess200 | void, Config>`
       ]))
+
+    it.effect("emits included component schemas that no operation references", () =>
+      Effect.gen(function*() {
+        const generator = yield* OpenApiGenerator.OpenApiGenerator
+        const result = yield* generator.generate({
+          openapi: "3.1.0",
+          info: { title: "Test API", version: "1.0.0" },
+          paths: {
+            "/ping": {
+              get: {
+                operationId: "ping",
+                parameters: [],
+                responses: { 204: { description: "Pong" } },
+                tags: ["Ping"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {
+              Legacy: {
+                type: "object",
+                properties: { value: { $ref: "#/components/schemas/LegacyValue" } },
+                required: ["value"]
+              },
+              LegacyValue: { type: "string" },
+              Unlisted: { type: "string" }
+            },
+            securitySchemes: {}
+          },
+          security: [],
+          tags: [{ name: "Ping" }]
+        }, { name: "TestClient", format: "httpclient", includeSchemas: ["Legacy"] })
+
+        assert.include(result, "export const Legacy = ")
+        assert.include(result, "export const LegacyValue = ")
+        assert.notInclude(result, "Unlisted")
+      }).pipe(Effect.provide(OpenApiGenerator.layerTransformerSchema)))
   })
 
   describe("type-only", () => {
@@ -1200,7 +1449,9 @@ import type * as HttpClient from "effect/http/HttpClient"
 import * as HttpClientError from "effect/http/HttpClientError"
 import * as HttpClientRequest from "effect/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
-// schemas
+
+export type GetUserPathParams = { readonly "id": string }
+
 export type GetUser200 = { readonly "id": string, readonly "name": string }
 
 export interface OperationConfig {
@@ -1227,12 +1478,12 @@ export type WithOptionalResponse<A, Config extends OperationConfig | undefined> 
   : Config extends { readonly includeResponse?: false | undefined } | undefined ? A
   : A | [A, HttpClientResponse.HttpClientResponse]
 
-export const make = (
-  httpClient: HttpClient.HttpClient,
+export const make = <E, R>(
+  httpClient: HttpClient.HttpClient.With<E, R>,
   options: {
-    readonly transformClient?: ((client: HttpClient.HttpClient) => Effect.Effect<HttpClient.HttpClient>) | undefined
+    readonly transformClient?: ((client: HttpClient.HttpClient.With<E, R>) => Effect.Effect<HttpClient.HttpClient.With<E, R>>) | undefined
   } = {}
-): TestClient => {
+): TestClient<E, R> => {
   const unexpectedStatus = (response: HttpClientResponse.HttpClientResponse) =>
     Effect.flatMap(
       Effect.orElseSucceed(response.json, () => "Unexpected status code"),
@@ -1249,7 +1500,7 @@ export const make = (
     )
   const withResponse = <Config extends OperationConfig>(config: Config | undefined) => (
     f: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<any, any>,
-  ): (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<any, any> => {
+  ): (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<any, any, R> => {
     const withOptionalResponse = (
       config?.includeResponse
         ? (response: HttpClientResponse.HttpClientResponse) => Effect.map(f(response), (a) => [a, response])
@@ -1263,10 +1514,38 @@ export const make = (
           )
       : (request) => Effect.flatMap(httpClient.execute(request), withOptionalResponse)
   }
-  const __encodePathParam = encodeURIComponent
+  const __encodePathParam = (
+    name: string,
+    value: unknown,
+    style: "simple" | "label" | "matrix",
+    explode: boolean,
+  ): string => {
+    const encode = (value: unknown): string => {
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        throw new TypeError("Path parameters must be scalars or arrays of scalars")
+      }
+      return encodeURIComponent(String(value)).replace(/[!'()*]/g, (char) => "%" + char.charCodeAt(0).toString(16).toUpperCase())
+    }
+    const values = Array.isArray(value) ? value.map(encode) : [encode(value)]
+    if (values.length === 0) throw new TypeError("Path parameter arrays must be non-empty")
+    switch (style) {
+      case "simple": {
+        const result = values.join(",")
+        if (result === "") throw new TypeError("Path parameters must be non-empty")
+        return result
+      }
+      case "label": return "." + values.join(explode ? "." : ",")
+      case "matrix": {
+        const prefix = ";" + encode(name)
+        return explode
+          ? values.map((value) => prefix + (value === "" ? "" : "=" + value)).join("")
+          : prefix + "=" + values.join(",")
+      }
+    }
+  }
   const __makePathRequest = (
     method: (url: string) => HttpClientRequest.HttpClientRequest,
-    parameters: ReadonlyArray<string>,
+    parameters: ReadonlyArray<unknown>,
     getPath: () => string,
   ) => Effect.suspend(() => {
     const fail = (description: string, cause?: unknown) => Effect.fail(
@@ -1278,7 +1557,7 @@ export const make = (
         }),
       }),
     )
-    if (parameters.some((value) => value === "" || /^(?:\\.|%2e){1,2}$/i.test(value))) {
+    if (parameters.some((value) => typeof value === "string" && (value === "" || /^(?:\\.|%2e){1,2}$/i.test(value)))) {
       return fail("Path parameters must be non-empty and cannot be dot segments")
     }
     let path: string
@@ -1328,7 +1607,7 @@ export const make = (
   }
   return {
     httpClient,
-    "getUser": (id, options: Parameters<TestClient["getUser"]>[1]) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam(id) + "").pipe(
+    "getUser": (id, options: Parameters<TestClient["getUser"]>[1]) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam("id", id, "simple", false) + "").pipe(
     Effect.flatMap((request) => request.pipe(
       onRequest(options?.config)(["2xx"])
     ))
@@ -1336,11 +1615,11 @@ export const make = (
   }
 }
 
-export interface TestClient {
-  readonly httpClient: HttpClient.HttpClient
+export interface TestClient<E = HttpClientError.HttpClientError, R = never> {
+  readonly httpClient: HttpClient.HttpClient.With<E, R>
   readonly "getUser": {
-    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<GetUser200, Config>, HttpClientError.HttpClientError>;
-    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<GetUser200, Config | undefined>, HttpClientError.HttpClientError>;
+    <Config extends OperationConfig | undefined = undefined>(id: GetUserPathParams["id"], options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<GetUser200, Config>, E | HttpClientError.HttpClientError, R>;
+    <Config extends OperationConfig | undefined = undefined>(id: GetUserPathParams["id"], options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<GetUser200, Config | undefined>, E | HttpClientError.HttpClientError, R>;
   }
 }
 
@@ -1368,7 +1647,8 @@ export const TestClientError = <Tag extends string, E>(
     cause,
     response,
     request: response.request,
-  }) as any`
+  }) as any
+`
       ))
 
     it.effect("preserves response variants and routes binary and bodiless statuses", () =>
@@ -1382,16 +1662,16 @@ export const TestClientError = <Tag extends string, E>(
         `readonly "downloadArchive": {`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
-        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
         `"downloadAvatar": (options: Parameters<TestClient["downloadAvatar"]>[0]) => HttpClientRequest.get("/avatar").pipe(
       onRequest(options?.config)([], undefined, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
-        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
         `import * as HttpClient from "effect/http/HttpClient"`,
         `onRequest(options?.config)([], {"400":"DownloadMixedContent400"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
         `readonly "downloadMixedContent": {`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
         `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
-        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, E | HttpClientError.HttpClientError, R>`,
         `onRequest(options?.config)([], undefined, {"binary":[],"voidSuccess":["200"],"voidError":["404","500"]})`,
         `cases[code] = decodeVoidError(code)`,
         `TestClientError<"404", undefined>`,
@@ -1407,14 +1687,281 @@ export const TestClientError = <Tag extends string, E>(
         `WithOptionalResponse<MixedSuccess200 | void, Config>`
       ]))
 
-    it.effect(
-      "emits compilable clients for schema-backed and type-only formats",
-      () => assertGeneratedClientsCompile(responseMatchingSpec),
-      compilationTimeout
-    )
+    itGeneratedClientsCompile("emits compilable clients for schema-backed and type-only formats", responseMatchingSpec)
   })
 
   describe("httpapi", () => {
+    const Bytes = Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array())
+
+    it.effect("uses group-local endpoint names, qualified OpenAPI ids, and grouped parameter schemas", () =>
+      Effect.gen(function*() {
+        const spec = OpenApi.fromApi(
+          HttpApi.make("Api").add(
+            HttpApiGroup.make("balance").add(
+              HttpApiEndpoint.get("read", "/balance/:accountId", {
+                params: { accountId: Schema.String },
+                query: { currency: Schema.String },
+                headers: { "x-trace-id": Schema.String }
+              })
+            ),
+            HttpApiGroup.make("orders").add(HttpApiEndpoint.get("read", "/orders"))
+          )
+        )
+        const { source } = yield* generateHttpApi(spec)
+        assert.notInclude(source, "BalanceReadParams")
+
+        yield* Effect.promise(() =>
+          withGeneratedModule<{
+            TestClient: HttpApi.HttpApi<string, never> & {
+              readonly groups: Record<string, { readonly endpoints: Record<string, unknown> }>
+            }
+          }>(source, ({ TestClient }) => {
+            assert.deepStrictEqual(Object.keys(TestClient.groups.balance.endpoints), ["read"])
+            assert.deepStrictEqual(Object.keys(TestClient.groups.orders.endpoints), ["read"])
+            const reexported = OpenApi.fromApi(TestClient)
+            assert.strictEqual(reexported.paths["/balance/{accountId}"].get?.operationId, "balance.read")
+            assert.strictEqual(reexported.paths["/orders"].get?.operationId, "orders.read")
+            assert.deepStrictEqual(
+              reexported.paths["/balance/{accountId}"].get?.parameters,
+              spec.paths["/balance/{accountId}"].get?.parameters
+            )
+          })
+        )
+      }))
+
+    it.effect("rejects duplicate local endpoint names in the same group", () =>
+      Effect.gen(function*() {
+        const spec = OpenApi.fromApi(
+          HttpApi.make("Api").add(
+            HttpApiGroup.make("balance").add(
+              HttpApiEndpoint.get("read", "/balance/latest"),
+              HttpApiEndpoint.get("history", "/balance/history").annotate(OpenApi.Identifier, "read")
+            )
+          )
+        )
+        const result = yield* Effect.result(generateHttpApi(spec))
+        if (result._tag === "Success") {
+          assert.fail("Expected duplicate local endpoint names in the same group to fail")
+        }
+        assert.include(result.failure.message, "GET /balance/latest")
+        assert.include(result.failure.message, "GET /balance/history")
+        assert.include(result.failure.message, "read")
+      }))
+    const event = (name: string) =>
+      Schema.Struct({ ...Sse.EventEncoded.fields, event: Schema.Literal(name) }).annotate({ identifier: name })
+
+    itGeneratedClientsCompile(
+      "round-trips buffered binary payloads and responses into compilable HttpApi declarations",
+      OpenApi.fromApi(
+        HttpApi.make("Api").add(
+          HttpApiGroup.make("files").add(
+            HttpApiEndpoint.post("upload", "/upload", { payload: Bytes }),
+            HttpApiEndpoint.get("download", "/download", { success: Bytes })
+          )
+        )
+      ),
+      { formats: ["httpapi"] }
+    )
+
+    itGeneratedClientsCompile(
+      "round-trips SSE responses into compilable HttpApi declarations",
+      OpenApi.fromApi(
+        HttpApi.make("Api").add(
+          HttpApiGroup.make("events").add(
+            HttpApiEndpoint.get("events", "/events", {
+              success: HttpApiSchema.StreamSse({ data: Schema.Struct({ count: Schema.Number }) })
+            }),
+            HttpApiEndpoint.get("namedEvents", "/named-events", {
+              success: HttpApiSchema.StreamSse({ events: Schema.Union([event("FirstEvent"), event("SecondEvent")]) })
+            })
+          )
+        )
+      ),
+      { formats: ["httpapi"] }
+    )
+
+    const constrainedSseSpec: OpenAPISpec = {
+      openapi: "3.1.0",
+      info: { title: "Events", version: "1.0.0" },
+      security: [],
+      tags: [{ name: "Events" }],
+      paths: {
+        "/events": {
+          get: {
+            operationId: "events",
+            parameters: [],
+            tags: ["Events"],
+            security: [],
+            responses: {
+              "200": {
+                description: "Events",
+                content: {
+                  "text/event-stream": {
+                    schema: {
+                      anyOf: ["first", "second"].map((event) => ({
+                        $ref: "#/components/schemas/BaseEvent",
+                        type: "object",
+                        properties: { event: { enum: [event] } }
+                      }))
+                    },
+                    "x-effect-stream": {
+                      encoding: "sse",
+                      errorSchema: { not: {} },
+                      causeSchema: { type: "object" },
+                      failureEvent: "effect/http-api/stream/failure"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      components: {
+        securitySchemes: {},
+        schemas: {
+          BaseEvent: {
+            type: "object",
+            properties: { id: { type: "string" }, event: { type: "string" }, data: { type: "string" } },
+            required: ["event", "data"]
+          }
+        }
+      }
+    }
+
+    for (const format of ["httpapi", "httpclient", "httpclient-type-only"] as const) {
+      itGeneratedClientsCompile(
+        `preserves SSE reference sibling constraints (${format})`,
+        constrainedSseSpec,
+        {
+          formats: [format],
+          usage: `
+const first: Events200Sse = { event: "first", data: "payload" }
+const second: Events200Sse = { event: "second", data: "payload" }
+// @ts-expect-error The reference sibling restricts the event name.
+const unrelated: Events200Sse = { event: "unrelated", data: "payload" }
+`
+        }
+      )
+    }
+
+    const openApi30SseSpec = { ...constrainedSseSpec, openapi: "3.0.3" } as unknown as OpenAPISpec
+    for (
+      const [format, assertIncludes] of [
+        ["httpapi", assertHttpApiIncludes],
+        ["httpclient", assertRuntimeIncludes],
+        ["httpclient-type-only", assertTypeOnlyIncludes]
+      ] as const
+    ) {
+      it.effect(`ignores OpenAPI 3.0 SSE reference siblings (${format})`, () =>
+        assertIncludes(openApi30SseSpec, ["\"event\": string"], ["\"event\": \"first\"", "\"event\": \"second\""]))
+    }
+
+    it.effect("round-trips descriptions of responses without a body", () =>
+      Effect.gen(function*() {
+        const spec = OpenApi.fromApi(
+          HttpApi.make("Orders").add(
+            HttpApiGroup.make("orders").add(
+              HttpApiEndpoint.delete("deleteOrder", "/order", {
+                success: HttpApiSchema.Empty(204).annotate({ description: "" }),
+                error: HttpApiSchema.Empty(404).annotate({ description: "Order not found\n" })
+              })
+            )
+          )
+        )
+        const { source } = yield* generateHttpApi(spec)
+        yield* withReexportedHttpApi(source, (generated) =>
+          assert.deepStrictEqual(generated.paths["/order"].delete?.responses, spec.paths["/order"].delete!.responses))
+      }))
+
+    it.effect("keeps the explicit response when default would map to the same status", () =>
+      Effect.gen(function*() {
+        const explicit = { 200: { description: "OK" }, 500: { description: "Server error" } }
+        const responses = { ...explicit, default: { description: "Other statuses" } }
+        const { source, warnings } = yield* generateHttpApi({
+          openapi: "3.1.0",
+          info: { title: "Orders", version: "1" },
+          paths: {
+            "/order": {
+              get: {
+                operationId: "getOrder",
+                parameters: [],
+                tags: ["orders"],
+                security: [],
+                responses
+              }
+            }
+          },
+          components: { schemas: {}, securitySchemes: {} },
+          security: [],
+          tags: []
+        })
+        yield* withReexportedHttpApi(source, (generated) =>
+          assert.deepStrictEqual(generated.paths["/order"].get?.responses, explicit))
+        assert.deepStrictEqual(warnings, [{
+          code: "default-response-remapped",
+          message: "Default response was skipped because its remapped status 500 is explicitly defined.",
+          path: "/order",
+          method: "get",
+          operationId: "getOrder"
+        }])
+      }))
+
+    it.effect.each([
+      { version: "3.1.0", local: "Order not found", empty: "", inherited: "Shared order error" },
+      { version: "3.0.3", local: "Missing resource", empty: "Missing resource", inherited: "Missing resource" }
+    ])(
+      "resolves response reference descriptions for OpenAPI $version",
+      ({ version, local, empty, inherited }) =>
+        Effect.gen(function*() {
+          const shared = { $ref: "#/components/responses/Missing" }
+          const order = { $ref: "#/components/responses/OrderError" }
+          const { source } = yield* generateHttpApi({
+            openapi: version,
+            info: { title: "Orders", version: "1" },
+            paths: {
+              "/order": {
+                get: {
+                  operationId: "getOrder",
+                  parameters: [],
+                  tags: ["orders"],
+                  security: [],
+                  description: "Look up an order",
+                  responses: {
+                    204: { description: "OK" },
+                    400: order,
+                    403: { ...order, description: "" },
+                    404: { ...order, description: "Order not found" },
+                    410: shared
+                  }
+                }
+              }
+            },
+            components: {
+              schemas: {},
+              securitySchemes: {},
+              responses: {
+                Missing: { description: "Missing resource" },
+                OrderError: { ...shared, description: "Shared order error" }
+              }
+            },
+            security: [],
+            tags: []
+          } as unknown as OpenAPISpec)
+          yield* withReexportedHttpApi(source, (generated) => {
+            const operation = generated.paths["/order"].get!
+            assert.strictEqual(operation.description, "Look up an order")
+            assert.deepStrictEqual(operation.responses, {
+              204: { description: "OK" },
+              400: { description: inherited },
+              403: { description: empty },
+              404: { description: local },
+              410: { description: "Missing resource" }
+            })
+          })
+        })
+    )
+
     it.effect("generates tagged groups with endpoint annotations and representable parameters", () =>
       assertHttpApiIncludes(
         {
@@ -1496,13 +2043,13 @@ export const TestClientError = <Tag extends string, E>(
           ]
         },
         [
-          `import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, OpenApi } from "effect/http-api"`,
+          `import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api"`,
           `export type GetUserPathParams = { readonly "id": string }`,
           `export const GetUserPathParams = Schema.Struct({ "id": Schema.String })`,
           `class UsersGroup extends HttpApiGroup.make("Users")`,
           `.annotate(OpenApi.Description, "User operations")`,
           `.annotate(OpenApi.ExternalDocs, {"url":"https://example.com/users"})`,
-          `HttpApiEndpoint.get("getUser", "/users/:id", { params: GetUserPathParams, query: GetUserQuery, headers: GetUserHeaders, success: GetUser200, error: HttpApiSchema.Empty(404) })`,
+          `HttpApiEndpoint.get("getUser", "/users/:id", { params: GetUserPathParams, query: GetUserQuery, headers: GetUserHeaders, success: GetUser200, error: HttpApiSchema.Empty(404).annotate({ description: "Not found" }) })`,
           `.annotate(OpenApi.Identifier, "getUser")`,
           `.annotate(OpenApi.Summary, "Get user")`,
           `.annotate(OpenApi.Description, "Read a user")`,
@@ -1561,7 +2108,7 @@ export const TestClientError = <Tag extends string, E>(
         [
           `export type GetApplicationPathParams = { readonly "application_id": string }`,
           `export const GetApplicationPathParams = Schema.Struct({ "application_id": Schema.String })`,
-          `HttpApiEndpoint.get("getApplication", "/applications/:application_id", { params: GetApplicationPathParams, success: HttpApiSchema.Empty(200) })`
+          `HttpApiEndpoint.get("getApplication", "/applications/:application_id", { params: GetApplicationPathParams, success: HttpApiSchema.Empty(200).annotate({ description: "Application" }) })`
         ],
         [
           `export class GetApplicationPathParams extends Schema.Class<GetApplicationPathParams>("GetApplicationPathParams")({ "application_id": Schema.String }) {}`
@@ -1600,7 +2147,7 @@ export const TestClientError = <Tag extends string, E>(
         },
         [
           `class DefaultGroup extends HttpApiGroup.make("default", { topLevel: true })`,
-          `HttpApiEndpoint.get("getHealth", "/health", { success: HttpApiSchema.Empty(204) })`,
+          `HttpApiEndpoint.get("getHealth", "/health", { success: HttpApiSchema.Empty(204).annotate({ description: "No content" }) })`,
           `.add(DefaultGroup)`
         ]
       ))
@@ -1650,8 +2197,8 @@ export const TestClientError = <Tag extends string, E>(
         },
         [
           `class DefaultGroup extends HttpApiGroup.make("default", { topLevel: true })`,
-          `HttpApiEndpoint.get("getTagged", "/tagged", { success: HttpApiSchema.Empty(200) })`,
-          `HttpApiEndpoint.get("getUntagged", "/untagged", { success: HttpApiSchema.Empty(204) })`,
+          `HttpApiEndpoint.get("getTagged", "/tagged", { success: HttpApiSchema.Empty(200).annotate({ description: "Tagged" }) })`,
+          `HttpApiEndpoint.get("getUntagged", "/untagged", { success: HttpApiSchema.Empty(204).annotate({ description: "Untagged" }) })`,
           `.add(DefaultGroup)`
         ]
       ))
@@ -1765,16 +2312,19 @@ export const TestClientError = <Tag extends string, E>(
         [
           `import { Multipart } from "effect/http"`,
           `export type __HttpApiMultipartSingleFile = Multipart.PersistedFile
+
 export const __HttpApiMultipartSingleFile = Multipart.SingleFileSchema`,
           `export type __HttpApiMultipartFiles = ReadonlyArray<Multipart.PersistedFile>
+
 export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           `export type CreatePayloadRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`,
           `export const CreatePayloadRequestFormData = Schema.Struct({ "file": __HttpApiMultipartSingleFile, "files": __HttpApiMultipartFiles })`,
           `export type CreatePayloadRequestJson = { readonly "a": string }`,
           `export type CreatePayloadRequestText = string
+
 export const CreatePayloadRequestText = Schema.String`,
           `payload: [HttpApiSchema.NoContent, CreatePayloadRequestJson, CreatePayloadRequestFormData.pipe(HttpApiSchema.asMultipart()), CreatePayloadRequestFormUrlEncoded.pipe(HttpApiSchema.asFormUrlEncoded()), CreatePayloadRequestText.pipe(HttpApiSchema.asText()), CreatePayloadRequestBinary.pipe(HttpApiSchema.asUint8Array())]`,
-          `success: [CreatePayload200, CreatePayload200Text.pipe(HttpApiSchema.asText()), CreatePayload200Binary.pipe(HttpApiSchema.asUint8Array()), HttpApiSchema.Empty(201)]`
+          `success: [CreatePayload200, CreatePayload200Text.pipe(HttpApiSchema.asText()), CreatePayload200Binary.pipe(HttpApiSchema.asUint8Array()), HttpApiSchema.Empty(201).annotate({ description: "Created" })]`
         ],
         [
           "Schema.Opaque",
@@ -2157,6 +2707,134 @@ export const CreatePayloadRequestText = Schema.String`,
         ]
       ))
 
+    describe("streaming payloads", () => {
+      const Item = Schema.Struct({ id: Schema.Finite }).annotate({ identifier: "Item" })
+      const ndjson = (contentType?: string) =>
+        `HttpApiSchema\\.StreamNdjson\\(\\{ schema: \\w+${
+          contentType === undefined
+            ? `(, contentType: "application/x-ndjson")?`
+            : `, contentType: ${JSON.stringify(contentType)}`
+        } \\}\\)`
+
+      it.effect("round-trips streaming payloads and successes", () =>
+        Effect.gen(function*() {
+          // Inline, because every component goes through the multipart rewrite
+          const FormItem = Schema.Struct({ data: Schema.String.annotate({ format: "binary" }) })
+          const Api = HttpApi.make("Api").add(
+            HttpApiGroup.make("items").add(
+              HttpApiEndpoint.post("upload", "/upload", {
+                payload: HttpApiSchema.StreamUint8Array({ maxBytes: "1 MiB" })
+              }),
+              // NDJSON markers win over the SSE and multipart handling of these content types
+              HttpApiEndpoint.post("ingest", "/ingest", {
+                payload: HttpApiSchema.StreamNdjson({ schema: Item, contentType: "text/event-stream" })
+              }),
+              HttpApiEndpoint.post("ingestForm", "/ingest/form", {
+                payload: HttpApiSchema.StreamNdjson({ schema: FormItem, contentType: "multipart/form-data" })
+              }),
+              HttpApiEndpoint.get("export", "/export", {
+                success: HttpApiSchema.StreamNdjson({ schema: Item, contentType: "text/event-stream" })
+              })
+            )
+          )
+
+          const { source } = yield* generateHttpApi(OpenApi.fromApi(Api))
+
+          assert.include(findEndpoint(source, "post", "/upload"), `payload: HttpApiSchema.StreamUint8Array(),`)
+          assert.match(findEndpoint(source, "post", "/ingest"), new RegExp(`payload: ${ndjson("text/event-stream")}`))
+          const form = findEndpoint(source, "post", "/ingest/form").match(
+            /payload: HttpApiSchema\.StreamNdjson\(\{ schema: (\w+), contentType: "multipart\/form-data" \}\)/
+          )
+          assert.isNotNull(form, source)
+          assert.include(source, `export type ${form![1]} = { readonly "data": string }`)
+          assert.match(findEndpoint(source, "get", "/export"), new RegExp(`success: ${ndjson("text/event-stream")}`))
+        }))
+
+      it.effect("maps third-party NDJSON itemSchema media types to StreamNdjson", () =>
+        Effect.gen(function*() {
+          const item = {
+            type: "object",
+            properties: { id: { type: "number" } },
+            required: ["id"],
+            additionalProperties: false
+          }
+          const { source } = yield* generateHttpApi({
+            openapi: "3.2.0",
+            info: { title: "Test API", version: "1.0.0" },
+            paths: {
+              "/ingest": {
+                post: {
+                  operationId: "ingest",
+                  parameters: [],
+                  requestBody: { content: { "application/x-ndjson": { itemSchema: item } }, required: true },
+                  responses: { 204: { description: "Accepted" } },
+                  tags: ["Items"],
+                  security: []
+                }
+              },
+              "/export": {
+                get: {
+                  operationId: "export",
+                  parameters: [],
+                  responses: {
+                    200: { description: "Items", content: { "application/x-ndjson": { itemSchema: item } } }
+                  },
+                  tags: ["Items"],
+                  security: []
+                }
+              }
+            },
+            components: { schemas: {}, securitySchemes: {} },
+            security: [],
+            tags: [{ name: "Items" }]
+          } as unknown as OpenAPISpec)
+
+          assert.match(findEndpoint(source, "post", "/ingest"), new RegExp(`payload: ${ndjson()}`))
+          assert.match(findEndpoint(source, "get", "/export"), new RegExp(`success: ${ndjson()}`))
+        }))
+
+      it.effect("skips json-seq and SSE request bodies with a warning", () =>
+        Effect.gen(function*() {
+          const event = { type: "object", properties: { id: { type: "number" } } }
+          const { source, warnings } = yield* generateHttpApi({
+            openapi: "3.1.0",
+            info: { title: "Test API", version: "1.0.0" },
+            paths: {
+              "/seq": {
+                post: {
+                  operationId: "seq",
+                  parameters: [],
+                  requestBody: { content: { "application/json-seq": { schema: event } }, required: true },
+                  responses: { 204: { description: "Accepted" } },
+                  tags: ["Events"],
+                  security: []
+                }
+              },
+              "/events": {
+                post: {
+                  operationId: "events",
+                  parameters: [],
+                  requestBody: { content: { "text/event-stream": { schema: event } }, required: true },
+                  responses: { 204: { description: "Accepted" } },
+                  tags: ["Events"],
+                  security: []
+                }
+              }
+            },
+            components: { schemas: {}, securitySchemes: {} },
+            security: [],
+            tags: [{ name: "Events" }]
+          })
+
+          assert.notInclude(findEndpoint(source, "post", "/seq"), "payload")
+          assert.notInclude(findEndpoint(source, "post", "/events"), "payload")
+          assert.deepStrictEqual(
+            warnings.map((warning) => ({ path: warning.path, method: warning.method })),
+            [{ path: "/seq", method: "post" }, { path: "/events", method: "post" }]
+          )
+        }))
+    })
+
     it.effect("maps multipart schemas referenced through components to Multipart file schemas", () =>
       assertHttpApiIncludes(
         {
@@ -2213,12 +2891,14 @@ export const CreatePayloadRequestText = Schema.String`,
         [
           `import { Multipart } from "effect/http"`,
           `export type __HttpApiMultipartSingleFile = Multipart.PersistedFile
+
 export const __HttpApiMultipartSingleFile = Multipart.SingleFileSchema`,
           `export type __HttpApiMultipartFiles = ReadonlyArray<Multipart.PersistedFile>
+
 export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           `export type UploadRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`,
           `export const UploadRequestFormData = Schema.Struct({ "file": __HttpApiMultipartSingleFile, "files": __HttpApiMultipartFiles })`,
-          `HttpApiEndpoint.post("upload", "/upload", { payload: UploadRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200) })`
+          `HttpApiEndpoint.post("upload", "/upload", { payload: UploadRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200).annotate({ description: "Uploaded" }) })`
         ],
         [
           `Schema.String.annotate({ "format": "binary" })`,
@@ -2421,11 +3101,173 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           `import { Multipart } from "effect/http"`,
           `export type UploadWithContentEncodingRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`,
           `export const UploadWithContentEncodingRequestFormData = Schema.Struct({ "file": __HttpApiMultipartSingleFile, "files": __HttpApiMultipartFiles })`,
-          `HttpApiEndpoint.post("uploadWithContentEncoding", "/upload-content-encoding", { payload: UploadWithContentEncodingRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200) })`
+          `HttpApiEndpoint.post("uploadWithContentEncoding", "/upload-content-encoding", { payload: UploadWithContentEncodingRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200).annotate({ description: "Uploaded" }) })`
         ],
         [
           `contentEncoding`,
           `export type UploadBodyContentEncoding =`
+        ]
+      ))
+
+    it.effect("keeps binary strings in components used only by JSON bodies", () =>
+      assertHttpApiIncludes(
+        attachmentSpec({}),
+        [
+          `export type Attachment = { readonly "name": string, readonly "data": string }`,
+          `export const Attachment = Schema.Struct({ "name": Schema.String, "data": Schema.String`
+        ],
+        [
+          `Multipart`
+        ]
+      ))
+
+    it.effect("copies components shared by JSON and multipart bodies for the multipart body", () =>
+      assertHttpApiIncludes(
+        attachmentSpec({
+          "/attachments/upload": {
+            post: {
+              operationId: "uploadAttachment",
+              parameters: [],
+              requestBody: {
+                required: true,
+                content: { "multipart/form-data": { schema: attachmentRef } }
+              },
+              responses: { "204": { description: "Uploaded" } },
+              tags: ["Attachments"],
+              security: []
+            }
+          }
+        }),
+        [
+          `export type Attachment = { readonly "name": string, readonly "data": string }`,
+          `export const Attachment = Schema.Struct({ "name": Schema.String, "data": Schema.String`,
+          `export type AttachmentMultipart = { readonly "name": string, readonly "data": __HttpApiMultipartSingleFile }`,
+          `export const CreateAttachmentRequestJson = Attachment`,
+          `export const CreateAttachment200 = Attachment`,
+          `export const UploadAttachmentRequestFormData = AttachmentMultipart`,
+          `payload: UploadAttachmentRequestFormData.pipe(HttpApiSchema.asMultipart())`
+        ],
+        [
+          `__HttpApiMultipartFiles`
+        ]
+      ))
+
+    it.effect("keeps multipart copies of shared components nested in other shared components", () =>
+      assertHttpApiIncludes(
+        sharedMultipartSpec({ $ref: "#/components/schemas/Outer" }, {
+          Outer: {
+            type: "object",
+            properties: { inner: { $ref: "#/components/schemas/Inner" } },
+            required: ["inner"],
+            additionalProperties: false
+          },
+          Inner: {
+            type: "object",
+            properties: { file: { type: "string", format: "binary" } },
+            required: ["file"],
+            additionalProperties: false
+          }
+        }),
+        [
+          `export type Inner = { readonly "file": string }`,
+          `export type Outer = { readonly "inner": Inner }`,
+          `export type InnerMultipart = { readonly "file": __HttpApiMultipartSingleFile }`,
+          `export type OuterMultipart = { readonly "inner": InnerMultipart }`,
+          `export const UploadRequestFormData = OuterMultipart`
+        ]
+      ))
+
+    it.effect("maps shared binary string components to Multipart file schemas", () =>
+      assertHttpApiIncludes(
+        sharedMultipartSpec(
+          {
+            type: "object",
+            properties: {
+              file: { $ref: "#/components/schemas/BinaryData" },
+              files: { type: "array", items: { $ref: "#/components/schemas/BinaryData" } }
+            },
+            required: ["file", "files"],
+            additionalProperties: false
+          },
+          { BinaryData: { type: "string", format: "binary" } },
+          { schema: { $ref: "#/components/schemas/BinaryData" } }
+        ),
+        [
+          `export type BinaryData = string`,
+          `export const CreateJsonRequestJson = BinaryData`,
+          `export type UploadRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`
+        ]
+      ))
+
+    it.effect("treats $ref inside media type examples as data", () =>
+      assertHttpApiIncludes(
+        sharedMultipartSpec(
+          { type: "object", properties: { file: { type: "string", format: "binary" } } },
+          {},
+          {
+            schema: { type: "object", properties: { name: { type: "string" } } },
+            example: { $ref: "#/this/is/arbitrary-user-data" }
+          }
+        ),
+        [
+          `export type CreateJsonRequestJson = { readonly "name"?: string }`
+        ]
+      ))
+
+    for (
+      const [position, link] of [
+        ["requestBody", { operationId: "createJson", requestBody: { $ref: "#/this/is/arbitrary-user-data" } }],
+        ["parameters", {
+          operationId: "createJson",
+          parameters: { payload: { $ref: "#/this/is/arbitrary-user-data" } }
+        }]
+      ] as const
+    ) {
+      it.effect(`treats $ref inside link ${position} as data`, () => {
+        const spec = sharedMultipartSpec(
+          { type: "object", properties: { file: { type: "string", format: "binary" } } },
+          {},
+          { schema: { type: "object", properties: { name: { type: "string" } } } }
+        )
+        const operation = spec.paths["/json"].post!
+        return assertHttpApiIncludes(
+          {
+            ...spec,
+            paths: {
+              ...spec.paths,
+              "/json": {
+                post: {
+                  ...operation,
+                  responses: { "204": { description: "Created", links: { next: link } } } as any
+                }
+              }
+            }
+          },
+          [
+            `export type CreateJsonRequestJson = { readonly "name"?: string }`
+          ]
+        )
+      })
+    }
+
+    it.effect("copies self-recursive components shared by JSON and multipart bodies", () =>
+      assertHttpApiIncludes(
+        sharedMultipartSpec({ $ref: "#/components/schemas/Node" }, {
+          Node: {
+            type: "object",
+            properties: {
+              file: { type: "string", format: "binary" },
+              child: { $ref: "#/components/schemas/Node" }
+            },
+            required: ["file"],
+            additionalProperties: false
+          }
+        }),
+        [
+          `export type Node = { readonly "file": string, readonly "child"?: Node }`,
+          `export type NodeMultipart = { readonly "file": __HttpApiMultipartSingleFile, readonly "child"?: NodeMultipart }`,
+          `export const CreateJsonRequestJson = Node`,
+          `export const UploadRequestFormData = NodeMultipart`
         ]
       ))
 
@@ -2500,11 +3342,11 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
             `const BasicAuthSecurity = HttpApiSecurity.basic`,
             `class ApiKeyAuthOrBearerAuthSecurityMiddleware extends HttpApiMiddleware.Service<ApiKeyAuthOrBearerAuthSecurityMiddleware>()("apiKeyAuth | bearerAuth security", { security: { "apiKeyAuth": ApiKeyAuthSecurity, "bearerAuth": BearerAuthSecurity } }) {}`,
             `class ApiKeyAuthAndBasicAuthSecurityMiddleware extends HttpApiMiddleware.Service<ApiKeyAuthAndBasicAuthSecurityMiddleware>()("apiKeyAuth & basicAuth security") {}`,
-            `HttpApiEndpoint.get("getSecure", "/secure", { success: HttpApiSchema.Empty(200) })\n      .middleware(ApiKeyAuthOrBearerAuthSecurityMiddleware)\n      .middleware(ApiKeyAuthAndBasicAuthSecurityMiddleware)`,
-            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200) })`
+            `HttpApiEndpoint.get("getSecure", "/secure", { success: HttpApiSchema.Empty(200).annotate({ description: "Secure" }) })\n      .middleware(ApiKeyAuthOrBearerAuthSecurityMiddleware)\n      .middleware(ApiKeyAuthAndBasicAuthSecurityMiddleware)`,
+            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200).annotate({ description: "Public" }) })`
           ],
           excludes: [
-            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200) })\n      .middleware(`
+            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200).annotate({ description: "Public" }) })\n      .middleware(`
           ],
           warnings: [
             {
@@ -2657,15 +3499,15 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           includes: [
             `class ApiKeyAuthSecurityMiddleware extends HttpApiMiddleware.Service<ApiKeyAuthSecurityMiddleware>()("apiKeyAuth security", { security: { "apiKeyAuth": ApiKeyAuthSecurity } }) {}`,
             `class BearerAuthSecurityMiddleware extends HttpApiMiddleware.Service<BearerAuthSecurityMiddleware>()("bearerAuth security", { security: { "bearerAuth": BearerAuthSecurity } }) {}`,
-            `HttpApiEndpoint.get("getInherited", "/inherited", { success: HttpApiSchema.Empty(200) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
-            `HttpApiEndpoint.get("getInheritedTwo", "/inherited-two", { success: HttpApiSchema.Empty(200) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
-            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getOverride", "/override", { success: HttpApiSchema.Empty(200) })\n      .middleware(BearerAuthSecurityMiddleware)`
+            `HttpApiEndpoint.get("getInherited", "/inherited", { success: HttpApiSchema.Empty(200).annotate({ description: "Inherited" }) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
+            `HttpApiEndpoint.get("getInheritedTwo", "/inherited-two", { success: HttpApiSchema.Empty(200).annotate({ description: "Inherited two" }) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
+            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200).annotate({ description: "Cleared" }) })`,
+            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200).annotate({ description: "Anonymous" }) })`,
+            `HttpApiEndpoint.get("getOverride", "/override", { success: HttpApiSchema.Empty(200).annotate({ description: "Override" }) })\n      .middleware(BearerAuthSecurityMiddleware)`
           ],
           excludes: [
-            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200) })\n      .middleware(`,
-            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200) })\n      .middleware(`
+            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200).annotate({ description: "Cleared" }) })\n      .middleware(`,
+            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200).annotate({ description: "Anonymous" }) })\n      .middleware(`
           ],
           occurrences: [
             {
@@ -2827,10 +3669,10 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
         },
         {
           includes: [
-            `HttpApiEndpoint.get("getCookie", "/cookies", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getHeaders", "/headers", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getDefaultSuccess", "/default-success", { success: HttpApiSchema.Empty(200), error: HttpApiSchema.Empty(500) })`,
-            `HttpApiEndpoint.get("getDefaultOnly", "/default-only", { success: HttpApiSchema.Empty(200) })`
+            `HttpApiEndpoint.get("getCookie", "/cookies", { success: HttpApiSchema.Empty(200).annotate({ description: "Cookie" }) })`,
+            `HttpApiEndpoint.get("getHeaders", "/headers", { success: HttpApiSchema.Empty(200).annotate({ description: "Headers" }) })`,
+            `HttpApiEndpoint.get("getDefaultSuccess", "/default-success", { success: HttpApiSchema.Empty(200).annotate({ description: "OK" }), error: HttpApiSchema.Empty(500).annotate({ description: "Fallback" }) })`,
+            `HttpApiEndpoint.get("getDefaultOnly", "/default-only", { success: HttpApiSchema.Empty(200).annotate({ description: "Fallback" }) })`
           ],
           excludes: [
             `HttpApiEndpoint.get("streamEvents", "/sse"`,
@@ -2926,6 +3768,16 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
       }
     })
 
+    it.effect("keeps the route's QUERY when a referenced native QUERY has a missing target", () => {
+      const spec = makeQuerySpec({
+        $ref: "#/components/pathItems/Alias",
+        "x-oai-additionalOperations": { QUERY: queryOperation }
+      })
+      const alias = { $ref: "#/components/pathItems/Missing", query: { ...queryOperation, operationId: "aliasSearch" } }
+      spec.components.pathItems = { Alias: alias }
+      return assertHttpApiIncludes(spec, [`HttpApiEndpoint.query("search", "/search"`])
+    })
+
     it.effect.each([
       {
         name: "OpenAPI 3.1 extension",
@@ -2960,43 +3812,248 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
         assertHttpApiIncludes(spec, [
           `HttpApiEndpoint.get("list", "/search"`,
           `export const SearchRequestJson = Schema.Struct({ "query": Schema.String })`,
-          `HttpApiEndpoint.query("search", "/search", { payload: SearchRequestJson, success: HttpApiSchema.Empty(204) })`
+          `HttpApiEndpoint.query("search", "/search", { payload: SearchRequestJson, success: HttpApiSchema.Empty(204).annotate({ description: "No content" }) })`
         ], ["legacySearch", "LegacySearch"])
       ]))
   })
 
   describe("regression", () => {
+    const petsSpec = {
+      ...regressionSpec,
+      tags: [{ name: "Pets" }],
+      paths: {
+        "/pets": {
+          get: {
+            operationId: "listPets",
+            parameters: [],
+            responses: { 200: { description: "OK" } },
+            tags: ["Pets"],
+            security: []
+          }
+        }
+      }
+    } satisfies OpenAPISpec
+
+    it.effect.each([
+      {
+        summary: "List pets",
+        description: "Returns pets available for adoption.",
+        text: "List pets\n* \n* Returns pets available for adoption."
+      },
+      { summary: "List pets", description: " List pets ", text: "List pets" },
+      { summary: "List pets", text: "List pets" },
+      { description: "Returns available pets.", text: "Returns available pets." }
+    ])("documents client methods with summary '$summary' and description '$description'", ({ text, ...metadata }) => {
+      const get = { ...petsSpec.paths["/pets"].get, ...metadata }
+      const spec = { ...petsSpec, paths: { "/pets": { get } } }
+      const expected = [`/**\n* ${text}\n*/\nreadonly "listPets"`]
+      return Effect.all([assertRuntimeIncludes(spec, expected), assertTypeOnlyIncludes(spec, expected)])
+    })
+
+    for (const format of ["httpclient", "httpclient-type-only", "httpapi"] as const) {
+      const layer = format === "httpclient-type-only"
+        ? OpenApiGenerator.layerTransformerTs
+        : OpenApiGenerator.layerTransformerSchema
+
+      it.effect(`generates chained local Path Items like inline routes in ${format}`, () =>
+        Effect.gen(function*() {
+          const generator = yield* OpenApiGenerator.OpenApiGenerator
+          const route = "/users/{id}"
+          const item: OpenAPISpecPathItem = {
+            parameters: [
+              { name: "id", in: "path", required: true, schema: { type: "string" } },
+              { name: "filter", in: "query", required: false, schema: { type: "string" } }
+            ],
+            get: {
+              operationId: "getUser",
+              parameters: [],
+              responses: { 200: { description: "OK" } },
+              tags: ["Users"],
+              security: []
+            }
+          }
+          const inline = { ...regressionSpec, paths: { [route]: item } }
+          const referenced = {
+            ...inline,
+            paths: { [route]: { $ref: "#/components/pathItems/Alias" } },
+            components: {
+              ...inline.components,
+              pathItems: { Alias: { $ref: "#/components/pathItems/User" }, User: item }
+            }
+          }
+          const options = { name: "TestClient", format }
+          assert.strictEqual(yield* generator.generate(referenced, options), yield* generator.generate(inline, options))
+        }).pipe(Effect.provide(layer)))
+
+      it.effect(`ignores references in paths extensions in ${format}`, () =>
+        Effect.gen(function*() {
+          const generator = yield* OpenApiGenerator.OpenApiGenerator
+          const withExtension = {
+            ...petsSpec,
+            paths: { ...petsSpec.paths, "x-default-route": { $ref: "#/paths/~1pets" } }
+          }
+          const options = { name: "TestClient", format }
+          const expected = yield* generator.generate(petsSpec, options)
+          assert.include(expected, "\"/pets\"")
+          assert.strictEqual(yield* generator.generate(withExtension, options), expected)
+        }).pipe(Effect.provide(layer)))
+
+      it.effect(`resolves Path Items through array indices in ${format}`, () =>
+        Effect.gen(function*() {
+          const generator = yield* OpenApiGenerator.OpenApiGenerator
+          const referenced = {
+            ...petsSpec,
+            "x-catalog": [petsSpec.paths["/pets"]],
+            paths: {
+              "/pets": { $ref: "#/x-catalog/0" },
+              "/invalid-index": { $ref: "#/x-catalog/00" }
+            }
+          }
+          const options = { name: "TestClient", format }
+          const expected = yield* generator.generate(petsSpec, options)
+          assert.strictEqual(yield* generator.generate(referenced, options), expected)
+        }).pipe(Effect.provide(layer)))
+    }
+
+    const collisionNames = [
+      "Data",
+      "Effect",
+      "Schema",
+      "SchemaError",
+      "HttpClient",
+      "HttpClientError",
+      "HttpClientRequest",
+      "HttpClientResponse",
+      "OperationConfig",
+      "TestClient",
+      "Config",
+      "HttpApi",
+      "HttpApiEndpoint",
+      "HttpApiGroup",
+      "DefaultGroup"
+    ]
+    const collisionSpec: OpenAPISpec = {
+      openapi: "3.1.0",
+      info: { title: "Shared module names", version: "1.0.0" },
+      components: {
+        schemas: {
+          ...Object.fromEntries(collisionNames.map((name) => [name, { type: "string" as const }])),
+          getUser200: {
+            type: "object",
+            properties: Object.fromEntries(
+              collisionNames.map((name) => [name, { $ref: `#/components/schemas/${name}` }])
+            ),
+            required: collisionNames,
+            additionalProperties: false
+          }
+        },
+        securitySchemes: {}
+      },
+      security: [],
+      tags: [],
+      paths: {
+        "/user": {
+          get: {
+            operationId: "getUser",
+            parameters: [],
+            security: [],
+            tags: ["default"],
+            responses: {
+              "200": {
+                description: "User",
+                content: { "application/json": { schema: { $ref: "#/components/schemas/getUser200" } } }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    itGeneratedClientsCompile("resolves schema names against imports and generated declarations", collisionSpec, {
+      formats: ["httpclient", "httpclient-type-only", "httpapi"]
+    })
+
+    itGeneratedClientsCompile("resolves schema imports in streaming clients", {
+      ...collisionSpec,
+      paths: {
+        "/events": {
+          get: {
+            operationId: "getEvents",
+            parameters: [],
+            security: [],
+            tags: ["default"],
+            responses: {
+              "200": {
+                description: "Events",
+                content: { "text/event-stream": { schema: { $ref: "#/components/schemas/Schema" } } }
+              }
+            }
+          }
+        }
+      }
+    }, { formats: ["httpclient"] })
+
+    it.effect("uses the resolved schemas in client responses and HttpApi endpoints", () =>
+      Effect.gen(function*() {
+        const generator = yield* OpenApiGenerator.OpenApiGenerator
+        const value = Object.fromEntries(collisionNames.map((name) => [name, name]))
+        const clientSource = yield* generator.generate(collisionSpec, { name: "TestClient", format: "httpclient" })
+        yield* Effect.promise(() =>
+          withGeneratedModule<{
+            make: (client: HttpClient.HttpClient) => { getUser: () => Effect.Effect<unknown, unknown> }
+          }>(clientSource, async ({ make }) => {
+            const client = make(
+              HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(value))))
+                .pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("http://api.test")))
+            )
+            assert.deepStrictEqual(await Effect.runPromise(client.getUser()), value)
+          })
+        )
+        const apiSource = yield* generator.generate(collisionSpec, { name: "Config", format: "httpapi" })
+        yield* Effect.promise(() =>
+          withGeneratedModule<{
+            Config: { groups: { default: { endpoints: { getUser: { success: ReadonlySet<Schema.Codec<unknown>> } } } } }
+          }>(apiSource, ({ Config }) => {
+            const responses = Config.groups.default.endpoints.getUser.success
+            assert.strictEqual(responses.size, 1)
+            const success = [...responses][0]
+            assert.deepStrictEqual(Schema.decodeUnknownSync(success)(value), value)
+            assert.isFalse(Schema.is(success)({ ...value, Data: 1 }))
+          })
+        )
+      }).pipe(Effect.provide(OpenApiGenerator.layerTransformerSchema)))
+
     for (const format of ["httpclient", "httpclient-type-only"] as const) {
       for (const exactOptionalPropertyTypes of [true, false]) {
-        it.effect(
+        itGeneratedClientsCompile(
           `preserves includeResponse success types (${format}, exactOptionalPropertyTypes=${exactOptionalPropertyTypes})`,
-          () =>
-            assertGeneratedClientsCompile({
-              openapi: "3.1.0",
-              info: { title: "Value", version: "1.0.0" },
-              components: { schemas: {}, securitySchemes: {} },
-              security: [],
-              tags: [],
-              paths: {
-                "/value": {
-                  get: {
-                    operationId: "getValue",
-                    parameters: [],
-                    security: [],
-                    tags: ["Value"],
-                    responses: {
-                      "200": {
-                        description: "Value",
-                        content: { "application/json": { schema: { type: "string" } } }
-                      }
+          {
+            openapi: "3.1.0",
+            info: { title: "Value", version: "1.0.0" },
+            components: { schemas: {}, securitySchemes: {} },
+            security: [],
+            tags: [],
+            paths: {
+              "/value": {
+                get: {
+                  operationId: "getValue",
+                  parameters: [],
+                  security: [],
+                  tags: ["Value"],
+                  responses: {
+                    "200": {
+                      description: "Value",
+                      content: { "application/json": { schema: { type: "string" } } }
                     }
                   }
                 }
               }
-            }, {
-              formats: [format],
-              exactOptionalPropertyTypes,
-              usage: `type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends
+            }
+          },
+          {
+            formats: [format],
+            exactOptionalPropertyTypes,
+            usage: `type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends
   (<T>() => T extends B ? 1 : 2) ? true : false
 type Assert<T extends true> = T
 type WithResponse = [string, HttpClientResponse.HttpClientResponse]
@@ -3029,10 +4086,133 @@ export type OptionalBoolean = Assert<Equal<Effect.Success<typeof optionalBoolean
 export type NullableConfig = Assert<Equal<Effect.Success<typeof nullableConfigResult>, string | WithResponse>>
 export type ConditionalConfig = Assert<Equal<Effect.Success<typeof conditionalConfigResult>, string | WithResponse>>
 `
-            }),
-          compilationTimeout
+          }
         )
       }
+
+      itGeneratedClientsCompile(`preserves HttpClient error and requirement types (${format})`, {
+        openapi: "3.1.0",
+        info: { title: "Channels", version: "1.0.0" },
+        components: { schemas: {}, securitySchemes: {} },
+        security: [],
+        tags: [],
+        paths: Object.fromEntries(
+          [
+            ["/value", "getValue", "application/json"],
+            ["/download", "download", "application/octet-stream"],
+            ...(format === "httpclient" ? [["/events", "events", "text/event-stream"]] : [])
+          ].map(([path, operationId, contentType]) => [path, {
+            get: {
+              operationId,
+              parameters: [],
+              security: [],
+              tags: ["Channels"],
+              responses: {
+                "200": { description: "OK", content: { [contentType]: { schema: { type: "string" } } } }
+              }
+            }
+          }])
+        )
+      }, {
+        formats: [format],
+        usage: `type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2) ? true : false
+type Assert<T extends true> = T
+interface CustomError { readonly _tag: "CustomError" }
+interface CustomService { readonly _tag: "CustomService" }
+declare const httpClient: HttpClient.HttpClient.With<CustomError, CustomService>
+declare const defaultHttpClient: HttpClient.HttpClient
+
+const client = make(httpClient)
+const value = client.getValue(undefined)
+const download = client.downloadStream()
+
+export const defaultClient: TestClient = make(defaultHttpClient)
+export type ValueError = Assert<CustomError | HttpClientError.HttpClientError extends Effect.Error<typeof value> ? true : false>
+export type ValueServices = Assert<Equal<Effect.Services<typeof value>, CustomService>>
+export type DownloadError = Assert<Equal<Stream.Error<typeof download>, CustomError | HttpClientError.HttpClientError>>
+export type DownloadServices = Assert<Equal<Stream.Services<typeof download>, CustomService>>
+${
+          format === "httpclient"
+            ? `const events = client.eventsSse()
+export type EventsError = Assert<CustomError | HttpClientError.HttpClientError extends Stream.Error<typeof events> ? true : false>
+export type EventsServices = Assert<CustomService extends Stream.Services<typeof events> ? true : false>
+`
+            : ""
+        }`
+      })
+    }
+
+    for (const format of ["httpclient", "httpclient-type-only"] as const) {
+      itGeneratedClientsCompile(`types positional path arguments from resolved parameter schemas (${format})`, {
+        openapi: "3.1.0",
+        info: { title: "Path arguments", version: "1.0.0" },
+        components: {
+          schemas: { RoomIds: { type: "array", items: { type: "integer" } } },
+          parameters: {
+            RoomIds: { name: "room-ids", in: "path", required: true, schema: { type: "string" } }
+          },
+          securitySchemes: {}
+        },
+        security: [],
+        tags: [],
+        paths: {
+          "/rooms/{room-ids}/{enabled}/{count}/{GetRoomsPathParams}": {
+            parameters: [
+              { $ref: "#/components/parameters/RoomIds" },
+              { name: "count", in: "path", required: true, schema: { type: "integer" } },
+              { name: "enabled", in: "path", required: true, schema: { type: "boolean" } },
+              { name: "GetRoomsPathParams", in: "path", required: true, schema: { type: "string" } }
+            ],
+            get: {
+              operationId: "getRooms",
+              parameters: [{
+                name: "room-ids",
+                in: "path",
+                required: true,
+                schema: { $ref: "#/components/schemas/RoomIds" }
+              }],
+              responses: {
+                "200": {
+                  description: "OK",
+                  ...(format === "httpclient"
+                    ? { content: { "text/event-stream": { schema: { type: "string" } } } }
+                    : {})
+                },
+                "201": {
+                  description: "Download",
+                  content: { "application/octet-stream": { schema: { type: "string" } } }
+                }
+              },
+              security: [],
+              tags: []
+            }
+          }
+        }
+      } as unknown as OpenAPISpec, {
+        formats: [format],
+        usage: `declare const client: TestClient
+declare const ids: ReadonlyArray<number>
+export const rooms = client.getRooms(ids, true, 3, "id", undefined)
+export const download = client.getRoomsStream(ids, true, 3, "id")
+// @ts-expect-error callers pass arrays, not pre-serialized strings
+client.getRooms("3,4,5", true, 3, "id", undefined)
+// @ts-expect-error array elements follow the referenced schema
+client.getRooms(["3"], true, 3, "id", undefined)
+// @ts-expect-error the boolean argument follows path order, not declaration order
+client.getRooms(ids, 3, true, "id", undefined)
+// @ts-expect-error integer arguments are numbers
+client.getRoomsStream(ids, true, "3", "id")
+${
+          format === "httpclient" ?
+            `export const events = client.getRoomsSse(ids, true, 3, "id")
+// @ts-expect-error streaming arguments use the same schema types
+client.getRoomsSse("3,4,5", true, 3, "id")
+` :
+            ""
+        }
+`
+      })
     }
 
     it.effect("quotes static path text with and without parameters", () => {
@@ -3063,48 +4243,205 @@ export type ConditionalConfig = Assert<Equal<Effect.Success<typeof conditionalCo
         }
       }, [
         `HttpClientRequest.get(${JSON.stringify(prefix + suffix)})`,
-        `() => ${JSON.stringify(prefix)} + __encodePathParam(id) + ${JSON.stringify(suffix)}`
+        `() => ${JSON.stringify(prefix)} + __encodePathParam("id", id, "simple", false) + ${JSON.stringify(suffix)}`
       ])
     })
 
-    it.effect("emits compilable clients when schema examples are invalid", () =>
-      assertGeneratedClientsCompile({
-        openapi: "3.0.3",
-        info: {
-          title: "Invalid examples API",
-          version: "1.0.0"
-        },
-        paths: {
-          "/triggers": {
-            get: {
-              operationId: "getTriggers",
-              parameters: [],
-              responses: {
-                200: {
-                  description: "OK",
-                  content: {
-                    "application/json": {
-                      schema: {
-                        type: "array",
-                        items: { type: "string" },
-                        example: "create"
-                      }
+    itGeneratedClientsCompile("types required cookie parameters as operation params", cookieParameterSpec, {
+      usage: `declare const client: TestClient
+export const withLocale = client.getGreeting({ params: { locale: "en-US" } })
+// @ts-expect-error the locale cookie is required
+export const withoutLocale = client.getGreeting({ params: {} })
+`
+    })
+
+    it.effect("sends cookie parameters with the request", () =>
+      Effect.gen(function*() {
+        const generator = yield* OpenApiGenerator.OpenApiGenerator
+        const source = yield* generator.generate(cookieParameterSpec, { name: "TestClient", format: "httpclient" })
+        const directory = yield* Effect.acquireRelease(
+          Effect.sync(() => mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".generated-clients-"))),
+          (directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true }))
+        )
+        const path = join(directory, "Client.ts")
+        writeFileSync(path, source)
+        const { make }: {
+          make: (client: HttpClient.HttpClient) => {
+            getGreeting: (options: { params: { locale: string } }) => Effect.Effect<unknown, unknown>
+          }
+        } = yield* Effect.promise(() => import(path))
+        const requests: Array<HttpClientRequest.HttpClientRequest> = []
+        const client = make(
+          HttpClient.make((request) => {
+            requests.push(request)
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 204 })))
+          }).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("http://api.test")))
+        )
+
+        yield* client.getGreeting({ params: { locale: "en-US" } })
+
+        assert.strictEqual(requests.length, 1)
+        assert.strictEqual(requests[0].headers["cookie"], "locale=en-US")
+      }).pipe(Effect.scoped, Effect.provide(OpenApiGenerator.layerTransformerSchema)))
+
+    it.effect("escapes spec-controlled names in generated source", () =>
+      Effect.gen(function*() {
+        const path = "/items\"q"
+        const content = { "application/json": { schema: { type: "string" } } }
+        const spec = {
+          openapi: "3.1.0",
+          info: { title: "Quoted names", version: "1.0.0" },
+          paths: {
+            [path]: {
+              get: {
+                parameters: (["query", "header", "cookie"] as const).map((location) => ({
+                  name: `${location}"`,
+                  in: location,
+                  schema: { type: "string" }
+                })),
+                responses: {
+                  "200": { description: "OK", content },
+                  "x-extension": { description: "Extension", content },
+                  "4\"0": { description: "Invalid status", content }
+                },
+                tags: ["Items"],
+                security: []
+              }
+            }
+          },
+          components: { schemas: {}, securitySchemes: {} },
+          security: [],
+          tags: [{ name: "Items" }]
+        } as unknown as OpenAPISpec
+        const directory = yield* Effect.acquireRelease(
+          Effect.sync(() => mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".generated-clients-"))),
+          (directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true }))
+        )
+        const modules: Record<string, unknown> = {}
+        for (const format of ["httpclient", "httpclient-type-only", "httpapi"] as const) {
+          const source = yield* OpenApiGenerator.OpenApiGenerator.use((generator) =>
+            generator.generate(spec, { name: "TestClient", format })
+          ).pipe(
+            Effect.provide(
+              format === "httpclient-type-only"
+                ? OpenApiGenerator.layerTransformerTs
+                : OpenApiGenerator.layerTransformerSchema
+            )
+          )
+          const file = join(directory, `${format}.ts`)
+          writeFileSync(file, source)
+          modules[format] = yield* Effect.promise(() => import(file))
+        }
+
+        const requests: Array<HttpClientRequest.HttpClientRequest> = []
+        const { make } = modules.httpclient as {
+          make: (client: HttpClient.HttpClient) => Record<
+            string,
+            (options: { params: Record<string, string> }) => Effect.Effect<unknown, unknown>
+          >
+        }
+        const client = make(
+          HttpClient.make((request) => {
+            requests.push(request)
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json("ok")))
+          }).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("http://api.test")))
+        )
+
+        const result = yield* client[`GET${path}`]({ params: { "query\"": "a", "header\"": "b", "cookie\"": "c" } })
+
+        assert.strictEqual(result, "ok")
+        assert.strictEqual(requests.length, 1)
+        assert.deepStrictEqual(requests[0].urlParams.params, [["query\"", "a"]])
+        assert.strictEqual(requests[0].headers["header\""], "b")
+        assert.strictEqual(requests[0].headers["cookie"], "cookie\"=c")
+      }).pipe(Effect.scoped))
+
+    it.effect("drops structured cookie parameters with a warning", () =>
+      Effect.gen(function*() {
+        const generator = yield* OpenApiGenerator.OpenApiGenerator
+        const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
+        const result = yield* generator.generate({
+          ...cookieParameterSpec,
+          paths: {
+            "/greeting": {
+              get: {
+                ...cookieParameterSpec.paths["/greeting"].get!,
+                parameters: [
+                  {
+                    name: "inlinePrefs",
+                    in: "cookie",
+                    required: true,
+                    schema: { type: "object", properties: { locale: { type: "string" } }, required: ["locale"] }
+                  },
+                  {
+                    name: "refPrefs",
+                    in: "cookie",
+                    required: true,
+                    schema: { $ref: "#/components/schemas/Preferences" }
+                  }
+                ]
+              }
+            }
+          },
+          components: {
+            schemas: {
+              Preferences: { type: "object", properties: { locale: { type: "string" } }, required: ["locale"] }
+            },
+            securitySchemes: {}
+          }
+        }, {
+          name: "TestClient",
+          format: "httpclient",
+          onWarning: (warning) => {
+            warnings.push(warning)
+          }
+        })
+
+        assert.deepStrictEqual(
+          warnings.map((warning) => [warning.code, warning.operationId]),
+          [["cookie-parameter-dropped", "getGreeting"], ["cookie-parameter-dropped", "getGreeting"]]
+        )
+        assert.notInclude(result, "inlinePrefs")
+        assert.notInclude(result, "refPrefs")
+      }).pipe(Effect.provide(OpenApiGenerator.layerTransformerSchema)))
+
+    itGeneratedClientsCompile("emits compilable clients when schema examples are invalid", {
+      openapi: "3.0.3",
+      info: {
+        title: "Invalid examples API",
+        version: "1.0.0"
+      },
+      paths: {
+        "/triggers": {
+          get: {
+            operationId: "getTriggers",
+            parameters: [],
+            responses: {
+              200: {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "array",
+                      items: { type: "string" },
+                      example: "create"
                     }
                   }
                 }
-              },
-              tags: ["Triggers"],
-              security: []
-            }
+              }
+            },
+            tags: ["Triggers"],
+            security: []
           }
-        },
-        components: {
-          schemas: {},
-          securitySchemes: {}
-        },
-        security: [],
-        tags: [{ name: "Triggers" }]
-      } as unknown as OpenAPISpec), compilationTimeout)
+        }
+      },
+      components: {
+        schemas: {},
+        securitySchemes: {}
+      },
+      security: [],
+      tags: [{ name: "Triggers" }]
+    } as unknown as OpenAPISpec)
 
     it.effect("runtime warnings do not report additional-tags-dropped outside httpapi", () =>
       assertRuntimeStableWithWarnings(
@@ -3142,12 +4479,6 @@ export type ConditionalConfig = Assert<Equal<Effect.Success<typeof conditionalCo
     it.effect("runtime output remains stable when using onWarning", () =>
       assertRuntimeStableWithWarnings(regressionSpec, [
         {
-          code: "cookie-parameter-dropped",
-          path: "/users/{id}",
-          method: "get",
-          operationId: "getUser"
-        },
-        {
           code: "default-response-remapped",
           path: "/users/{id}",
           method: "get",
@@ -3158,12 +4489,6 @@ export type ConditionalConfig = Assert<Equal<Effect.Success<typeof conditionalCo
     it.effect("type-only output remains stable when using onWarning", () =>
       assertTypeOnlyStableWithWarnings(regressionSpec, [
         {
-          code: "cookie-parameter-dropped",
-          path: "/users/{id}",
-          method: "get",
-          operationId: "getUser"
-        },
-        {
           code: "default-response-remapped",
           path: "/users/{id}",
           method: "get",
@@ -3171,97 +4496,124 @@ export type ConditionalConfig = Assert<Equal<Effect.Success<typeof conditionalCo
         }
       ]))
 
-    it.effect("emits compilable open objects with optional properties", () =>
-      assertGeneratedClientsCompile(
-        {
-          openapi: "3.1.0",
-          info: {
-            title: "Open object regression API",
-            version: "1.0.0"
-          },
-          paths: {
-            "/widget": {
-              get: {
-                operationId: "getWidget",
-                parameters: [],
-                responses: {
-                  200: {
-                    description: "OK",
-                    content: {
-                      "application/json": {
-                        schema: {
-                          type: "object",
-                          properties: {
-                            optionalValue: {
-                              type: "string"
-                            }
-                          },
-                          additionalProperties: true
+    itGeneratedClientsCompile("emits compilable open objects with optional properties", {
+      openapi: "3.1.0",
+      info: {
+        title: "Open object regression API",
+        version: "1.0.0"
+      },
+      paths: {
+        "/widget": {
+          get: {
+            operationId: "getWidget",
+            parameters: [],
+            responses: {
+              200: {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        optionalValue: {
+                          type: "string"
                         }
-                      }
+                      },
+                      additionalProperties: true
                     }
                   }
-                },
-                tags: ["Widgets"],
-                security: []
+                }
               }
-            }
-          },
-          components: {
-            schemas: {},
-            securitySchemes: {}
-          },
-          security: [],
-          tags: []
-        },
-        {
-          exactOptionalPropertyTypes: false,
-          formats: ["httpclient"]
+            },
+            tags: ["Widgets"],
+            security: []
+          }
         }
-      ), compilationTimeout)
+      },
+      components: {
+        schemas: {},
+        securitySchemes: {}
+      },
+      security: [],
+      tags: []
+    }, {
+      exactOptionalPropertyTypes: false
+    })
 
-    it.effect("types multipart binary fields as File | Blob for generated clients", () =>
-      assertGeneratedClientsCompile(
-        multipartSpec({
-          type: "object",
-          properties: { file: { type: "string", format: "binary" } },
-          required: ["file"],
-          additionalProperties: false
-        }),
-        {
-          usage: `export const withFile: UploadRequestFormData = { file: new File([], "upload.txt") }
+    itGeneratedClientsCompile(
+      "types multipart binary fields as File | Blob for generated clients",
+      multipartSpec({
+        type: "object",
+        properties: { file: { type: "string", format: "binary" } },
+        required: ["file"],
+        additionalProperties: false
+      }),
+      {
+        usage: `export const withFile: UploadRequestFormData = { file: new File([], "upload.txt") }
 export const withBlob: UploadRequestFormData = { file: new Blob([]) }
 // @ts-expect-error Binary multipart fields do not accept strings.
 export const withString: UploadRequestFormData = { file: "upload.txt" }
 `
-        }
-      ), compilationTimeout)
+      }
+    )
 
-    it.effect(
+    const openMultipartSpec = multipartSpec({
+      type: "object",
+      properties: { file: { type: "string", format: "binary" }, caption: { type: "string" } },
+      required: ["file"]
+    })
+
+    itGeneratedClientsCompile("accepts files in open multipart objects for generated clients", openMultipartSpec, {
+      usage: `export const withFile: UploadRequestFormData = { file: new File([], "upload.txt"), caption: "hi" }
+export const withBlob: UploadRequestFormData = { file: new Blob([]), undeclared: "kept" }
+`
+    })
+
+    it.effect("accepts files in open multipart objects (httpapi)", () =>
+      assertHttpApiIncludes(openMultipartSpec, [
+        `[Schema.Record(Schema.String, Schema.Union([Schema.Json.annotate({ "expected": "JSON value" }), __HttpApiMultipartSingleFile]))]`
+      ]))
+
+    itGeneratedClientsCompile(
+      "accepts referenced file unions in open multipart objects without widening shared JSON components",
+      sharedMultipartSpec({ $ref: "#/components/schemas/Upload" }, {
+        MaybeFile: { anyOf: [{ type: "string", format: "binary" }, { type: "null" }] },
+        Upload: {
+          type: "object",
+          properties: { file: { $ref: "#/components/schemas/MaybeFile" } },
+          required: ["file"]
+        }
+      }),
+      {
+        usage: `export const multipartBlob: UploadMultipart = { file: new Blob([]), undeclared: "kept" }
+export const jsonString: Upload = { file: "text", undeclared: "kept" }
+// @ts-expect-error Shared JSON component must still reject files.
+export const jsonBlob: Upload = { file: new Blob([]) }
+`
+      }
+    )
+
+    itGeneratedClientsCompile(
       "types recursive multipart binary references as File | Blob for generated clients",
-      () =>
-        assertGeneratedClientsCompile(
-          multipartSpec({ $ref: "#/components/schemas/Node" }, {
-            Node: {
-              type: "object",
-              properties: {
-                file: { type: "string", format: "binary" },
-                child: { $ref: "#/components/schemas/Node" }
-              },
-              required: ["file"],
-              additionalProperties: false
-            }
-          }),
-          {
-            usage: `const file = new File([], "upload.txt")
+      multipartSpec({ $ref: "#/components/schemas/Node" }, {
+        Node: {
+          type: "object",
+          properties: {
+            file: { type: "string", format: "binary" },
+            child: { $ref: "#/components/schemas/Node" }
+          },
+          required: ["file"],
+          additionalProperties: false
+        }
+      }),
+      {
+        usage: `const file = new File([], "upload.txt")
 const blob = new Blob([])
 export const payload: UploadRequestFormData = { file, child: { file: blob, child: { file } } }
 // @ts-expect-error Recursive binary fields do not accept strings.
 export const withString: UploadRequestFormData = { file, child: { file: "upload.txt" } }
 `
-          }
-        ),
-      compilationTimeout
+      }
     )
 
     for (
@@ -3297,24 +4649,60 @@ export const withString: UploadRequestFormData = { file, child: { file: "upload.
         ))
     }
 
-    it.effect(
-      "types multipart binary arrays as File | Blob arrays for generated clients",
-      () =>
-        assertGeneratedClientsCompile(
-          multipartSpec({
-            type: "object",
-            properties: { files: { type: "array", items: { type: "string", format: "binary" } } },
-            required: ["files"],
-            additionalProperties: false
-          }),
+    it.effect("maps aliased binary string components to multipart files for generated clients", () =>
+      assertRuntimeIncludes(
+        sharedMultipartSpec(
           {
-            usage: `export const payload: UploadRequestFormData = { files: [new File([], "upload.txt"), new Blob([])] }
+            type: "object",
+            properties: {
+              file: { $ref: "#/components/schemas/Upload" },
+              files: { type: "array", items: { $ref: "#/components/schemas/Upload" } }
+            },
+            required: ["file", "files"],
+            additionalProperties: false
+          },
+          {
+            Upload: { $ref: "#/components/schemas/BinaryData" },
+            BinaryData: { type: "string", format: "binary" }
+          },
+          { schema: { $ref: "#/components/schemas/Upload" } }
+        ),
+        [
+          `export type Upload = string`,
+          `export type CreateJsonRequestJson = Upload`,
+          `export type UploadRequestFormData = { readonly "file": __ClientMultipartFile, readonly "files": globalThis.ReadonlyArray<__ClientMultipartFile> }`
+        ]
+      ))
+
+    itGeneratedClientsCompile(
+      "types multipart binary arrays as File | Blob arrays for generated clients",
+      multipartSpec({
+        type: "object",
+        properties: { files: { type: "array", items: { type: "string", format: "binary" } } },
+        required: ["files"],
+        additionalProperties: false
+      }),
+      {
+        usage: `export const payload: UploadRequestFormData = { files: [new File([], "upload.txt"), new Blob([])] }
 // @ts-expect-error Binary multipart arrays do not accept strings.
 export const withString: UploadRequestFormData = { files: ["upload.txt"] }
 `
-          }
-        ),
-      compilationTimeout
+      }
     )
   })
+})
+
+describe("generated client type checks", () => {
+  it.effect(
+    "do not pass a case whose type errors were hidden by another case's syntax error",
+    () =>
+      Effect.gen(function*() {
+        const [, typeError] = yield* typeCheckCases([
+          { sources: ["export const broken = ;\n"], exactOptionalPropertyTypes: true },
+          { sources: ["export const value: string = 42\n"], exactOptionalPropertyTypes: true }
+        ])
+        assert.isNotEmpty(typeError)
+      }),
+    compilationTimeout
+  )
 })

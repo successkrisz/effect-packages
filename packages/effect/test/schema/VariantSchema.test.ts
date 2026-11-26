@@ -1,8 +1,27 @@
 import { assert, describe, it } from "@effect/vitest"
 import { DateTime, Effect, Schema } from "effect"
 import { Model, VariantSchema } from "effect/schema"
+import { withIgnoredProperties } from "../utils/structFields.ts"
 
 describe("VariantSchema", () => {
+  it("extracts enumerable symbol fields across variants and ignores hidden or inherited definitions", () => {
+    const shared = Symbol("shared")
+    const variant = Symbol("variant")
+    const Test = VariantSchema.make({ variants: ["a", "b"], defaultVariant: "a" })
+    const fields = Test.Struct(withIgnoredProperties({
+      name: Schema.String,
+      [shared]: Schema.Number,
+      [variant]: Test.Field({ a: Schema.Number, b: Schema.String })
+    }))
+    const first = { name: "value", [shared]: 1, [variant]: 2 }
+    const second = { name: "value", [shared]: 1, [variant]: "two" }
+
+    assert.deepStrictEqual(Schema.decodeUnknownSync(Test.extract(fields, "a"))(first), first)
+    assert.deepStrictEqual(Schema.decodeUnknownSync(Test.extract(fields, "b"))(second), second)
+    assert.isFalse(Schema.is(Test.extract(fields, "a"))(second))
+    assert.isFalse(Schema.is(Test.extract(fields, "b"))(first))
+  })
+
   it("FieldOnly and FieldExcept select fields from key arrays", () => {
     const Test = VariantSchema.make({
       variants: ["a", "b", "c"],
@@ -94,6 +113,42 @@ describe("Model", () => {
     assert.isTrue(person instanceof Person)
   })
 
+  it("Class.extend preserves inherited members and variants", () => {
+    class Person extends Model.Class<Person>("Person")({
+      id: Model.GeneratedByDb(Schema.Number),
+      name: Schema.String
+    }) {
+      get upperName() {
+        return this.name.toUpperCase()
+      }
+    }
+    const base: Schema.Class<
+      Person,
+      Schema.Struct<{ readonly id: Schema.Number; readonly name: Schema.String }>,
+      {}
+    > = Person
+    assert.isTrue(Schema.isSchema(base))
+    Model.extract(Person, "json")
+    class PersonWithPosts extends Person.extend<PersonWithPosts>("PersonWithPosts")({
+      posts: Model.FieldOnly(["select", "json"])(Schema.Array(Schema.String))
+    }) {}
+
+    const person = Schema.decodeSync(PersonWithPosts)({ id: 1, name: "Alex", posts: ["Hello"] })
+
+    assert.isTrue(person instanceof PersonWithPosts)
+    assert.isTrue(person instanceof Person)
+    assert.strictEqual(person.upperName, "ALEX")
+    assert.deepStrictEqual(person.posts, ["Hello"])
+    assert.deepStrictEqual(Object.keys(PersonWithPosts.select.fields), ["id", "name", "posts"])
+    assert.deepStrictEqual(Object.keys(PersonWithPosts.insert.fields), ["name"])
+    assert.deepStrictEqual(Object.keys(Model.extract(PersonWithPosts, "json").fields), ["id", "name", "posts"])
+    assert.deepStrictEqual(Schema.decodeSync(PersonWithPosts.json)({ id: 1, name: "Alex", posts: [] }), {
+      id: 1,
+      name: "Alex",
+      posts: []
+    })
+  })
+
   it("FieldOption preserves omitted variants", () => {
     const field = Model.FieldOption(Model.Field({ select: Schema.String, json: undefined }))
     assert.strictEqual(field.schemas.json, undefined)
@@ -125,6 +180,17 @@ describe("Model", () => {
     assert.deepStrictEqual(encodeJson({ active: true }), { active: true })
     assert.deepStrictEqual(decodeJson({ active: false }), { active: false })
   })
+
+  it.effect("UuidV7Insert generates strictly increasing ids", () =>
+    Effect.gen(function*() {
+      const insert = Model.extract(
+        Model.Struct({ id: Model.UuidV7Insert(Schema.String.pipe(Schema.brand("Id"))) }),
+        "insert"
+      )
+      const ids: Array<string> = []
+      for (let i = 0; i < 2000; i++) ids.push((yield* insert.makeEffect({})).id)
+      assert.isTrue(ids.every((id, i) => i === 0 || ids[i - 1] < id))
+    }))
 
   it.effect("Overrideable defaults are constructor-only and accept explicit overrides", () =>
     Effect.gen(function*() {

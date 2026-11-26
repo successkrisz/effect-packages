@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { assertFalse, assertTrue, strictEqual } from "@effect/vitest/utils"
 import { Deferred, Effect, Exit, Fiber, FiberHandle, Option, pipe, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
+import { assertRegistersDuringStartup } from "./utils/forkRegistration.ts"
 
 const makeWorker = Effect.gen(function*() {
   const ready = yield* Deferred.make<void>()
@@ -18,6 +19,44 @@ const makeWorker = Effect.gen(function*() {
 })
 
 describe("FiberHandle", () => {
+  it.effect("run registers a fiber even when it interrupts its forker during startup", () =>
+    assertRegistersDuringStartup((work, scope) =>
+      FiberHandle.make().pipe(
+        Scope.provide(scope),
+        Effect.flatMap((container) => FiberHandle.run(container, work, { startImmediately: true }))
+      )
+    ))
+
+  it.effect("closing the scope waits for asynchronous cleanup of a replaced fiber", () =>
+    Effect.gen(function*() {
+      const events: Array<string> = []
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Scope.addFinalizer(scope, Effect.sync(() => events.push("resource released")))
+      const container = yield* FiberHandle.make().pipe(Scope.provide(scope))
+      const previous = yield* FiberHandle.run(
+        container,
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Deferred.await(release).pipe(
+              Effect.andThen(Effect.sync(() => events.push("worker cleanup done")))
+            )
+          )
+        )
+      )
+      yield* Deferred.await(started)
+      yield* FiberHandle.run(container, Effect.never)
+
+      const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void), { startImmediately: true })
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(closing)
+      yield* Fiber.await(previous)
+
+      assert.deepStrictEqual(events, ["worker cleanup done", "resource released"])
+    }))
+
   it.effect("run defers startup", () =>
     Effect.gen(function*() {
       const container = yield* FiberHandle.make()
@@ -118,13 +157,22 @@ describe("FiberHandle", () => {
       strictEqual(safeFiber.value, fiber)
     }))
 
-  it.effect("join ignores managed replacement interruptions and fails with child errors", () =>
+  it.effect("join ignores managed replacement interruptions and reports child errors without closing the handle", () =>
     Effect.gen(function*() {
       const handle = yield* FiberHandle.make()
-      FiberHandle.setUnsafe(handle, Effect.runFork(Effect.void))
-      FiberHandle.setUnsafe(handle, Effect.runFork(Effect.fail("fail")))
+      const release = yield* Deferred.make<void>()
+      const worker = yield* Effect.uninterruptible(
+        FiberHandle.run(handle, Deferred.await(release), { propagateInterruption: true })
+      )
+      const fail = yield* Deferred.make<void>()
+      yield* FiberHandle.run(handle, Deferred.await(fail).pipe(Effect.andThen(Effect.fail("fail"))))
+      yield* Deferred.succeed(release, undefined)
+      assertTrue(Exit.hasInterrupts(yield* Fiber.await(worker)))
+      yield* Deferred.succeed(fail, undefined)
       const result = yield* Effect.flip(FiberHandle.join(handle))
       strictEqual(result, "fail")
+      const next = yield* FiberHandle.run(handle, Effect.succeed("next"))
+      strictEqual(yield* Fiber.join(next), "next")
     }))
 
   it.effect("onlyIfMissing keeps the current fiber and interrupts rejected starts", () =>

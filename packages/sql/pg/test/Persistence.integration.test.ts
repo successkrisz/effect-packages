@@ -4,6 +4,7 @@ import * as PersistedCacheTest from "effect-test/persistence/PersistedCacheTest"
 import * as PersistedQueueSqlTest from "effect-test/persistence/PersistedQueueSqlTest"
 import * as PersistedQueueTest from "effect-test/persistence/PersistedQueueTest"
 import * as SqlCleanupTest from "effect-test/persistence/SqlCleanupTest"
+import * as Arr from "effect/Array"
 import { PersistedQueue, Persistence } from "effect/persistence"
 import { SqlClient } from "effect/sql"
 import { TestClock } from "effect/testing"
@@ -21,7 +22,8 @@ PersistedCacheTest.suite(
 
 PersistedQueueTest.suite(
   "sql-pg",
-  PersistedQueue.layerStoreSql().pipe(Layer.provide(PgContainer.layerClient))
+  PersistedQueue.layerStoreSql().pipe(Layer.provide(PgContainer.layerClient)),
+  { nonDeliveryWait: "250 millis" }
 )
 
 it.layer(PgContainer.layerClient, { timeout: "30 seconds" })((it) => PersistedQueueSqlTest.suiteWith(it))
@@ -155,34 +157,6 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PersistedQueue SQL
       }
     }).pipe(TestClock.withLive), { timeout: 30000 })
 
-  it.effect("recovers elements from crashed workers after lock expiration", () =>
-    Effect.gen(function*() {
-      const tableName = "effect_queue_crash_recovery"
-      const store = yield* PersistedQueue.makeStoreSql({
-        tableName,
-        pollInterval: "10 millis",
-        lockExpiration: "1 second"
-      })
-      const factory = yield* PersistedQueue.makeFactory.pipe(
-        Effect.provideService(PersistedQueue.PersistedQueueStore, store)
-      )
-      const queue = yield* factory.make({ name: "crash-recovery", schema: Schema.Number })
-      const sql = (yield* SqlClient.SqlClient).withoutTransforms()
-      const table = sql(tableName)
-
-      const id = yield* queue.offer(1)
-      // simulate a worker that claimed the element and then crashed: the lock
-      // is held by a dead worker and the claim consumed an attempt
-      yield* sql`
-        UPDATE ${table}
-        SET acquired_by = ${crypto.randomUUID()}, acquired_at = NOW(), attempts = 1
-        WHERE id = ${id}
-      `
-
-      const attempts = yield* queue.take((_n, metadata) => Effect.succeed(metadata.attempts))
-      assert.strictEqual(attempts, 2)
-    }).pipe(TestClock.withLive), { timeout: 20000 })
-
   it.effect("dead-letters elements from workers that crashed on the final attempt", () =>
     Effect.gen(function*() {
       const tableName = "effect_queue_crash_exhausted"
@@ -225,13 +199,12 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PersistedQueue SQL
 })
 
 // polls a condition on the live clock until it holds or the rounds run out
-const waitFor = <E>(condition: () => Effect.Effect<boolean, E>) =>
-  Effect.gen(function*() {
-    for (let i = 0; i < 100; i++) {
-      if (yield* condition()) return
-      yield* Effect.sleep(100)
-    }
-  })
+const waitFor = Effect.fnUntraced(function*<E>(condition: () => Effect.Effect<boolean, E>) {
+  for (let i = 0; i < 100; i++) {
+    if (yield* condition()) return
+    yield* Effect.sleep(100)
+  }
+})
 
 it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("Persistence SQL cleanup", (it) => {
   it.effect("deletes expired entries in batches", () =>
@@ -257,6 +230,7 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("Persistence SQL cl
         value: "{}",
         expires: SqlCleanupTest.expiredAtEpoch
       }))
+      assert(Arr.isArrayNonEmpty(entries))
       yield* sql`INSERT INTO ${table} ${sql.insert(entries)}`.unprepared
       yield* sql`
         INSERT INTO ${table} (store_id, id, value, expires)

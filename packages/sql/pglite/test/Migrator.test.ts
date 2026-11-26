@@ -1,8 +1,9 @@
 import { PgliteClient, PgliteMigrator } from "@effect/sql-pglite"
 import { assert, describe, layer } from "@effect/vitest"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option, Tracer } from "effect"
 import * as Migrator from "effect/sql/Migrator"
 import { SqlClient } from "effect/sql/SqlClient"
+import * as Statement from "effect/sql/Statement"
 
 const ClientLayer = PgliteClient.layer({})
 
@@ -47,6 +48,28 @@ describe("PgliteMigrator", () => {
 
 describe("Migrator.make", () => {
   layer(ClientLayer, { timeout: "30 seconds" })((it) => {
+    it.effect("wraps a run with no pending migrations in a span", () =>
+      Effect.gen(function*() {
+        const table = "traced_make_migrations"
+        const spans: Array<Tracer.NativeSpan> = []
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options)
+            spans.push(span)
+            return span
+          }
+        })
+        yield* PgliteMigrator.run({ loader: Migrator.fromRecord({}), table }).pipe(Effect.withTracer(tracer))
+
+        const run = spans.find((span) => span.name === "Migrator.run")
+        assert.strictEqual(run?.attributes.get("effect.sql.migrator.table"), table)
+        assert.strictEqual(run?.status._tag, "Ended")
+        assert.deepStrictEqual(
+          spans.filter((span) => Option.isNone(span.parent)).map((span) => span.name),
+          ["Migrator.run"]
+        )
+      }))
+
     it.effect("reuses a migrations table whose name needs quoting", () =>
       Effect.gen(function*() {
         const table = "MixedCase_make_migrations"
@@ -56,6 +79,23 @@ describe("Migrator.make", () => {
         const completed = yield* PgliteMigrator.run({ loader, table })
 
         assert.deepStrictEqual(completed, [])
+      }))
+
+    it.effect("transforms only the migrations table writes", () =>
+      Effect.gen(function*() {
+        const transformed: Array<string> = []
+        const run = Migrator.make({
+          transformWrites: (effect) =>
+            Effect.provideService(effect, Statement.CurrentTransformer, (statement) =>
+              Effect.sync(() => {
+                transformed.push(statement.compile()[0])
+                return statement
+              }))
+        })
+
+        yield* run({ loader: Migrator.fromRecord({ "1_first": Effect.void }), table: "transformed_make_migrations" })
+
+        assert.deepStrictEqual(transformed.map((sql) => sql.split(" ")[0]), ["CREATE", "INSERT"])
       }))
   })
 })

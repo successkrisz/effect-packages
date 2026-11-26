@@ -464,11 +464,13 @@ export class OtelSpan implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown) {
+    if (this.status._tag === "Ended") return
     this.span.setAttribute(key, unknownToAttributeValue(value))
     this.attributes.set(key, value)
   }
 
   addLinks(links: ReadonlyArray<Tracer.SpanLink>): void {
+    if (this.status._tag === "Ended") return
     // oxlint-disable-next-line no-restricted-syntax
     this.links.push(...links)
     this.span.addLinks(links.map((link) => ({
@@ -478,6 +480,7 @@ export class OtelSpan implements Tracer.Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>) {
+    if (this.status._tag === "Ended") return
     const hrTime = nanosToHrTime(endTime)
     this.status = {
       _tag: "Ended",
@@ -486,9 +489,7 @@ export class OtelSpan implements Tracer.Span {
       startTime: this.status.startTime
     }
 
-    if (exit._tag === "Success") {
-      this.span.setStatus({ code: Otel.SpanStatusCode.OK })
-    } else {
+    if (exit._tag === "Failure") {
       if (Cause.hasInterruptsOnly(exit.cause)) {
         this.span.setAttribute("effect.fiber.interrupted", true)
       } else {
@@ -503,8 +504,6 @@ export class OtelSpan implements Tracer.Span {
             code: Otel.SpanStatusCode.ERROR,
             message: errors[0].message
           })
-        } else {
-          this.span.setStatus({ code: Otel.SpanStatusCode.OK })
         }
       }
     }
@@ -512,6 +511,7 @@ export class OtelSpan implements Tracer.Span {
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>) {
+    if (this.status._tag === "Ended") return
     this.span.addEvent(
       name,
       attributes ? recordToAttributes(attributes) : undefined,
@@ -628,7 +628,8 @@ const getPropagatedSpan = (span: Tracer.AnySpan | undefined): Tracer.AnySpan | u
   return span
 }
 
-const populateContext = (
+/** @internal */
+export const populateContext = (
   context: Otel.Context,
   span: Tracer.AnySpan,
   annotations?: Context.Context<never> | undefined

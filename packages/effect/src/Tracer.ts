@@ -182,6 +182,14 @@ export class ParentSpan extends Context.Service<ParentSpan, AnySpan>()(ParentSpa
  * identifiers, sampling state, and annotations so it can be used as a parent or
  * link in Effect tracing.
  *
+ * **Details**
+ *
+ * An external span identifies a parent or link only. Effect never records on
+ * it: it has no attributes, events, or end. While the nearest parent span is
+ * external, `Effect.currentSpan` fails, `Effect.annotateCurrentSpan` does
+ * nothing, and `Logger.tracerLogger` records nothing. Open a span with
+ * `Effect.withSpan` to get one that records.
+ *
  * **Example** (Creating an external span value)
  *
  * ```ts import.meta.vitest
@@ -325,6 +333,15 @@ export type SpanKind = "internal" | "server" | "client" | "producer" | "consumer
  * A span created by an Effect tracer. It carries trace identity, parent,
  * annotations, attributes, links, sampling and kind information, lifecycle
  * status, and methods to end the span or add attributes, events, and links.
+ *
+ * **Details**
+ *
+ * Once a span has `Ended` status, implementations should ignore further calls
+ * to `end`, `attribute`, `event`, and `addLinks`, following the OpenTelemetry
+ * tracing specification. An ended span can still be read and used as a parent.
+ * The built-in span implementations follow this rule, and Effect does not
+ * record logs or `annotateCurrentSpan` attributes on an ended span, such as
+ * when a fiber outlives the span it was forked in.
  *
  * **Example** (Working with spans)
  *
@@ -505,6 +522,8 @@ export const make = (options: Tracer): Tracer => options
  * spans.map((span) => Option.getOrUndefined(span.parent)?.spanId) // => ["span-abc-123"]
  * ```
  *
+ * @see {@link ExternalSpan}
+ *
  * @stability stable
  * @category constructors
  * @since 2.0.0
@@ -684,7 +703,8 @@ export const nativeTracer: Tracer = make({
  * identifiers, the attribute map, and the event list are created lazily on
  * first access, so spans that are never inspected allocate as little as
  * possible. Attributes, events, links, and status are mutated through `Span`
- * methods.
+ * methods. Once the span has ended, those methods do nothing, so a second `end`
+ * keeps the original end time and exit.
  *
  * @see {@link Span} for the interface implemented by native spans
  *
@@ -748,6 +768,7 @@ export class NativeSpan implements Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    if (this.status._tag === "Ended") return
     this.status = {
       _tag: "Ended",
       endTime,
@@ -757,14 +778,17 @@ export class NativeSpan implements Span {
   }
 
   attribute(key: string, value: unknown): void {
+    if (this.status._tag === "Ended") return
     this.attributes.set(key, value)
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
+    if (this.status._tag === "Ended") return
     this.events.push([name, startTime, attributes ?? {}])
   }
 
   addLinks(links: ReadonlyArray<SpanLink>): void {
+    if (this.status._tag === "Ended") return
     // oxlint-disable-next-line no-restricted-syntax
     this.links.push(...links)
   }

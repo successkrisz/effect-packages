@@ -84,6 +84,10 @@ const promptCommand: (
 
     if (config.arguments.length > 0) {
       yield* Console.log(renderSection(sectionName, "ARGUMENTS", colors))
+      // Keep positional answers from binding to preceding boolean flags.
+      if (visibleSubcommands.length === 0) {
+        commandLine.push(commandLineArg("--"))
+      }
       for (const param of config.arguments) {
         commandLine.push(...yield* promptParam(param))
       }
@@ -171,8 +175,9 @@ const promptParam = Effect.fnUntraced(
       return values
     }
     // Inline option-looking values so the lexer cannot interpret them as flags or the -- delimiter.
+    // Flags with an optional value only accept an inline value.
     return values.flatMap((value) =>
-      value.value.startsWith("-") && value.value.length > 1
+      single.optionalValue !== undefined || (value.value.startsWith("-") && value.value.length > 1)
         ? [commandLineArg(`--${single.name}=${value.value}`, `--${single.name}=${value.displayValue}`)]
         : [commandLineArg(`--${single.name}`), value]
     )

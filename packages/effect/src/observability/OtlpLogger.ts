@@ -17,12 +17,14 @@ import * as Duration from "../Duration.ts"
 import * as Effect from "../Effect.ts"
 import type * as Headers from "../http/Headers.ts"
 import type * as HttpClient from "../http/HttpClient.ts"
+import { filterDisablePropagation } from "../internal/effect.ts"
 import * as Layer from "../Layer.ts"
 import * as Logger from "../Logger.ts"
 import type * as LogLevel from "../LogLevel.ts"
 import * as Option from "../Option.ts"
 import { CurrentLogAnnotations, CurrentLogSpans } from "../References.ts"
 import type * as Scope from "../Scope.ts"
+import type { Concurrency } from "../Types.ts"
 import * as Version from "../Version.ts"
 import * as OtlpEnv from "./internal/otlpEnv.ts"
 import * as Exporter from "./OtlpExporter.ts"
@@ -52,8 +54,18 @@ export const make: (
       readonly attributes?: Record<string, unknown>
     } | undefined
     readonly headers?: Headers.Input | undefined
+    /**
+     * Request compression. Defaults to "none". Gzip uses
+     * HttpClientRequest's default minimum body size of 1KB.
+     */
+    readonly compression?: "gzip" | "none" | undefined
     readonly exportInterval?: Duration.Input | undefined
     readonly maxBatchSize?: number | undefined
+    /** Maximum pending queued log records (does not include in-flight batches). */
+    readonly maxQueueSize?: number | undefined
+    /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+    readonly concurrency?: Concurrency | undefined
+    readonly onDrop?: ((count: number) => void) | undefined
     readonly shutdownTimeout?: Duration.Input | undefined
     readonly excludeLogSpans?: boolean | undefined
   }
@@ -73,7 +85,11 @@ export const make: (
     label: "OtlpLogger",
     url: options.url,
     headers: options.headers,
+    compression: options.compression,
     maxBatchSize: options.maxBatchSize ?? 1000,
+    maxQueueSize: options.maxQueueSize,
+    concurrency: options.concurrency,
+    onDrop: options.onDrop,
     exportInterval: options.exportInterval ?? Duration.seconds(1),
     body: (data) => [
       serialization.logs({
@@ -118,8 +134,18 @@ export const layer = (options: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /**
+   * Request compression. Defaults to "none". Gzip uses
+   * HttpClientRequest's default minimum body size of 1KB.
+   */
+  readonly compression?: "gzip" | "none" | undefined
   readonly exportInterval?: Duration.Input | undefined
   readonly maxBatchSize?: number | undefined
+  /** Maximum pending queued log records (does not include in-flight batches). */
+  readonly maxQueueSize?: number | undefined
+  /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly shutdownTimeout?: Duration.Input | undefined
   readonly excludeLogSpans?: boolean | undefined
   readonly mergeWithExisting?: boolean | undefined
@@ -130,6 +156,13 @@ export const layer = (options: {
 
 /**
  * Creates an OTLP logs layer from OpenTelemetry configuration.
+ *
+ * **Details**
+ *
+ * Compression accepts "gzip" or "none".
+ * `OTEL_EXPORTER_OTLP_LOGS_COMPRESSION` takes precedence over
+ * `OTEL_EXPORTER_OTLP_COMPRESSION`, defaulting to "none". Gzip uses
+ * HttpClientRequest's default minimum body size of 1KB.
  *
  * @stability unstable
  * @category layers
@@ -142,6 +175,9 @@ export const layerFromConfig = (options?: {
     readonly attributes?: Record<string, unknown>
   } | undefined
   readonly headers?: Headers.Input | undefined
+  /** Maximum concurrent export requests, or `"unbounded"`. Defaults to `4`. */
+  readonly concurrency?: Concurrency | undefined
+  readonly onDrop?: ((count: number) => void) | undefined
   readonly excludeLogSpans?: boolean | undefined
   readonly mergeWithExisting?: boolean | undefined
 }): Layer.Layer<Exporter.Flusher, never, HttpClient.HttpClient | OtlpSerialization> =>
@@ -156,12 +192,24 @@ export const layerFromConfig = (options?: {
       return Exporter.layerFlusher
     }
 
-    const { baseTimeout, logsTimeout, exportTimeout, scheduleDelay, maxBatchSize } = yield* Config.all({
+    const {
+      baseCompression,
+      compression,
+      baseTimeout,
+      logsTimeout,
+      exportTimeout,
+      scheduleDelay,
+      maxBatchSize,
+      maxQueueSize
+    } = yield* Config.all({
+      baseCompression: Config.option(Config.Literals(["gzip", "none"], "OTEL_EXPORTER_OTLP_COMPRESSION")),
+      compression: Config.option(Config.Literals(["gzip", "none"], "OTEL_EXPORTER_OTLP_LOGS_COMPRESSION")),
       baseTimeout: Config.option(Config.Int("OTEL_EXPORTER_OTLP_TIMEOUT")),
       logsTimeout: Config.option(Config.Int("OTEL_EXPORTER_OTLP_LOGS_TIMEOUT")),
       exportTimeout: Config.option(Config.Int("OTEL_BLRP_EXPORT_TIMEOUT")),
       scheduleDelay: Config.option(Config.Int("OTEL_BLRP_SCHEDULE_DELAY")),
-      maxBatchSize: Config.option(Config.Int("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE"))
+      maxBatchSize: Config.option(Config.Int("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE")),
+      maxQueueSize: Config.option(Config.Int("OTEL_BLRP_MAX_QUEUE_SIZE"))
     })
 
     const shutdownTimeout = Option.firstSomeOf([logsTimeout, baseTimeout, exportTimeout]).pipe(
@@ -173,8 +221,12 @@ export const layerFromConfig = (options?: {
       url: endpoint.toString(),
       resource: options?.resource,
       headers: options?.headers ?? (yield* OtlpEnv.headers("LOGS")),
+      compression: Option.getOrElse(Option.firstSomeOf([compression, baseCompression]), () => "none" as const),
       exportInterval: Option.getOrUndefined(exportInterval),
       maxBatchSize: Option.getOrUndefined(maxBatchSize),
+      maxQueueSize: Option.getOrUndefined(maxQueueSize),
+      concurrency: options?.concurrency,
+      onDrop: options?.onDrop,
       shutdownTimeout: Option.getOrUndefined(shutdownTimeout),
       excludeLogSpans: options?.excludeLogSpans,
       mergeWithExisting: options?.mergeWithExisting
@@ -231,9 +283,10 @@ const makeLogRecord = (options: Logger.Options<unknown>, opts: {
     droppedAttributesCount: 0
   }
 
-  if (options.fiber.cache.span) {
-    logRecord.traceId = options.fiber.cache.span.traceId
-    logRecord.spanId = options.fiber.cache.span.spanId
+  const span = filterDisablePropagation(options.fiber.cache.span)
+  if (Option.isSome(span)) {
+    logRecord.traceId = span.value.traceId.padStart(32, "0")
+    logRecord.spanId = span.value.spanId
   }
 
   return logRecord

@@ -15,6 +15,7 @@ import {
 } from "effect"
 import { Prompt } from "effect/cli"
 import { afterEach, vi } from "vitest"
+import { withIgnoredProperties } from "../utils/structFields.ts"
 import * as MockTerminal from "./services/MockTerminal.ts"
 
 const FileSystemLayer = FileSystem.layerNoop({})
@@ -199,6 +200,17 @@ describe("Prompt.succeed", () => {
 })
 
 describe("Prompt.all", () => {
+  it.effect("collects enumerable symbol fields and ignores hidden or inherited prompts", () =>
+    Effect.gen(function*() {
+      const key = Symbol("value")
+      const result = yield* Prompt.all(withIgnoredProperties({
+        name: Prompt.succeed("value"),
+        [key]: Prompt.succeed(1)
+      }))
+
+      assert.deepStrictEqual(result, { name: "value", [key]: 1 })
+    }).pipe(Effect.provide(TestLayer)))
+
   it.effect("supports an empty record", () =>
     Effect.gen(function*() {
       const result = yield* Prompt.all({})
@@ -245,6 +257,16 @@ describe("Prompt.Int", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, 7)
     }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("preserves the sign of a negative integer with a leading zero", () =>
+    Effect.gen(function*() {
+      yield* MockTerminal.inputText("-07")
+      yield* MockTerminal.inputKey("enter")
+
+      const value = yield* Prompt.run(Prompt.Int({ message: "Count" }))
+
+      assert.strictEqual(value, -7)
+    }).pipe(Effect.provide(TestLayer)))
 })
 
 describe("Prompt.Number", () => {
@@ -256,6 +278,16 @@ describe("Prompt.Number", () => {
       const value = yield* Prompt.run(Prompt.Number({ message: "Rate" }))
 
       assert.strictEqual(value, 0.05)
+    }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("accepts a negative value between -1 and 0", () =>
+    Effect.gen(function*() {
+      yield* MockTerminal.inputText("-0.05")
+      yield* MockTerminal.inputKey("enter")
+
+      const value = yield* Prompt.run(Prompt.Number({ message: "Rate" }))
+
+      assert.strictEqual(value, -0.05)
     }).pipe(Effect.provide(TestLayer)))
 
   it.effect("renders appended input without literal parsed", () =>
@@ -1336,15 +1368,14 @@ describe("Prompt.Custom", () => {
         const calls: Array<string> = []
         const clear = `${escape}[2K\r`
         const prompt = Prompt.Custom<number, number>(0, {
-          render: (state, action) =>
-            Effect.gen(function*() {
-              calls.push(`render ${state} ${action._tag}`)
-              if (action._tag === transition && (state > 0 || action._tag === "Submit")) {
-                yield* Deferred.succeed(rendering, undefined)
-                yield* Deferred.await(resume)
-              }
-              return action._tag === "Submit" ? `Done ${state}` : action._tag === "Beep" ? bell : `Frame ${state}`
-            }),
+          render: Effect.fnUntraced(function*(state, action) {
+            calls.push(`render ${state} ${action._tag}`)
+            if (action._tag === transition && (state > 0 || action._tag === "Submit")) {
+              yield* Deferred.succeed(rendering, undefined)
+              yield* Deferred.await(resume)
+            }
+            return action._tag === "Submit" ? `Done ${state}` : action._tag === "Beep" ? bell : `Frame ${state}`
+          }),
           clear: (state, action) =>
             Effect.sync(() => {
               calls.push(`clear ${state} ${action._tag}`)

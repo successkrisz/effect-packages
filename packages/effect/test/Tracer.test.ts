@@ -1,10 +1,11 @@
 import { assert, describe, it } from "@effect/vitest"
 import { assertNone, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Scheduler, Tracer } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Logger, Scheduler, Tracer } from "effect"
 import { HttpBody, HttpClient, HttpClientResponse } from "effect/http"
 import { OtlpSerialization, OtlpTracer } from "effect/observability"
 import { TestClock } from "effect/testing"
 import type { Span } from "effect/Tracer"
+import { collectGarbage } from "./utils/gc.ts"
 
 const getParent = (span: Tracer.Span): Tracer.AnySpan => {
   if (span.parent._tag === "None") {
@@ -230,6 +231,42 @@ describe("Tracer", () => {
       }))
   })
 
+  describe("ended spans", () => {
+    it.effect("ignores mutations after end", () =>
+      Effect.gen(function*() {
+        const span = (yield* Effect.makeSpan("A")) as Tracer.NativeSpan
+        span.end(1n, Exit.void)
+        const ended = span.status
+
+        span.attribute("late", true)
+        span.event("late", 2n)
+        span.end(3n, Exit.fail("late"))
+
+        strictEqual(span.status, ended)
+        strictEqual(span.attributes.has("late"), false)
+        deepStrictEqual(span.events, [])
+      }))
+
+    it.effect.skipIf(process.versions.bun !== undefined || process.versions.deno !== undefined)(
+      "are not retained by finished fibers",
+      () =>
+        Effect.gen(function*() {
+          let fiber: Fiber.Fiber<void> | undefined
+          let reference: WeakRef<object> | undefined
+          yield* Effect.gen(function*() {
+            const value = {}
+            reference = new WeakRef(value)
+            fiber = yield* Effect.forkChild(Effect.void.pipe(Effect.withSpan("child")))
+            yield* Fiber.join(fiber)
+            return value
+          }).pipe(Effect.withSpan("parent"), Effect.asVoid)
+          yield* collectGarbage
+          assert.isDefined(fiber)
+          assert.isUndefined(reference!.deref())
+        })
+    )
+  })
+
   describe("Effect.annotateSpans", () => {
     it.effect("should allow adding span attributes as key/value pairs", () =>
       Effect.gen(function*() {
@@ -286,37 +323,36 @@ describe("Tracer", () => {
   })
 
   describe("interruption as a traced region starts", () => {
-    const interruptAtEveryStep = (
+    const interruptAtEveryStep = Effect.fnUntraced(function*(
       make: () => Effect.Effect<unknown>,
       check: (spans: ReadonlyArray<Tracer.NativeSpan>, label: string) => void
-    ) =>
-      Effect.gen(function*() {
-        let started = 0
-        for (let ops = 3; ops <= 6; ops++) {
-          for (let prefix = 0; prefix < 4; prefix++) {
-            for (let yields = 0; yields < 6; yields++) {
-              const spans: Array<Tracer.NativeSpan> = []
-              const tracer = Tracer.make({
-                span(options) {
-                  const span = new Tracer.NativeSpan(options)
-                  spans.push(span)
-                  return span
-                }
-              })
-              let effect = make()
-              for (let i = 0; i < prefix; i++) effect = Effect.andThen(Effect.void, effect)
-              yield* Effect.gen(function*() {
-                const fiber = yield* Effect.forkChild(effect)
-                for (let i = 0; i < yields; i++) yield* Effect.yieldNow
-                yield* Fiber.interrupt(fiber)
-              }).pipe(Effect.withTracer(tracer), Effect.provideService(Scheduler.MaxOpsBeforeYield, ops))
-              started += spans.length
-              check(spans, `ops ${ops}, prefix ${prefix}, yields ${yields}`)
-            }
+    ) {
+      let started = 0
+      for (let ops = 3; ops <= 6; ops++) {
+        for (let prefix = 0; prefix < 4; prefix++) {
+          for (let yields = 0; yields < 6; yields++) {
+            const spans: Array<Tracer.NativeSpan> = []
+            const tracer = Tracer.make({
+              span(options) {
+                const span = new Tracer.NativeSpan(options)
+                spans.push(span)
+                return span
+              }
+            })
+            let effect = make()
+            for (let i = 0; i < prefix; i++) effect = Effect.andThen(Effect.void, effect)
+            yield* Effect.gen(function*() {
+              const fiber = yield* Effect.forkChild(effect)
+              for (let i = 0; i < yields; i++) yield* Effect.yieldNow
+              yield* Fiber.interrupt(fiber)
+            }).pipe(Effect.withTracer(tracer), Effect.provideService(Scheduler.MaxOpsBeforeYield, ops))
+            started += spans.length
+            check(spans, `ops ${ops}, prefix ${prefix}, yields ${yields}`)
           }
         }
-        assert.isAbove(started, 0, "the child never started a span")
-      })
+      }
+      assert.isAbove(started, 0, "the child never started a span")
+    })
 
     it.effect("ends interrupted spans and restores the parent for outer finalizers", () => {
       let seen: string | undefined
@@ -341,7 +377,7 @@ describe("Tracer", () => {
   })
 
   describe("OtlpTracer span status", () => {
-    const exportSpan = (exit: Exit.Exit<unknown, unknown>) => {
+    const exportSpan = (exit: Exit.Exit<unknown, unknown>, afterEnd?: (span: Span) => void) => {
       const exported: Array<OtlpTracer.TraceData> = []
       const layer = makeOtlpTracerLayer(Layer.succeed(OtlpSerialization.OtlpSerialization, {
         traces: (data) => {
@@ -354,6 +390,7 @@ describe("Tracer", () => {
       return Effect.gen(function*() {
         const span = yield* Effect.makeSpan("test")
         span.end(span.status.startTime + 1n, exit)
+        afterEnd?.(span)
       }).pipe(
         Effect.provide(layer),
         Effect.map(() => {
@@ -366,10 +403,10 @@ describe("Tracer", () => {
       )
     }
 
-    it.effect("marks an empty cause Ok without a description", () =>
+    it.effect("leaves an empty cause Unset without a description", () =>
       Effect.gen(function*() {
         const span = yield* exportSpan(Exit.failCause(Cause.empty))
-        deepStrictEqual(span.status, { code: 1 })
+        deepStrictEqual(span.status, { code: 0 })
         deepStrictEqual(span.events, [])
         deepStrictEqual(span.attributes, [])
       }))
@@ -380,6 +417,12 @@ describe("Tracer", () => {
         deepStrictEqual(span.status, { code: 0 })
         deepStrictEqual(span.events, [])
         deepStrictEqual(span.attributes, [{ key: "effect.fiber.interrupted", value: { boolValue: true } }])
+      }))
+
+    it.effect("exports a span once when end is called again", () =>
+      Effect.gen(function*() {
+        const span = yield* exportSpan(Exit.void, (span) => span.end(span.status.startTime + 2n, Exit.fail("late")))
+        deepStrictEqual(span.status, { code: 0 })
       }))
   })
 
@@ -446,6 +489,32 @@ describe("Tracer", () => {
           annotations: Context.empty()
         })
       ))
+
+    it.effect("treats an external span as parent context rather than a recording target", () =>
+      Effect.gen(function*() {
+        const external = Tracer.externalSpan({ traceId: "trace", spanId: "span" })
+        yield* Effect.gen(function*() {
+          const outer = (yield* Effect.currentSpan) as Tracer.NativeSpan
+          yield* Effect.gen(function*() {
+            yield* Effect.log("under external")
+            yield* Effect.annotateCurrentSpan("key", "value")
+            assert.isTrue(Cause.isNoSuchElementError(yield* Effect.flip(Effect.currentSpan)))
+            strictEqual(yield* Effect.currentParentSpan, external)
+            const child = (yield* Effect.log("under child").pipe(
+              Effect.andThen(Effect.currentSpan),
+              Effect.withSpan("child")
+            )) as Tracer.NativeSpan
+            strictEqual(getParent(child), external)
+            deepStrictEqual(child.events.map(([name]) => name), ["under child"])
+          }).pipe(Effect.withParentSpan(external))
+          strictEqual(outer.attributes.has("key"), false)
+          deepStrictEqual(outer.events, [])
+        }).pipe(
+          Effect.withSpan("outer"),
+          Effect.provide(Logger.layer([Logger.tracerLogger]))
+        )
+        deepStrictEqual(external, Tracer.externalSpan({ traceId: "trace", spanId: "span" }))
+      }))
   })
 
   describe("Effect.withTracerEnabled", () => {

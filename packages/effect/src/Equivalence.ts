@@ -12,6 +12,7 @@
  */
 import { dual } from "./Function.ts"
 import type { TypeLambda } from "./HKT.ts"
+import * as InternalRecord from "./internal/record.ts"
 import * as Reducer from "./Reducer.ts"
 
 /**
@@ -362,7 +363,8 @@ export const combine: {
  * comparison stops at the first equivalence that returns `false`. Empty
  * collections return an equivalence that always returns `true`. The result is
  * also an equivalence that satisfies reflexive, symmetric, and transitive
- * properties.
+ * properties. The collection is materialized when the equivalence is created,
+ * so it must be finite.
  *
  * **Example** (Combining multiple field equivalences)
  *
@@ -414,15 +416,17 @@ export const combine: {
  * @category combining
  * @since 2.0.0
  */
-export const combineAll = <A>(collection: Iterable<Equivalence<A>>): Equivalence<A> =>
-  make((x, y) => {
-    for (const equivalence of collection) {
+export const combineAll = <A>(collection: Iterable<Equivalence<A>>): Equivalence<A> => {
+  const equivalences = Array.from(collection)
+  return make((x, y) => {
+    for (const equivalence of equivalences) {
       if (!equivalence(x, y)) {
         return false
       }
     }
     return true
   })
+}
 
 /**
  * Transforms an equivalence relation by mapping the input values before comparison.
@@ -644,11 +648,13 @@ export {
  *
  * **Details**
  *
- * Compares only the properties specified in the struct definition; other
- * properties are ignored. String and symbol keys are supported via
- * `Reflect.ownKeys`. The result returns `true` only if all specified properties
- * are equivalent according to their equivalences, and it also satisfies
- * reflexive, symmetric, and transitive properties.
+ * Uses only own enumerable string and symbol properties of `fields` to define
+ * comparisons. Non-enumerable and inherited definitions are ignored. Selected
+ * properties on the compared values may be non-enumerable or inherited;
+ * other properties of those values are ignored. The result returns `true`
+ * only if all selected properties are equivalent according to their equivalences.
+ * The resulting equivalence satisfies reflexive, symmetric, and transitive
+ * properties.
  *
  * **Example** (Comparing structs with different equivalences per field)
  *
@@ -703,10 +709,10 @@ export {
  * @category combinators
  * @since 4.0.0
  */
-export function Struct<R extends Record<string, Equivalence<any>>>(
+export function Struct<R extends Record<PropertyKey, Equivalence<any>>>(
   fields: R
 ): Equivalence<{ readonly [K in keyof R]: [R[K]] extends [Equivalence<infer A>] ? A : never }> {
-  const keys: Array<any> = Reflect.ownKeys(fields)
+  const keys = InternalRecord.ownEnumerableKeys(fields) as Array<keyof R>
   return make((self, that) => {
     for (const key of keys) {
       if (!fields[key](self[key], that[key])) return false
@@ -725,10 +731,10 @@ export function Struct<R extends Record<string, Equivalence<any>>>(
  *
  * **Details**
  *
- * - Compares all properties present in both objects
- * - Requires both objects to have the same set of keys; different keys result in `false`
+ * - Compares own enumerable properties present in both objects
+ * - Requires both objects to have the same set of enumerable keys; different keys result in `false`
  * - All property values must be equivalent according to the provided equivalence
- * - Supports both string and symbol keys via `Reflect.ownKeys`
+ * - Supports both string and symbol keys; non-enumerable and inherited properties are ignored
  * - Empty objects are considered equivalent
  * - The result is also an equivalence that satisfies reflexive, symmetric, and transitive properties
  *
@@ -770,13 +776,13 @@ export function Struct<R extends Record<string, Equivalence<any>>>(
  */
 export function Record<A>(value: Equivalence<A>): Equivalence<Record<PropertyKey, A>> {
   return make((self, that) => {
-    const selfKeys = Reflect.ownKeys(self)
-    const thatKeys = Reflect.ownKeys(that)
+    const selfKeys = InternalRecord.ownEnumerableKeys(self)
+    const thatKeys = InternalRecord.ownEnumerableKeys(that)
 
     if (selfKeys.length !== thatKeys.length) return false
 
     for (const key of selfKeys) {
-      if (!Object.hasOwn(that, key) || !value(self[key], that[key])) {
+      if (!Object.prototype.propertyIsEnumerable.call(that, key) || !value(self[key], that[key])) {
         return false
       }
     }

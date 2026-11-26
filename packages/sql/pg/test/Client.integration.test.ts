@@ -1,6 +1,21 @@
-import { PgClient } from "@effect/sql-pg"
+import { PgClient, type PgConnection, PgTypes } from "@effect/sql-pg"
 import { assert, expect, it } from "@effect/vitest"
-import { Cause, DateTime, Deferred, Effect, Fiber, Option, Queue, Schedule, Schema, Stream, String } from "effect"
+import {
+  Cause,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Schedule,
+  Schema,
+  Stream,
+  String
+} from "effect"
 import * as Reactivity from "effect/reactivity/Reactivity"
 import { Model } from "effect/schema"
 import { SqlClient, SqlError, SqlModel } from "effect/sql"
@@ -58,7 +73,7 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
         )
       }`.compile()
       expect(query).toEqual(
-        `UPDATE people SET name = data.name FROM (values ($1),($2)) AS data("name")`
+        `UPDATE people SET name = data.name FROM (values ($1),($2)) AS "data"("name")`
       )
       expect(params).toEqual(["Tim", "John"])
     }))
@@ -73,7 +88,7 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
         ).returning("*")
       }`.compile()
       expect(query).toEqual(
-        `UPDATE people SET name = data.name FROM (values ($1),($2)) AS data("name") RETURNING *`
+        `UPDATE people SET name = data.name FROM (values ($1),($2)) AS "data"("name") RETURNING *`
       )
       expect(params).toEqual(["Tim", "John"])
     }))
@@ -96,6 +111,14 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
       const result = sql`UPDATE people SET ${sql.update({ name: "Tim" }).returning("*")}`.compile()
       expect(result[0]).toEqual(`UPDATE people SET "name" = $1 RETURNING *`)
       expect(result[1]).toEqual(["Tim"])
+    }))
+
+  it.effect("binds an empty array using the type inferred by PostgreSQL", () =>
+    Effect.gen(function*() {
+      const sql = yield* SqlClient.SqlClient
+      const ids: ReadonlyArray<string> = []
+      const rows = yield* sql`SELECT 1 WHERE 'a' = ANY(${ids})`
+      assert.deepStrictEqual(rows, [])
     }))
 
   it.effect("array helper", () =>
@@ -222,7 +245,7 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
       } WHERE created_at > ${now}`.compile()
       assert.strictEqual(
         query,
-        `UPDATE people SET json = data.json FROM (values ($1),($2)) AS data("json") WHERE created_at > $3`
+        `UPDATE people SET json = data.json FROM (values ($1),($2)) AS "data"("json") WHERE created_at > $3`
       )
       assert.lengthOf(params, 3)
     }))
@@ -279,6 +302,68 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
         yield* sql`DROP TYPE capability_scalar`
         assert.deepStrictEqual(rows, [{ capability: "use_key", bound: "gérer", nullable: null }])
       }))
+    }))
+
+  it.effect("reads anonymous records and record arrays", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const rows = yield* sql`
+        SELECT ROW(1, 'a', NULL::int4, ROW(true, ARRAY[1, 2])) AS record,
+               ARRAY[ROW(1, 'a'), ROW(2, 'b')] AS records
+      `
+      assert.deepStrictEqual(rows, [{ record: [1, "a", null, [true, [1, 2]]], records: [[1, "a"], [2, "b"]] }])
+    }))
+
+  it.effect("reads and binds built-in ranges and multiranges", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const tsLower = new Date("2026-01-01T00:00:00.000Z")
+      const tsUpper = new Date("2026-01-02T12:30:00.000Z")
+      const boundDateRange: PgTypes.Range<string> = {
+        lower: "2026-01-01",
+        upper: null,
+        lowerInclusive: true,
+        upperInclusive: false,
+        empty: false
+      }
+      const boundMultirange: ReadonlyArray<PgTypes.Range<number>> = [
+        { lower: 1, upper: 5, lowerInclusive: true, upperInclusive: false, empty: false },
+        { lower: 10, upper: 21, lowerInclusive: true, upperInclusive: false, empty: false }
+      ]
+      const rows = yield* sql`
+        SELECT daterange(${"2026-01-01"}::date, null) AS r,
+               int4range(1, 5, '[]') AS int4_r,
+               int8range(10::int8, 20::int8, '(]') AS int8_r,
+               numrange(1.5, 2.5, '()') AS num_r,
+               tsrange('2026-01-01 00:00:00'::timestamp, '2026-01-02 12:30:00'::timestamp, '[)') AS ts_r,
+               tstzrange('2026-01-01T00:00:00Z'::timestamptz, '2026-01-02T12:30:00Z'::timestamptz, '(]') AS tstz_r,
+               'empty'::int4range AS empty_r,
+               int4multirange(int4range(1, 5), int4range(10, 20, '[]')) AS mr,
+               ARRAY[int4range(1, 5), NULL] AS range_arr,
+               ARRAY[int4multirange(int4range(1, 5)), NULL] AS mr_arr,
+               ${PgTypes.daterange(boundDateRange)} AS param_r,
+               ${PgTypes.int4multirange(boundMultirange)} AS param_mr
+      `
+      assert.deepStrictEqual(rows, [{
+        r: boundDateRange,
+        int4_r: { lower: 1, upper: 6, lowerInclusive: true, upperInclusive: false, empty: false },
+        int8_r: { lower: 11n, upper: 21n, lowerInclusive: true, upperInclusive: false, empty: false },
+        num_r: { lower: "1.5", upper: "2.5", lowerInclusive: false, upperInclusive: false, empty: false },
+        ts_r: { lower: tsLower, upper: tsUpper, lowerInclusive: true, upperInclusive: false, empty: false },
+        tstz_r: { lower: tsLower, upper: tsUpper, lowerInclusive: false, upperInclusive: true, empty: false },
+        empty_r: { lower: null, upper: null, lowerInclusive: false, upperInclusive: false, empty: true },
+        mr: boundMultirange,
+        range_arr: [
+          { lower: 1, upper: 5, lowerInclusive: true, upperInclusive: false, empty: false },
+          null
+        ],
+        mr_arr: [
+          [{ lower: 1, upper: 5, lowerInclusive: true, upperInclusive: false, empty: false }],
+          null
+        ],
+        param_r: boundDateRange,
+        param_mr: boundMultirange
+      }])
     }))
 
   it.effect("reads bytea as Uint8Array", () =>
@@ -371,6 +456,38 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
       assert.strictEqual(error.reason._tag, "UnknownError")
       assert.strictEqual(error.reason.operation, "commit")
     }))
+
+  it.effect("keeps the typed error when the server ends the session in a nested transaction", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const cause = yield* sql.withTransaction(
+        sql.withTransaction(sql`SELECT pg_terminate_backend(pg_backend_pid())`)
+      ).pipe(Effect.sandbox, Effect.flip)
+
+      assert.isFalse(Cause.hasDies(cause))
+      assert.instanceOf(Cause.squash(cause), SqlError.SqlError)
+    }))
+
+  it.effect("afterCommit runs once other connections see the transaction's rows", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      yield* sql`CREATE TABLE after_commit_visibility (value INTEGER)`
+      let seen: ReadonlyArray<{ readonly count: number }> = []
+
+      yield* sql.withTransaction(Effect.gen(function*() {
+        yield* sql`INSERT INTO after_commit_visibility VALUES (1)`
+        yield* sql.afterCommit(
+          sql<{ count: number }>`SELECT count(*)::integer AS count FROM after_commit_visibility`.pipe(
+            Effect.map((rows) => {
+              seen = rows
+            }),
+            Effect.orDie
+          )
+        )
+      }))
+
+      assert.deepStrictEqual(seen, [{ count: 1 }])
+    }))
 })
 
 it.layer(PgContainer.layerMakeClientUnprepared, { timeout: "30 seconds" })(
@@ -456,6 +573,28 @@ it.layer(PgContainer.layerMakeClient, { timeout: "30 seconds" })("PgClient.makeC
       assert.isTrue(Option.isNone(rows))
     }).pipe(TestClock.withLive))
 
+  it.effect("times out a queued stream before the transaction connection is released", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      yield* sql.withTransaction(Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const holder = yield* sql`SELECT 1`.stream.pipe(
+          Stream.runForEach(() => Effect.andThen(Deferred.succeed(started, undefined), Deferred.await(release))),
+          Effect.forkChild
+        )
+        yield* Deferred.await(started)
+        const queued = yield* sql`SELECT 2`.stream.pipe(Stream.runDrain, Effect.timeoutOption(10), Effect.forkChild)
+        yield* TestClock.adjust(10)
+        const completedWhileQueued = queued.pollUnsafe() !== undefined
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(holder)
+        assert.isTrue(Option.isNone(yield* Fiber.join(queued)))
+        assert.isTrue(completedWhileQueued, "stream timeout waited for the connection")
+        assert.deepStrictEqual(yield* sql`SELECT 3 AS value`, [{ value: 3 }])
+      }))
+    }))
+
   it.effect("serializes transactions on its single connection", () =>
     Effect.gen(function*() {
       const sql = yield* PgClient.PgClient
@@ -482,6 +621,34 @@ it.layer(PgContainer.layerMakeClient, { timeout: "30 seconds" })("PgClient.makeC
 
       assert.isTrue(Option.isNone(overlap))
     }))
+
+  // A transaction pooler moves the session to another server between
+  // transactions, where the statements prepared on the last one do not exist.
+  it.effect("ends transactions whose prepared statements went missing", () =>
+    Effect.gen(function*() {
+      // Its own session, so `DEALLOCATE ALL` cannot affect concurrent tests.
+      const sql = yield* PgClient.makeClient((yield* PgClient.PgClient).config)
+      const select = sql<{ value: number }>`SELECT ${1}::int4 AS value`
+      const assertSqlFailure = (cause: Cause.Cause<unknown>) => {
+        assert.isFalse(Cause.hasDies(cause))
+        const error = Cause.squash(cause)
+        assert.instanceOf(error, SqlError.SqlError)
+        assert.propertyVal(error.reason.cause, "code", "26000")
+      }
+      // Prepares BEGIN, the body, ROLLBACK and COMMIT.
+      yield* sql.withTransaction(Effect.andThen(select, Effect.fail("rollback"))).pipe(Effect.flip)
+      yield* sql.withTransaction(select)
+      yield* sql`DEALLOCATE ALL`.unprepared
+
+      // The body fails on its lost statement, and ROLLBACK still has to run.
+      assertSqlFailure(yield* sql.withTransaction(select).pipe(Effect.sandbox, Effect.flip))
+      // The body succeeds, but the lost COMMIT never runs.
+      assertSqlFailure(
+        yield* sql.withTransaction(sql`SELECT ${2}::int4 AS fresh`).pipe(Effect.sandbox, Effect.flip)
+      )
+
+      assert.deepStrictEqual(yield* sql.withTransaction(select), [{ value: 1 }])
+    }).pipe(Effect.scoped, Effect.provide(Reactivity.layer)))
 })
 
 it.layer(PgContainer.layerMakeClientAcquireForStream, { timeout: "30 seconds" })(
@@ -561,6 +728,23 @@ it.layer(PgContainer.layerClientWithTransforms, { timeout: "30 seconds" })("PgCl
       const [query, params] = sql`INSERT INTO people ${sql.insert({ first_name: "Tim", age: 10 })}`.compile()
       expect(query).toEqual(`INSERT INTO people ("first_name","age") VALUES ($1,$2)`)
       expect(params).toEqual(["Tim", 10])
+    }))
+
+  it.effect("queryTextValues uses the active transaction and preserves column names", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      yield* sql`CREATE TABLE query_text (recorded_at timestamptz)`
+      let inside: PgConnection.TextResult | undefined
+      const rollback = yield* Effect.flip(sql.withTransaction(Effect.gen(function*() {
+        yield* sql`INSERT INTO query_text VALUES ('infinity')`
+        inside = yield* sql.queryTextValues("SELECT recorded_at FROM query_text")
+        return yield* Effect.fail("rollback" as const)
+      })))
+      assert.strictEqual(rollback, "rollback")
+      const outside = yield* sql.queryTextValues("SELECT recorded_at FROM query_text")
+      assert.deepStrictEqual(inside?.fields, [{ name: "recorded_at", dataTypeId: PgTypes.OID.timestamptz }])
+      assert.deepStrictEqual(inside?.values, [["infinity"]])
+      assert.deepStrictEqual(outside.values, [])
     }))
 
   it.effect("rejects multi-statement queries", () =>
@@ -693,4 +877,51 @@ it.layer(PgContainer.layerClientForListen, { timeout: "30 seconds", concurrent: 
       assert.strictEqual(error.message, "PostgreSQL channel names must not exceed 63 UTF-8 bytes")
       assert.strictEqual(error.reason.operation, "notify")
     }))
+})
+
+const RequestId = Context.Reference<string>("test/RequestId", { defaultValue: () => "none" })
+
+class Prefix extends Context.Service<Prefix, string>()("test/Prefix") {}
+
+it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgClient onAcquire", (it) => {
+  it.effect("runs once per acquisition with construction services in the consuming fiber", () =>
+    Effect.gen(function*() {
+      const container = yield* PgContainer
+      const calls: Array<string> = []
+      const context = yield* Layer.build(
+        PgClient.layer({
+          url: Redacted.make(container.getConnectionUri()),
+          onAcquire: Effect.gen(function*() {
+            calls.push(`${yield* Prefix}:${yield* RequestId}`)
+          })
+        }).pipe(Layer.provide(Layer.succeed(Prefix, "pool")))
+      )
+      const sql = Context.get(context, PgClient.PgClient)
+
+      yield* sql`SELECT 1`.pipe(Effect.provideService(RequestId, "statement"))
+      yield* sql.withTransaction(Effect.andThen(sql`SELECT 1`, sql`SELECT 2`)).pipe(
+        Effect.provideService(RequestId, "transaction")
+      )
+
+      assert.deepStrictEqual(calls, ["pool:statement", "pool:transaction"])
+    }).pipe(Effect.scoped))
+
+  it.effect("closes the hook's scope after each statement", () =>
+    Effect.gen(function*() {
+      const container = yield* PgContainer
+      let finalized = 0
+      const sql = yield* PgClient.make({
+        url: Redacted.make(container.getConnectionUri()),
+        onAcquire: Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            finalized++
+          })
+        )
+      })
+
+      yield* sql`SELECT 1`
+      yield* sql`SELECT 1`
+
+      assert.strictEqual(finalized, 2)
+    }).pipe(Effect.scoped, Effect.provide(Reactivity.layer)))
 })

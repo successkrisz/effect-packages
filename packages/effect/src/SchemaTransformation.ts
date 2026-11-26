@@ -20,6 +20,7 @@ import * as Duration from "./Duration.ts"
 import * as Effect from "./Effect.ts"
 import { format, formatDate, formatJson } from "./Formatter.ts"
 import { dual } from "./Function.ts"
+import * as InternalContent from "./internal/schema/content.ts"
 import * as Option from "./Option.ts"
 import * as Pipeable from "./Pipeable.ts"
 import * as Predicate from "./Predicate.ts"
@@ -554,7 +555,10 @@ export function trim(): Transformation<string, string> {
  *
  * Decoding converts values such as `"my_field_name"` to `"myFieldName"`.
  * Encoding converts values such as `"myFieldName"` back to `"my_field_name"`.
- * The transformation is round-trippable for standard snake_case and camelCase.
+ * Lowercase snake_case values round-trip when single underscores separate the
+ * segments and every segment after the first starts with a letter. A segment
+ * that starts with a digit does not: `"foo_2_bar"` decodes to `"foo2Bar"`,
+ * which encodes to `"foo2_bar"`.
  *
  * **Example** (Converting snake case to camel case)
  *
@@ -749,9 +753,12 @@ export function uncapitalize(): Transformation<string, string> {
  * **Details**
  *
  * Decoding splits the string by `separator` (default `","`) into pairs, then
- * splits each pair by `keyValueSeparator` (default `"="`). Encoding joins the
- * record back into a string using the same separators. The transformation is
- * round-trippable when keys and values do not contain the separators.
+ * splits each pair by `keyValueSeparator` (default `"="`). Set `trim` to trim
+ * keys and values, and `keepEmptyValues` to keep pairs with an empty value as
+ * `""` instead of skipping them (see {@link SchemaGetter.splitKeyValue}).
+ * Encoding joins the record back into a string using the same separators. The
+ * transformation is round-trippable when keys and values do not contain the
+ * separators and, with `trim`, have no surrounding whitespace.
  *
  * **Example** (Parsing key-value pairs)
  *
@@ -777,6 +784,8 @@ export function uncapitalize(): Transformation<string, string> {
 export function splitKeyValue(options?: {
   readonly separator?: string | undefined
   readonly keyValueSeparator?: string | undefined
+  readonly trim?: boolean | undefined
+  readonly keepEmptyValues?: boolean | undefined
 }): Transformation<Record<string, string>, string> {
   return new Transformation(
     SchemaGetter.splitKeyValue(options),
@@ -912,9 +921,9 @@ export function passthroughSubtype<T>(): Transformation<T, T> {
  * **Details**
  *
  * Decoding coerces the string to a number like `Number(s)`. Encoding coerces
- * the number to a string like `String(n)`. This does not validate that the
- * result is finite; combine with `Schema.Finite` or `Schema.Int` for stricter
- * checks.
+ * the number to a string like `String(n)`, except that negative zero is
+ * preserved as `"-0"`. This does not validate that the result is finite;
+ * combine with `Schema.Finite` or `Schema.Int` for stricter checks.
  *
  * **Example** (Converting a string to a number)
  *
@@ -936,7 +945,7 @@ export function passthroughSubtype<T>(): Transformation<T, T> {
  */
 export const numberFromString = new Transformation(
   SchemaGetter.Number(),
-  SchemaGetter.String()
+  SchemaGetter.transform((n: number) => Object.is(n, -0) ? "-0" : globalThis.String(n))
 )
 
 /**
@@ -1639,8 +1648,8 @@ export const urlFromString: Transformation<URL, string> = transformEffect<URL, s
  * **Details**
  *
  * Decoding calls `BigDecimal.fromString(s)` and fails with `InvalidValue` if
- * the string is not a valid `BigDecimal` representation. Encoding returns
- * `BigDecimal.format(bd)`.
+ * the string is not a valid `BigDecimal` representation or its scale is
+ * outside ±10,000. Encoding returns `BigDecimal.format(bd)`.
  *
  * @stability stable
  * @category transforming
@@ -1713,8 +1722,8 @@ export const uint8ArrayFromBase64String: Transformation<Uint8Array<ArrayBufferLi
  *
  * **Details**
  *
- * Decoding parses the Base64 string into a UTF-8 string. Encoding writes the
- * string as a Base64 string.
+ * Encoding fails with `SchemaIssue.InvalidValue` if the text contains an
+ * unpaired UTF-16 surrogate.
  *
  * **Example** (Converting Base64 to a string)
  *
@@ -1749,8 +1758,8 @@ export const stringFromBase64String: Transformation<string, string> = new Transf
  *
  * **Details**
  *
- * Decoding parses the Base64 URL string into a UTF-8 string. Encoding writes
- * the string as a Base64 URL string.
+ * Encoding fails with `SchemaIssue.InvalidValue` if the text contains an
+ * unpaired UTF-16 surrogate.
  *
  * **Example** (Converting Base64Url to a string)
  *
@@ -1785,8 +1794,8 @@ export const stringFromBase64UrlString: Transformation<string, string> = new Tra
  *
  * **Details**
  *
- * Decoding parses the hex string into a UTF-8 string. Encoding writes the
- * string as a hex string.
+ * Encoding fails with `SchemaIssue.InvalidValue` if the text contains an
+ * unpaired UTF-16 surrogate.
  *
  * **Example** (Converting hex to a string)
  *
@@ -1818,13 +1827,14 @@ export const stringFromHexString: Transformation<string, string> = new Transform
  * **When to use**
  *
  * Use when you need a schema transformation to store structured data in URL
- * query parameters or fragments, such as composing with `Schema.parseJson` to
+ * query parameters or fragments, such as composing with `Schema.fromJsonString` to
  * round-trip JSON through a URL.
  *
  * **Details**
  *
  * Decoding calls `decodeURIComponent` and fails if the input contains malformed
- * percent-encoding sequences. Encoding calls `encodeURIComponent`.
+ * percent-encoding sequences. Encoding fails with `SchemaIssue.InvalidValue` if
+ * the text contains an unpaired UTF-16 surrogate.
  *
  * **Example** (Defining a URI component schema)
  *
@@ -1891,7 +1901,10 @@ export function fromJsonString(options?: {
 }): Transformation<unknown, string> {
   return new Transformation(
     SchemaGetter.parseJson(options ?? {}),
-    SchemaGetter.stringifyJson(options)
+    InternalContent.setContent(SchemaGetter.stringifyJson(options), {
+      mediaType: "application/json",
+      preserveSchema: options?.reviver === undefined && options?.replacer === undefined
+    })
   )
 }
 

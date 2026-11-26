@@ -1,8 +1,8 @@
 import { AnthropicClient } from "@effect/ai-anthropic"
 import * as Errors from "@effect/ai-anthropic/internal/errors"
 import { assert, describe, it } from "@effect/vitest"
-import { Context, Duration, Effect, Layer, Redacted, type Schema } from "effect"
-import { Headers, HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/http"
+import { Context, Duration, Effect, Layer, Redacted, type Schema, Stream } from "effect"
+import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("AnthropicClient", () => {
   it.effect("maps a gateway 400 without an Anthropic error envelope", () =>
@@ -49,6 +49,56 @@ describe("AnthropicClient", () => {
       body: { error: { message: "gateway rate limit" } }
     }))))
 
+  it.effect.each([
+    { name: "ignores a negative Retry-After", header: "-5", expected: undefined },
+    { name: "ignores a non-finite Retry-After", header: "Infinity", expected: undefined },
+    { name: "honors an HTTP-date Retry-After", header: "Thu, 01 Jan 1970 00:00:30 GMT", expected: 30_000 }
+  ])("$name", ({ expected, header }) =>
+    Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+      const error = yield* client.createMessage({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(error.reason._tag, "RateLimitError")
+      if (error.reason._tag !== "RateLimitError") return
+      assert.strictEqual(
+        error.reason.retryAfter === undefined ? undefined : Duration.toMillis(error.reason.retryAfter),
+        expected
+      )
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 429,
+      headers: { "retry-after": header },
+      body: { error: { message: "gateway rate limit" } }
+    }))))
+
+  it.effect("maps a 429 Anthropic error envelope with a non-rate-limit type and preserves retry-after", () =>
+    Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+      const error = yield* client.createMessage({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(error.reason._tag, "RateLimitError")
+      if (error.reason._tag !== "RateLimitError") return
+      assert.strictEqual(Duration.toMillis(error.reason.retryAfter!), 3000)
+      assert.strictEqual(error.reason.http?.response?.status, 429)
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 429,
+      headers: { "retry-after": "3" },
+      body: { type: "error", error: { type: "api_error", message: "gateway message" }, request_id: "req-test" }
+    }))))
+
   it.effect("redacts the API key in AI error context", () =>
     Effect.gen(function*() {
       const client = yield* AnthropicClient.AnthropicClient
@@ -59,18 +109,12 @@ describe("AnthropicClient", () => {
           max_tokens: 1,
           messages: [{ role: "user", content: "hello" }]
         }
-      }).pipe(
-        Effect.flip,
-        Effect.updateService(Headers.CurrentRedactedNames, () => [])
-      )
+      }).pipe(Effect.flip)
 
       assert.strictEqual(result.reason._tag, "InvalidRequestError")
-      if (result.reason._tag !== "InvalidRequestError" || result.reason.http === undefined) {
-        return yield* Effect.die(new Error("Expected InvalidRequestError with HTTP context"))
-      }
       const requests = yield* MockHttpClient.requests
       assert.include(requests[0]?.url, "/v1/messages")
-      assert.strictEqual(String(result.reason.http.request.headers["x-api-key"]), "<redacted>")
+      assert.notInclude(JSON.stringify(result), "sk-test-key")
     }).pipe(Effect.provide(makeTestLayer({
       _tag: "Json",
       status: 400,
@@ -127,11 +171,14 @@ describe("AnthropicClient", () => {
   it("preserves and truncates a fallback HTTP response", () => {
     const body = `${"a".repeat(200)}b`
     const reason = Errors.mapStatusCodeToReason({
+      now: 0,
       status: 400,
       headers: {},
       message: undefined,
       metadata: { errorType: null, requestId: null },
-      http: makeHttpContext("https://api.anthropic.com/v1/messages?beta=true", body)
+      method: "POST",
+      url: "https://api.anthropic.com/v1/messages?beta=true",
+      http: { body }
     })
 
     assert.strictEqual(reason._tag, "InvalidRequestError")
@@ -175,6 +222,36 @@ describe("AnthropicClient", () => {
         request_id: null
       }
     }))))
+
+  it.effect("decodes refusal stop details without fallback keys", () => {
+    const stopDetails = { type: "refusal", category: "cyber", explanation: "Refused for cyber harm." } as const
+    return Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+      const [, stream] = yield* client.createMessageStream({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      })
+      const events = yield* Stream.runCollect(stream)
+
+      assert.deepStrictEqual(
+        events.flatMap((event) => event.type === "message_delta" ? [event.delta.stop_details] : []),
+        [stopDetails]
+      )
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Sse",
+      events: [
+        {
+          type: "message_delta",
+          delta: { stop_reason: "refusal", stop_sequence: null, stop_details: stopDetails },
+          usage: { output_tokens: 1 }
+        },
+        { type: "message_stop" }
+      ]
+    })))
+  })
 })
 
 type MockResponse =
@@ -256,14 +333,3 @@ const makeResponse = (
     })
   )
 }
-
-const makeHttpContext = (url: string, body: string) => ({
-  request: {
-    method: "POST" as const,
-    url,
-    urlParams: [],
-    hash: undefined,
-    headers: {}
-  },
-  body
-})
