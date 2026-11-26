@@ -72,6 +72,10 @@ Effect.fail(new ProblemDetail.NotFound({
 }))
 ```
 
+### effect-measure guide
+
+Decode meters, kilometers, or miles into `Distance` values with Effect Schema. The package guide shows how to sort route legs, fold totals and extrema, apply distance limits, and preserve precision when encoding decimal strings. [Read the effect-measure package guide](packages/effect-measure/README.md).
+
 ## Development
 
 - `pnpm new <package-name>` to create a new package
